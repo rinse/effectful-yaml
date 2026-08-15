@@ -142,6 +142,40 @@ function handleOps(
 
 const asList = (v: Value): Value[] => v as Value[];
 
+/**
+ * 逐次組み立て（リストの要素、マッピングのエントリ、選択の分岐）を O(1) で積むための
+ * 不変の cons リスト。積む向きは末尾追加（新しい要素が head）なので文書順とは逆になる。
+ * $handle の多重 $resume で同じ継続が再入しても、cons セルは不変でクロージャが
+ * 捕まえているだけなので、後から生えた枝が先の枝を汚すことはない
+ * （破壊的な push/代入だと共有した配列やオブジェクトを取り合ってしまう）。
+ */
+type Cons<T> = { readonly head: T; readonly tail: Cons<T> | null };
+
+/** cons を文書順の配列に戻す。 */
+function toDocumentOrder<T>(c: Cons<T> | null): T[] {
+  const out: T[] = [];
+  for (let cur = c; cur !== null; cur = cur.tail) out.push(cur.head);
+  out.reverse();
+  return out;
+}
+
+/** 選択の各分岐（要素数はまちまち）を文書順に平坦化する。O(総要素数)。 */
+function flattenChunks(chunks: Cons<readonly Value[]> | null): Value[] {
+  const out: Value[] = [];
+  for (const chunk of toDocumentOrder(chunks)) for (const v of chunk) out.push(v);
+  return out;
+}
+
+/**
+ * キーと値の対の cons をマッピングへ実体化する。文書順に前方代入するので、
+ * 重複キーは元の `{...acc, [k]: v}` と同じく「最初の出現位置に、最後の値」になる。
+ */
+function materializeMap(entries: Cons<readonly [string, Value]> | null): ValueMap {
+  const out: ValueMap = {};
+  for (const [key, v] of toDocumentOrder(entries)) out[key] = v;
+  return out;
+}
+
 /** 選択を処理し、全分岐の結果を文書順に並べたリストにする（$list、および境界の既定）。 */
 function collectChoice(comp: Comp): Comp {
   return handleOps(
@@ -150,15 +184,12 @@ function collectChoice(comp: Comp): Comp {
       [
         'each',
         (arg, k) => {
-          // ponytail: 連結が毎回コピーなので分岐数に対して O(n^2)。8000 分岐で 100ms 台。
-          // acc は多重 resume で再入するので破壊的な push にはできない。要るなら永続リストにする。
-          let acc: Comp = pure([]);
-          for (const item of eachItems(arg)) {
-            acc = bind(acc, (done) =>
-              bind(k(item), (branch) => pure([...asList(done), ...asList(branch)])),
-            );
-          }
-          return acc;
+          const items = eachItems(arg);
+          const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp =>
+            i >= items.length
+              ? pure(flattenChunks(chunks))
+              : bind(k(items[i]!), (branch) => go(i + 1, { head: asList(branch), tail: chunks }));
+          return go(0, null);
         },
       ],
       ['where', (arg, k) => (requireBoolean(arg, '$where') ? k(null) : pure([]))],
@@ -702,9 +733,11 @@ class Evaluator {
     if (node === null || node === undefined) return pure(null);
     if (typeof node === 'number' || typeof node === 'boolean') return pure(node);
     if (Array.isArray(node)) {
-      const go = (i: number, acc: Value[]): Comp =>
-        i >= node.length ? pure(acc) : bind(rec(node[i]), (v) => go(i + 1, [...acc, v]));
-      return go(0, []);
+      const go = (i: number, acc: Cons<Value> | null): Comp =>
+        i >= node.length
+          ? pure(toDocumentOrder(acc))
+          : bind(rec(node[i]), (v) => go(i + 1, { head: v, tail: acc }));
+      return go(0, null);
     }
     if (!isNodeMap(node)) {
       throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
@@ -712,12 +745,14 @@ class Evaluator {
     if (analyzeMapping(Object.keys(node)).kind !== 'plain') return undefined;
     // キーは $$ を literal な $ に解決するだけ（計算されたキーは $mapping で書く）。
     const entries = Object.entries(node);
-    const go = (i: number, acc: ValueMap): Comp => {
-      if (i >= entries.length) return pure(acc);
+    const go = (i: number, acc: Cons<readonly [string, Value]> | null): Comp => {
+      if (i >= entries.length) return pure(materializeMap(acc));
       const [rawKey, valueNode] = entries[i]!;
-      return bind(rec(valueNode), (v) => go(i + 1, { ...acc, [unescapeDollar(rawKey)]: v }));
+      return bind(rec(valueNode), (v) =>
+        go(i + 1, { head: [unescapeDollar(rawKey), v], tail: acc }),
+      );
     };
-    return go(0, {});
+    return go(0, null);
   }
 
   private dollar(node: NodeMap, env: Env): Comp {
