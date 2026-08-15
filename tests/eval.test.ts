@@ -874,3 +874,28 @@ describe('作用の推論の計算量', () => {
     await expect(evaluate(body)).resolves.toBe(0);
   });
 });
+
+describe('$op の導出形（op.md）', () => {
+  it('{$op: 名前} は η 展開 {$fn: x, $body: {$名前: ${x}}} と等価である', async () => {
+    const ops = { 'vault.read': (k: unknown) => `secret(${String(k)})` };
+    const opref = `
+$do:
+- $let:
+    read: {$op: vault.read}
+- {$.read: db/password}
+`;
+    const eta = `
+$do:
+- $let:
+    read:
+      $fn: x
+      $body: {$vault.read: '\${x}'}
+- {$.read: db/password}
+`;
+    await expect(run(opref, { ops })).resolves.toBe('secret(db/password)');
+    await expect(run(eta, { ops })).resolves.toBe('secret(db/password)');
+    // 作用の扱いも同じ：どちらも未登録なら評価前に拒否される。
+    await expect(run(opref)).rejects.toThrow(/unregistered operation/);
+    await expect(run(eta)).rejects.toThrow(/unregistered operation/);
+  });
+});
