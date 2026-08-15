@@ -19,7 +19,7 @@
  *   - boundary: 境界。中身を評価し、既定ハンドラ一式で処理し尽くす。
  *   - node:     合成位置（`$` 式の内側）。子も一律に合成。
  */
-import { interpolate } from './expr.js';
+import { interpolate, refPathOf } from './expr.js';
 import { analyzeMapping, HANDLER_REMOVES, unescapeDollar, type MappingShape } from './forms.js';
 import {
   bind,
@@ -100,9 +100,6 @@ function describe(v: Value): string {
   if (isOpRef(v)) return '<operation>';
   return JSON.stringify(v) ?? String(v);
 }
-
-/** `${名前}` ちょうど一つからなるスカラーの、名前部分。追跡できなければ undefined。 */
-const SIMPLE_REF = /^\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}$/;
 
 /** $each が選ぶ要素の並び。マッピングは {key, value} に分解する。 */
 function eachItems(arg: Value): Value[] {
@@ -215,8 +212,71 @@ function handleState(comp: Comp, init: ReadonlyMap<string, Value>): Comp {
 // 静的な作用推論
 // ---------------------------------------------------------------------------
 
-/** レキシカルな名前 -> 呼び出したときの作用集合。undefined は「構造的に追跡できない」。 */
-type SEnv = Map<string, ReadonlySet<string> | undefined>;
+/** レキシカルな名前 -> 静的に追跡できた値。undefined は「構造的に追跡できない」。 */
+type SEnv = Map<string, Track | undefined>;
+
+/**
+ * 静的に追跡できた値（行の木）。undefined は追跡不能。
+ * - closure / opref: 呼べる値。呼んだときの作用は call() が本体から求める。
+ * - struct: マッピングとリストのリテラル。キーは名前、リストは添字の 10 進表記。
+ * - alt: 分岐しうる値（`$if` の両分岐、リテラルのリストからの `$each`）の過大近似。
+ */
+type Track =
+  | {
+      readonly kind: 'closure';
+      /** 循環ガードの同一性に使う $fn ノード。 */
+      readonly fn: object;
+      readonly param: string;
+      readonly body: unknown;
+      /** 定義位置の追跡環境（レキシカル）。$let の続きに汚されないよう複製で持つ。 */
+      readonly senv: SEnv;
+    }
+  | { readonly kind: 'opref'; readonly name: string }
+  | { readonly kind: 'struct'; readonly fields: ReadonlyMap<string, Track> }
+  | { readonly kind: 'alt'; readonly alts: readonly Track[] };
+
+/** 追跡できた子だけを持つ構造ノード。追跡できない子はキーごと落とす（＝たどれない）。 */
+function structOf(entries: readonly (readonly [string, Track | undefined])[]): Track {
+  const fields = new Map<string, Track>();
+  for (const [key, t] of entries) if (t !== undefined) fields.set(key, t);
+  return { kind: 'struct', fields };
+}
+
+/** 分岐しうる値。一つでも追跡できない分岐があれば全体を追跡不能にする。 */
+function altOf(ts: readonly (Track | undefined)[]): Track | undefined {
+  if (ts.length === 0) return undefined;
+  const alts: Track[] = [];
+  for (const t of ts) {
+    if (t === undefined) return undefined;
+    alts.push(t);
+  }
+  return { kind: 'alt', alts };
+}
+
+/** 追跡木のパスを一区画たどる。たどれなければ undefined。 */
+function field(t: Track | undefined, seg: string): Track | undefined {
+  if (t === undefined) return undefined;
+  if (t.kind === 'struct') return t.fields.get(seg);
+  if (t.kind === 'alt') return altOf(t.alts.map((a) => field(a, seg)));
+  return undefined;
+}
+
+/**
+ * 木のどこかに関数値があるか。
+ * 無ければ、その木をたどった先の呼び出しはすべて追跡不能なので、引数としては undefined と同じ。
+ * 同一視することでメモの鍵が揃い、データだけの引数で本体を何度も走査せずに済む。
+ */
+function hasFunction(t: Track): boolean {
+  switch (t.kind) {
+    case 'closure':
+    case 'opref':
+      return true;
+    case 'struct':
+      return [...t.fields.values()].some(hasFunction);
+    case 'alt':
+      return t.alts.some(hasFunction);
+  }
+}
 
 /**
  * 作用集合を求めつつ、リストに評価される作用境界のノードを記録する。
@@ -225,6 +285,19 @@ type SEnv = Map<string, ReadonlySet<string> | undefined>;
 class Analyzer {
   /** 値がリストになる境界ノード。スカラーは作用を持てないので object だけを入れる。 */
   readonly listBoundaries = new WeakSet<object>();
+
+  /**
+   * 閉包の呼び出しのメモ（閉包の木 -> 引数の木 -> 作用集合）。
+   * ponytail: 鍵は木の同一性なので、呼び出しごとに別の関数値を渡す形は毎回走査し直す
+   * （最悪で入れ子の深さに対して指数）。実測で問題になったら引数木の構造キーで引く。
+   */
+  private readonly memo = new WeakMap<
+    object,
+    Map<Track | undefined, ReadonlySet<string> | undefined>
+  >();
+
+  /** 解析中の $fn ノード。再入は自己適用なので追跡不能に倒す（停止性）。 */
+  private readonly inProgress = new Set<object>();
 
   /** 境界位置。既定ハンドラが処理する作用は消え、登録演算だけが外へ残る。 */
   boundary(node: unknown, senv: SEnv): Set<string> {
@@ -266,7 +339,11 @@ class Analyzer {
       case 'plain':
         return new Set();
       case 'lexical':
-        return union(this.effects(node[shape.raw], senv), senv.get(shape.name) ?? []);
+        return union(
+          this.effects(node[shape.raw], senv),
+          // 引数の追跡木をパラメータに束縛して本体を解析する（多相的解析）。
+          this.call(senv.get(shape.name), this.track(node[shape.raw], senv)) ?? [],
+        );
       case 'op':
         return union(this.effects(node[shape.raw], senv), [shape.name]);
       case 'reserved':
@@ -312,10 +389,14 @@ class Analyzer {
         return new Set();
       case 'pipe': {
         const stages = Array.isArray(aux('through')) ? (aux('through') as unknown[]) : [];
-        return union(
-          this.effects(arg, senv),
-          ...stages.map((s) => union(this.effects(s, senv), this.callable(s, senv) ?? [])),
-        );
+        const rows: Iterable<string>[] = [this.effects(arg, senv)];
+        // 段に渡る値を静的に追えるのは先頭だけ。2 段目以降の引数は追跡不能に倒す。
+        let argument = this.track(arg, senv);
+        for (const stage of stages) {
+          rows.push(this.effects(stage, senv), this.call(this.track(stage, senv), argument) ?? []);
+          argument = undefined;
+        }
+        return union(...rows);
       }
       case 'each':
       case 'where':
@@ -344,7 +425,8 @@ class Analyzer {
         const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return'));
         return union(
           without(this.effects(arg, senv), removed),
-          ...Object.values(clauses).map((c) => this.callable(c, senv) ?? []),
+          // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
+          ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined) ?? []),
         );
       }
       case 'resume':
@@ -365,41 +447,116 @@ class Analyzer {
     const out = new Set<string>();
     for (const [name, rhs] of Object.entries(bindings)) {
       for (const x of this.effects(rhs, senv)) out.add(x);
-      senv.set(name, this.callable(rhs, senv));
+      senv.set(name, this.track(rhs, senv));
     }
     return out;
   }
 
   /**
-   * ノードが表す関数値を呼んだときの作用集合。追跡できなければ undefined。
-   * パス経由の参照（`${a.b}`）は追跡できないので、事前検証の対象から外れる。
-   * 各 $fn 本体の走査はここだけが行う（effects() は $fn を素通りする）ので、
-   * 走査は定義ごとに一度で済む。
+   * ノードが静的に表す値の追跡木。追跡できなければ undefined。
+   * ここでは $fn の本体を走査しない（走査は call() だけが行う）。
+   * これを守らないと、定義のたびに本体を数える二重走査になり、入れ子の深さに対して爆発する。
    */
-  private callable(node: unknown, senv: SEnv): ReadonlySet<string> | undefined {
+  private track(node: unknown, senv: SEnv): Track | undefined {
     if (typeof node === 'string') {
-      const m = SIMPLE_REF.exec(node);
-      return m === null ? undefined : senv.get(m[1]!);
+      const path = refPathOf(node);
+      if (path === undefined) return undefined;
+      return path.slice(1).reduce<Track | undefined>(field, senv.get(path[0]!));
+    }
+    if (Array.isArray(node)) {
+      return structOf(node.map((n, i) => [String(i), this.track(n, senv)] as const));
     }
     if (!isNodeMap(node)) return undefined;
     const shape = analyzeMapping(Object.keys(node));
+    if (shape.kind === 'plain') {
+      return structOf(
+        Object.entries(node).map(([k, v]) => [unescapeDollar(k), this.track(v, senv)] as const),
+      );
+    }
     if (shape.kind !== 'reserved') return undefined;
-    if (shape.main === 'fn') {
-      const param = node[shape.mainRaw];
-      const inner: SEnv = new Map(senv);
-      if (typeof param === 'string') inner.set(param, undefined);
-      return this.effects(node[shape.aux.get('body')!], inner);
+    switch (shape.main) {
+      case 'fn': {
+        const param = node[shape.mainRaw];
+        if (typeof param !== 'string') return undefined;
+        return {
+          kind: 'closure',
+          fn: node,
+          param,
+          body: node[shape.aux.get('body')!],
+          senv: new Map(senv),
+        };
+      }
+      case 'op': {
+        const name = node[shape.mainRaw];
+        return typeof name === 'string' ? { kind: 'opref', name } : undefined;
+      }
+      case 'if':
+        return altOf([
+          this.track(node[shape.aux.get('then')!], senv),
+          this.track(node[shape.aux.get('else')!], senv),
+        ]);
+      case 'each': {
+        // リテラルのリストから選ぶ形だけ追える。マッピングの $each が選ぶのは
+        // 値そのものではなく {key, value} なので、値の木で近似してはならない。
+        const items = node[shape.mainRaw];
+        return Array.isArray(items) ? altOf(items.map((n) => this.track(n, senv))) : undefined;
+      }
+      default:
+        return undefined;
     }
-    if (shape.main === 'op') {
-      const name = node[shape.mainRaw];
-      return typeof name === 'string' ? new Set([name]) : undefined;
+  }
+
+  /**
+   * 追跡木の値を引数 argument で呼んだときの作用集合。追跡できなければ undefined。
+   * 各 $fn 本体の走査はここだけが行う（effects() は $fn を素通りする）。
+   */
+  private call(t: Track | undefined, argument: Track | undefined): ReadonlySet<string> | undefined {
+    if (t === undefined) return undefined;
+    switch (t.kind) {
+      case 'opref':
+        return new Set([t.name]);
+      case 'struct':
+        // マッピングやリストは呼べない。呼べば実行時のエラーだが、推論は行を作らない。
+        return undefined;
+      case 'alt': {
+        const rows: ReadonlySet<string>[] = [];
+        for (const a of t.alts) {
+          const row = this.call(a, argument);
+          if (row === undefined) return undefined;
+          rows.push(row);
+        }
+        return union(...rows);
+      }
+      case 'closure':
+        return this.applyClosure(t, argument === undefined || !hasFunction(argument) ? undefined : argument);
     }
-    if (shape.main === 'if') {
-      const t = this.callable(node[shape.aux.get('then')!], senv);
-      const e = this.callable(node[shape.aux.get('else')!], senv);
-      return t === undefined || e === undefined ? undefined : union(t, e);
+  }
+
+  /**
+   * 閉包の本体を、引数の追跡木をパラメータに束縛して解析する。
+   * メモの鍵は（閉包の木、引数の木）の同一性。閉包の木は捕まえた senv も込みなので、
+   * 同じ $fn ノードでも環境が違えば別の鍵になる。
+   * 進行中の $fn ノードへ再入したら自己適用なので undefined（追跡不能）に倒す。
+   * これで解析の停止性は $fn ノードの個数で押さえられる。
+   */
+  private applyClosure(t: Track & { kind: 'closure' }, argument: Track | undefined): ReadonlySet<string> | undefined {
+    const byArgument = this.memo.get(t);
+    if (byArgument?.has(argument) === true) return byArgument.get(argument);
+    if (this.inProgress.has(t.fn)) return undefined;
+    this.inProgress.add(t.fn);
+    try {
+      const inner: SEnv = new Map(t.senv);
+      inner.set(t.param, argument);
+      const row = this.effects(t.body, inner);
+      // ponytail: 循環ガードが働いた内側の結果もそのままメモに残る（作用を数え落とす向き＝
+      // 追跡不能と同じ扱いなので健全性は崩れない）。気になるならガード発火を数えて弾く。
+      const cache = byArgument ?? new Map<Track | undefined, ReadonlySet<string> | undefined>();
+      cache.set(argument, row);
+      this.memo.set(t, cache);
+      return row;
+    } finally {
+      this.inProgress.delete(t.fn);
     }
-    return undefined;
   }
 }
 
@@ -462,7 +619,10 @@ class Evaluator {
     throw new EffectfulYamlError(
       `boundary was inferred to be a single value but ${cause}: expected 1 result, got ${results.length}. ` +
         `Choice most likely reached this boundary through a call the analyzer cannot track ` +
-        `(a $pipe stage or a function value behind a path). Boundary node: ${where}`,
+        `(a function value picked at run time, e.g. out of data or out of a $do result). ` +
+        `Wrap the call in an explicit handler ($list:, $first: or $mapping:) to declare the shape ` +
+        `instead of relying on static tracking; the choice is then handled there. ` +
+        `Boundary node: ${where}`,
     );
   }
 

@@ -480,3 +480,29 @@ export function interpolate(scalar: string, env: Env): Value {
   }
   return out;
 }
+
+/**
+ * スカラー全体がちょうど一つの `${参照名}` なら、その参照名を区画に分けて返す。
+ * `${a.b[0]}` は `['a', 'b', '0']`。演算や補間を含むスカラーは undefined。
+ * 参照名の文法（grammar.md「参照と式」）を Analyzer が持ち直さずに済むよう、
+ * 静的な追跡もこの式言語のパーサーを通す。パースできない文字列は
+ * ここではエラーにせず undefined を返し、報告は評価時に任せる。
+ */
+export function refPathOf(scalar: string): string[] | undefined {
+  let only: Segment | undefined;
+  try {
+    const segments = splitInterpolation(scalar);
+    only = segments.length === 1 ? segments[0] : undefined;
+  } catch {
+    return undefined;
+  }
+  if (only === undefined || only.kind !== 'expr') return undefined;
+  let node: Node;
+  try {
+    node = parse(only.src);
+  } catch {
+    return undefined;
+  }
+  if (node.k !== 'ref') return undefined;
+  return [node.name, ...node.path.map((seg) => (seg.k === 'key' ? seg.name : String(seg.i)))];
+}

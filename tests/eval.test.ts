@@ -679,11 +679,13 @@ $do:
   });
 
   it('追跡できない呼び出しの選択では境界をリスト扱いしない（実行時に検出する）', async () => {
-    // ${a.f} はパス経由なので閉包を構造的に追跡できない。
+    // 引数 arg は $if の分岐で、片方が関数を持たないので構造的に追跡できない
+    // （パス参照 ${a.f} 自体は追跡できる。tests/analyzer.test.ts を参照）。
     // 「不明な呼び出しが選択を持つかもしれない」ことを理由に境界をリストにはせず、
     // 実際に分岐したときだけ実行時のエラーにする。
     await expect(
-      run(`
+      run(
+        `
 $do:
 - $let:
     apply:
@@ -692,11 +694,17 @@ $do:
         $pipe: 1
         $through:
         - \${a.f}
-- $.apply:
-    f:
-      $fn: x
-      $body: {$each: [1, 2]}
-`),
+    arg:
+      $if: {$param: with_choice}
+      $then:
+        f:
+          $fn: x
+          $body: {$each: [1, 2]}
+      $else: 0
+- $.apply: \${arg}
+`,
+        { params: { with_choice: true } },
+      ),
     ).rejects.toThrow(/expected 1 result, got 2[\s\S]*cannot track/);
   });
 
