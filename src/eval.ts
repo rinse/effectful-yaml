@@ -21,6 +21,7 @@
  */
 import { interpolate, refPathOf } from './expr.js';
 import { analyzeMapping, HANDLER_REMOVES, unescapeDollar, type MappingShape } from './forms.js';
+import { empty, get, insert, type PMap } from './pmap.js';
 import {
   bind,
   CHOICE_OPS,
@@ -261,8 +262,14 @@ function handleState(comp: Comp, init: ReadonlyMap<string, Value>): Comp {
 // 静的な作用推論
 // ---------------------------------------------------------------------------
 
-/** レキシカルな名前 -> 静的に追跡できた値。undefined は「構造的に追跡できない」。 */
-type SEnv = Map<string, Track | undefined>;
+/**
+ * レキシカルな名前 -> 静的に追跡できた値。undefined は「構造的に追跡できない」。
+ * 評価器の Env と同じ永続平衡木なので、伸ばすのも捕まえるのも複製を伴わない
+ * （閉包の捕獲は木への参照ひとつ = O(1)、束縛の追加は O(log n)）。
+ * get は「未束縛」と「undefined が束縛されている」を区別しないが、これは Map でも同じで、
+ * 解析の健全性はもともとその区別に依存していない（正準形ではどちらも -1 に潰れる）。
+ */
+type SEnv = PMap<Track | undefined>;
 
 /**
  * 静的に追跡できた値（行の木）。undefined は追跡不能。
@@ -277,7 +284,7 @@ type Track =
       readonly fn: object;
       readonly param: string;
       readonly body: unknown;
-      /** 定義位置の追跡環境（レキシカル）。$let の続きに汚されないよう複製で持つ。 */
+      /** 定義位置の追跡環境（レキシカル）。木は不変なので参照ひとつで捕まえられる。 */
       readonly senv: SEnv;
     }
   | { readonly kind: 'opref'; readonly name: string }
@@ -431,7 +438,7 @@ class Analyzer {
         // 追跡不能（-1）の束縛も入れる（名前の有無はシャドーイングとして意味を持つ）。
         const env: (readonly [string, number])[] = [];
         for (const name of refsOf(t.body)) {
-          if (name !== t.param) env.push([name, this.canon(t.senv.get(name))] as const);
+          if (name !== t.param) env.push([name, this.canon(get(t.senv, name))] as const);
         }
         return JSON.stringify(['c', this.objId(t.fn), env]);
       }
@@ -481,7 +488,7 @@ class Analyzer {
         return union(
           this.effects(node[shape.raw], senv),
           // 引数の追跡木をパラメータに束縛して本体を解析する（多相的解析）。
-          this.call(senv.get(shape.name), this.track(node[shape.raw], senv)) ?? [],
+          this.call(get(senv, shape.name), this.track(node[shape.raw], senv)) ?? [],
         );
       case 'op':
         return union(this.effects(node[shape.raw], senv), [shape.name]);
@@ -503,16 +510,19 @@ class Analyzer {
     switch (shape.main) {
       case 'do': {
         const stmts = Array.isArray(arg) ? arg : [];
-        const inner: SEnv = new Map(senv);
         const out = new Set<string>();
-        for (const stmt of stmts) {
-          for (const x of this.statement(stmt, inner)) out.add(x);
-        }
+        // 束縛は文から文へ伸びるが、外側の senv は不変なので $do を出れば元のまま。
+        let inner = senv;
+        for (const stmt of stmts) inner = this.statement(stmt, inner, out);
         return out;
       }
-      case 'let':
-        // $do の外の $let は評価器がエラーにする。推論では右辺の合流だけ見る。
-        return this.statement(node, new Map(senv));
+      case 'let': {
+        // $do の外の $let は評価器がエラーにする。推論では右辺の合流だけ見る
+        // （文の並びではないので、伸びた senv は捨てて呼び出し元へ漏らさない）。
+        const out = new Set<string>();
+        this.statement(node, senv, out);
+        return out;
+      }
       case 'if':
         return union(
           this.effects(arg, senv),
@@ -576,19 +586,28 @@ class Analyzer {
     }
   }
 
-  /** $do の文一つ分。$let なら senv を伸ばす（左から右へのレキシカルな追跡）。 */
-  private statement(stmt: unknown, senv: SEnv): Set<string> {
-    if (!isNodeMap(stmt)) return this.effects(stmt, senv);
-    const shape = analyzeMapping(Object.keys(stmt));
-    if (shape.kind !== 'reserved' || shape.main !== 'let') return this.effects(stmt, senv);
-    const bindings = stmt[shape.mainRaw];
-    if (!isNodeMap(bindings)) return new Set();
-    const out = new Set<string>();
-    for (const [name, rhs] of Object.entries(bindings)) {
-      for (const x of this.effects(rhs, senv)) out.add(x);
-      senv.set(name, this.track(rhs, senv));
+  /**
+   * $do の文一つ分。作用は out へ足し、$let なら束縛を足した senv を返す
+   * （左から右へのレキシカルな追跡。同じ $let の中でも後の右辺は前の束縛を見る）。
+   */
+  private statement(stmt: unknown, senv: SEnv, out: Set<string>): SEnv {
+    if (!isNodeMap(stmt)) {
+      for (const x of this.effects(stmt, senv)) out.add(x);
+      return senv;
     }
-    return out;
+    const shape = analyzeMapping(Object.keys(stmt));
+    if (shape.kind !== 'reserved' || shape.main !== 'let') {
+      for (const x of this.effects(stmt, senv)) out.add(x);
+      return senv;
+    }
+    const bindings = stmt[shape.mainRaw];
+    if (!isNodeMap(bindings)) return senv;
+    let cur = senv;
+    for (const [name, rhs] of Object.entries(bindings)) {
+      for (const x of this.effects(rhs, cur)) out.add(x);
+      cur = insert(cur, name, this.track(rhs, cur));
+    }
+    return cur;
   }
 
   /**
@@ -600,7 +619,7 @@ class Analyzer {
     if (typeof node === 'string') {
       const path = refPathOf(node);
       if (path === undefined) return undefined;
-      return path.slice(1).reduce<Track | undefined>(field, senv.get(path[0]!));
+      return path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
     }
     if (Array.isArray(node)) {
       return structOf(node.map((n, i) => [String(i), this.track(n, senv)] as const));
@@ -622,7 +641,7 @@ class Analyzer {
           fn: node,
           param,
           body: node[shape.aux.get('body')!],
-          senv: new Map(senv),
+          senv,
         };
       }
       case 'op': {
@@ -684,9 +703,7 @@ class Analyzer {
     if (this.inProgress.has(t.fn)) return undefined;
     this.inProgress.add(t.fn);
     try {
-      const inner: SEnv = new Map(t.senv);
-      inner.set(t.param, argument);
-      const row = this.effects(t.body, inner);
+      const row = this.effects(t.body, insert(t.senv, t.param, argument));
       // ponytail: 循環ガードが働いた内側の結果もそのままメモに残る（作用を数え落とす向き＝
       // 追跡不能と同じ扱いなので健全性は崩れない）。気になるならガード発火を数えて弾く。
       this.memo.set(key, row);
@@ -1023,7 +1040,8 @@ class Evaluator {
       clauses.set(name, (arg, resume) => {
         // 節のパラメータには演算の引数そのものを渡す（$param の内部表現はここで剥がす）。
         const value = name === 'param' ? (arg as ParamArg).name : arg;
-        const inner: Env = { parent: closure.env, name: closure.param, value, resume };
+        // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
+        const inner: Env = { vars: insert(closure.env.vars, closure.param, value), resume };
         return this.node(closure.body, inner);
       });
     }
@@ -1114,7 +1132,7 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
   const analyzer = new Analyzer();
 
   // 作用シグネチャ。既定ハンドラが処理しない = 登録が要る演算だけが残る。
-  for (const name of analyzer.boundary(doc, new Map())) {
+  for (const name of analyzer.boundary(doc, empty)) {
     if (!(name in ops)) {
       throw new EffectfulYamlError(`unregistered operation: $${name}`);
     }

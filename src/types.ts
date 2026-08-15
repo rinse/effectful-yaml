@@ -2,6 +2,7 @@
  * effectful-yaml の値・環境・計算表現。
  * 仕様: docs/grammar.md（草案 0.3）
  */
+import { empty, get, insert, type PMap } from './pmap.js';
 
 /** 評価結果の値。YAML のデータ値に、言語内部の関数値（Closure / OpRef）を加えたもの。 */
 export type Value =
@@ -36,44 +37,29 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 export const isOpRef = (v: unknown): v is OpRef => v instanceof OpRef;
 
 /**
- * レキシカル環境。一件の束縛を持つフレームの親チェーン。フレームは不変なので、
- * 閉包が捕まえた環境は後から変化しない（拡張は新しいフレームを足すだけで、
- * 既存のフレームを書き換えない）。
- * resume は $handle の節の本体でだけ束縛される継続（レキシカルスコープ）。
- * チェーンの手前のフレームが奥のフレームを隠す（シャドーイング／resume の入れ替え）。
+ * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、$handle の節の本体でだけ
+ * 束縛される継続 resume の組。木は不変なので、閉包が捕まえた環境は後から変化しない
+ * （拡張は経路だけを作り直し、元の木はそのまま残る）。
+ * 読み書きとも最悪 O(log 束縛数)：get は根から降りるだけ、insert の複製は経路上のノードだけ。
+ * シャドーイングは同じキーの上書き、resume の入れ替えはフィールドの差し替えで表す。
  */
 export interface Env {
-  readonly parent?: Env;
-  readonly name?: string;
-  readonly value?: Value;
+  readonly vars: PMap<Value>;
   readonly resume?: (v: Value) => Comp;
 }
 
-export const emptyEnv: Env = {};
+export const emptyEnv: Env = { vars: empty };
 
+/** 束縛を一つ足した環境。resume は引き継ぐ（$let を挟んでも節の継続は見えたまま）。 */
 export const extendEnv = (env: Env, name: string, value: Value): Env => ({
-  parent: env,
-  name,
-  value,
+  vars: insert(env.vars, name, value),
+  resume: env.resume,
 });
 
-// ponytail: 参照はチェーンを手前からたどるので O(束縛の深さ)。書き込み側の O(n) コピーを
-// 読み出し側へ移す代わり。深い文書で参照が多発して実測で問題になったら、
-// ハッシュ配列マップ（HAMT）等の永続マップに昇格する。
-export function lookupEnv(env: Env, name: string): Value | undefined {
-  for (let cur: Env | undefined = env; cur !== undefined; cur = cur.parent) {
-    if (cur.name === name) return cur.value;
-  }
-  return undefined;
-}
+export const lookupEnv = (env: Env, name: string): Value | undefined => get(env.vars, name);
 
-/** チェーンをたどって最初に見つかる resume（$handle の節の本体でだけ束縛される継続）。 */
-export function resumeOf(env: Env): ((v: Value) => Comp) | undefined {
-  for (let cur: Env | undefined = env; cur !== undefined; cur = cur.parent) {
-    if (cur.resume !== undefined) return cur.resume;
-  }
-  return undefined;
-}
+/** $handle の節の本体でだけ束縛される継続。 */
+export const resumeOf = (env: Env): ((v: Value) => Comp) | undefined => env.resume;
 
 /**
  * freer モナド風の計算表現。
