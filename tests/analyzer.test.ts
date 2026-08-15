@@ -264,4 +264,26 @@ describe('作用の推論の計算量', () => {
     }
     await expect(evaluate(body)).resolves.toBe(2);
   });
+
+  it(
+    '引数にインラインの関数を渡す呼び出しが 1 段に複数あっても爆発しない',
+    async () => {
+      // 引数の追跡木は呼び出しのたびに作り直されるので、木の同一性で引くメモは当たらない。
+      // それだと深さ 18・分岐 2 で 2^18 回の走査になる（手元で 2.8 秒、深さ 20 で 10.7 秒）。
+      // 正準形で引けば、構造的に同じ (閉包, 引数) の対は 1 度しか本体を解析しない。
+      // 引数の二つの $fn は同じ形だが別のノードである（YAML に二度書けばそうなる）。
+      let body: unknown = 'leaf';
+      for (let i = 0; i < 18; i++) {
+        const arg = (): unknown => ({ $fn: 'y', $body: 'leaf' });
+        body = {
+          $do: [
+            { $let: { f: { $fn: 'x', $body: body } } },
+            { $if: false, $then: { '$.f': arg() }, $else: { '$.f': arg() } },
+          ],
+        };
+      }
+      await expect(evaluate(body)).resolves.toBe('leaf');
+    },
+    1000,
+  );
 });

@@ -327,6 +327,36 @@ function hasFunction(t: Track): boolean {
   }
 }
 
+const NO_REFS: ReadonlySet<string> = new Set();
+const refsCache = new WeakMap<object, ReadonlySet<string>>();
+
+/**
+ * 部分木の解析が追跡環境から読みうる名前（純粋に構文的な集合）。
+ * 追跡環境を読むのは二箇所だけである。
+ *   - `$.名前` のレキシカルな呼び出し（dollar の 'lexical'）
+ *   - スカラー全体がちょうど一つの参照のとき、その先頭区画（track の refPathOf）
+ * 束縛（$let / $fn のパラメータ）は無視するので、自由変数の上位集合になる。
+ * 上位集合であることが要る（鍵が細かくなる分には結果が変わらない）のは、
+ * これを閉包の正準形の鍵に使うためである。
+ */
+function refsOf(node: unknown): ReadonlySet<string> {
+  if (typeof node === 'string') {
+    const path = refPathOf(node);
+    return path === undefined ? NO_REFS : new Set([path[0]!]);
+  }
+  if (typeof node !== 'object' || node === null) return NO_REFS;
+  const cached = refsCache.get(node);
+  if (cached !== undefined) return cached;
+  const out = new Set<string>();
+  const children = Array.isArray(node) ? node : Object.values(node);
+  if (!Array.isArray(node)) {
+    for (const key of Object.keys(node)) if (key.startsWith('$.')) out.add(key.slice(2));
+  }
+  for (const child of children) for (const name of refsOf(child)) out.add(name);
+  refsCache.set(node, out);
+  return out;
+}
+
 /**
  * 作用集合を求めつつ、リストに評価される作用境界のノードを記録する。
  * 出現主義なので、実行されない分岐（$if の選ばれない側）の演算も数える。
@@ -335,18 +365,78 @@ class Analyzer {
   /** 値がリストになる境界ノード。スカラーは作用を持てないので object だけを入れる。 */
   readonly listBoundaries = new WeakSet<object>();
 
-  /**
-   * 閉包の呼び出しのメモ（閉包の木 -> 引数の木 -> 作用集合）。
-   * ponytail: 鍵は木の同一性なので、呼び出しごとに別の関数値を渡す形は毎回走査し直す
-   * （最悪で入れ子の深さに対して指数）。実測で問題になったら引数木の構造キーで引く。
-   */
-  private readonly memo = new WeakMap<
-    object,
-    Map<Track | undefined, ReadonlySet<string> | undefined>
-  >();
+  /** 閉包の呼び出しのメモ。鍵は「閉包の正準 ID, 引数の正準 ID」。 */
+  private readonly memo = new Map<string, ReadonlySet<string> | undefined>();
 
   /** 解析中の $fn ノード。再入は自己適用なので追跡不能に倒す（停止性）。 */
   private readonly inProgress = new Set<object>();
+
+  // -------------------------------------------------------------------------
+  // 追跡木の正準化（hash-consing）
+  //
+  // track() は呼ばれるたびに新しい Track を作るので、木の同一性で引くメモは
+  // 「同じ $fn を同じ環境で捕まえた閉包」を毎回別物と見なし、呼び出し位置ごとに
+  // 本体を解析し直す（入れ子の深さに対して指数）。構造的に等しい木へ同じ ID を
+  // 与えれば、その再走査は 1 回に畳まれる。
+  // 木は有向非巡回である（senv は定義時点のスナップショットで、$let は非再帰）ため、
+  // 正準化は停止する。
+  // -------------------------------------------------------------------------
+
+  private nextId = 0;
+  /** 正準キー -> 代表 ID。 */
+  private readonly ids = new Map<string, number>();
+  /** $fn ノードなど object の同一性 -> ID。 */
+  private readonly objIds = new WeakMap<object, number>();
+  /** 同じ Track を二度たどらないための覚え書き（Track は不変）。 */
+  private readonly trackIds = new WeakMap<object, number>();
+
+  private objId(o: object): number {
+    let id = this.objIds.get(o);
+    if (id === undefined) {
+      id = this.nextId++;
+      this.objIds.set(o, id);
+    }
+    return id;
+  }
+
+  /** 追跡木の正準 ID。追跡不能（undefined）は -1。 */
+  private canon(t: Track | undefined): number {
+    if (t === undefined) return -1;
+    const cached = this.trackIds.get(t);
+    if (cached !== undefined) return cached;
+    const key = this.canonKey(t);
+    let id = this.ids.get(key);
+    if (id === undefined) {
+      id = this.nextId++;
+      this.ids.set(key, id);
+    }
+    this.trackIds.set(t, id);
+    return id;
+  }
+
+  private canonKey(t: Track): string {
+    switch (t.kind) {
+      case 'opref':
+        return JSON.stringify(['o', t.name]);
+      case 'struct':
+        // ponytail: 鍵はフィールド数に比例した文字列。巨大なリテラルのリストを
+        // 束縛して呼び出しに渡すと 1 回だけ長い鍵を組む。困ったら深さで打ち切る。
+        return JSON.stringify(['s', [...t.fields].map(([k, v]) => [k, this.canon(v)])]);
+      case 'alt':
+        return JSON.stringify(['a', t.alts.map((a) => this.canon(a))]);
+      case 'closure': {
+        // 本体の解析が捕まえた環境から読みうる名前だけを鍵に入れる。ここを絞らないと、
+        // 各レベルの環境に呼び出し経路が丸ごと残り、正準形にしても指数のままになる。
+        // パラメータは applyClosure が引数で必ず上書きするので除く。
+        // 追跡不能（-1）の束縛も入れる（名前の有無はシャドーイングとして意味を持つ）。
+        const env: (readonly [string, number])[] = [];
+        for (const name of refsOf(t.body)) {
+          if (name !== t.param) env.push([name, this.canon(t.senv.get(name))] as const);
+        }
+        return JSON.stringify(['c', this.objId(t.fn), env]);
+      }
+    }
+  }
 
   /** 境界位置。既定ハンドラが処理する作用は消え、登録演算だけが外へ残る。 */
   boundary(node: unknown, senv: SEnv): Set<string> {
@@ -583,14 +673,14 @@ class Analyzer {
 
   /**
    * 閉包の本体を、引数の追跡木をパラメータに束縛して解析する。
-   * メモの鍵は（閉包の木、引数の木）の同一性。閉包の木は捕まえた senv も込みなので、
-   * 同じ $fn ノードでも環境が違えば別の鍵になる。
+   * メモの鍵は（閉包の正準 ID、引数の正準 ID）。閉包の正準形は $fn ノードと、
+   * 捕まえた環境のうち本体が読みうる束縛なので、同じ $fn でも環境が違えば別の鍵になる。
    * 進行中の $fn ノードへ再入したら自己適用なので undefined（追跡不能）に倒す。
    * これで解析の停止性は $fn ノードの個数で押さえられる。
    */
   private applyClosure(t: Track & { kind: 'closure' }, argument: Track | undefined): ReadonlySet<string> | undefined {
-    const byArgument = this.memo.get(t);
-    if (byArgument?.has(argument) === true) return byArgument.get(argument);
+    const key = `${this.canon(t)},${this.canon(argument)}`;
+    if (this.memo.has(key)) return this.memo.get(key);
     if (this.inProgress.has(t.fn)) return undefined;
     this.inProgress.add(t.fn);
     try {
@@ -599,9 +689,7 @@ class Analyzer {
       const row = this.effects(t.body, inner);
       // ponytail: 循環ガードが働いた内側の結果もそのままメモに残る（作用を数え落とす向き＝
       // 追跡不能と同じ扱いなので健全性は崩れない）。気になるならガード発火を数えて弾く。
-      const cache = byArgument ?? new Map<Track | undefined, ReadonlySet<string> | undefined>();
-      cache.set(argument, row);
-      this.memo.set(t, cache);
+      this.memo.set(key, row);
       return row;
     } finally {
       this.inProgress.delete(t.fn);
