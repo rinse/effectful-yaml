@@ -28,6 +28,7 @@ import {
   EffectfulYamlError,
   emptyEnv,
   extendEnv,
+  force,
   isClosure,
   isOpRef,
   lookupEnv,
@@ -125,11 +126,15 @@ function handleOps(
   clauses: ReadonlyMap<string, Clause>,
   ret: (v: Value) => Comp = pure,
 ): Comp {
-  const rec = (c: Comp): Comp => {
+  const rec = (c0: Comp): Comp => {
+    const c = force(c0);
     if (c.tag === 'pure') return ret(c.value);
     const clause = clauses.get(c.name);
-    if (clause !== undefined) return clause(c.arg, (v) => rec(c.resume(v)));
-    return { tag: 'op', name: c.name, arg: c.arg, resume: (v) => rec(c.resume(v)) };
+    // 節はその場で resume することがある（$log や $where）。そこで直に rec を呼ぶと
+    // 演算の回数だけ入れ子になるので、bind の節を一枚かませて force のループへ返す。
+    const next = (v: Value): Comp => bind(pure(null), () => rec(c.resume(v)));
+    if (clause !== undefined) return clause(c.arg, next);
+    return { tag: 'op', name: c.name, arg: c.arg, resume: next };
   };
   return rec(comp);
 }
@@ -144,6 +149,8 @@ function collectChoice(comp: Comp): Comp {
       [
         'each',
         (arg, k) => {
+          // ponytail: 連結が毎回コピーなので分岐数に対して O(n^2)。8000 分岐で 100ms 台。
+          // acc は多重 resume で再入するので破壊的な push にはできない。要るなら永続リストにする。
           let acc: Comp = pure([]);
           for (const item of eachItems(arg)) {
             acc = bind(acc, (done) =>
@@ -188,22 +195,32 @@ function collectFirst(comp: Comp): Comp {
  * 各再開はその演算の時点の記憶から分岐する（= ハンドラは自分より内側だけを見る）。
  */
 function handleState(comp: Comp, init: ReadonlyMap<string, Value>): Comp {
-  const rec = (c: Comp, s: ReadonlyMap<string, Value>): Comp => {
-    if (c.tag === 'pure') return pure(c.value);
-    if (c.name === 'get') {
-      const name = requireString(c.arg, '$get cell name');
-      if (!s.has(name)) throw new EffectfulYamlError(`uninitialized cell: ${name}`);
-      return rec(c.resume(s.get(name)!), s);
-    }
-    if (c.name === 'set') {
-      if (!isValueMap(c.arg)) {
-        throw new EffectfulYamlError(`$set requires a mapping, got: ${describe(c.arg)}`);
+  // 記憶は再帰ではなくループの変数として持ち回る（文の数だけ入れ子にならないように）。
+  const rec = (c0: Comp, s0: ReadonlyMap<string, Value>): Comp => {
+    let c = force(c0);
+    let s = s0;
+    for (;;) {
+      if (c.tag === 'pure') return pure(c.value);
+      if (c.name === 'get') {
+        const name = requireString(c.arg, '$get cell name');
+        if (!s.has(name)) throw new EffectfulYamlError(`uninitialized cell: ${name}`);
+        c = force(c.resume(s.get(name)!));
+        continue;
       }
-      const next = new Map(s);
-      for (const [cell, v] of Object.entries(c.arg)) next.set(cell, v);
-      return rec(c.resume(null), next);
+      if (c.name === 'set') {
+        if (!isValueMap(c.arg)) {
+          throw new EffectfulYamlError(`$set requires a mapping, got: ${describe(c.arg)}`);
+        }
+        const next = new Map(s);
+        for (const [cell, v] of Object.entries(c.arg)) next.set(cell, v);
+        c = force(c.resume(null));
+        s = next;
+        continue;
+      }
+      const m = c;
+      const here = s;
+      return { tag: 'op', name: m.name, arg: m.arg, resume: (v) => rec(m.resume(v), here) };
     }
-    return { tag: 'op', name: c.name, arg: c.arg, resume: (v) => rec(c.resume(v), s) };
   };
   return rec(comp, init);
 }
@@ -894,7 +911,7 @@ class Evaluator {
   }
 
   private closureOf(node: unknown, env: Env, name: string): Closure {
-    const comp = this.node(node, env);
+    const comp = force(this.node(node, env));
     if (comp.tag !== 'pure' || !isClosure(comp.value)) {
       throw new EffectfulYamlError(`$with clause '${name}' must be a function ($fn)`);
     }
@@ -960,13 +977,13 @@ async function drive(
   comp: Comp,
   ops: Record<string, (arg: Value) => Value | Promise<Value>>,
 ): Promise<Value> {
-  let c = comp;
+  let c = force(comp);
   for (;;) {
     if (c.tag === 'pure') return c.value;
     if (c.name === 'fail') throw new EffectfulYamlError(`failure: ${describe(c.arg)}`);
     const host = ops[c.name];
     if (host === undefined) throw new EffectfulYamlError(`unregistered operation: $${c.name}`);
-    c = c.resume(await host(c.arg));
+    c = force(c.resume(await host(c.arg)));
   }
 }
 

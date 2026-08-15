@@ -62,6 +62,14 @@ export function lookupEnv(env: Env, name: string): Value | undefined {
  * freer モナド風の計算表現。
  * 評価器はこの木を返し、ハンドラは Comp → Comp の純粋変換として実装する。
  * resume が純粋クロージャなので、同じ継続を何度でも呼べる（$handle の多重 resume）。
+ *
+ * bind は継続を「呼ばずに」節として積むだけである。これが表現の不変条件を決める。
+ *
+ *   消費側は必ず force() を通してから tag を見る。生の Comp に bind が残っている。
+ *
+ * bind が即座に f を呼ばないのは、そうしないと逐次組み立て
+ * （リストの要素、マッピングの値、$do の文の並び）が要素数ぶんの再帰になり、
+ * 数千要素でスタックが溢れるからである。積むだけなら深さは force() のループが引き受ける。
  */
 export type Comp =
   | { readonly tag: 'pure'; readonly value: Value }
@@ -70,7 +78,11 @@ export type Comp =
       readonly name: string;
       readonly arg: Value;
       readonly resume: (v: Value) => Comp;
-    };
+    }
+  | { readonly tag: 'bind'; readonly comp: Comp; readonly fn: (v: Value) => Comp };
+
+/** force() が返す形。bind を剥がし終えた Comp。 */
+export type Forced = Extract<Comp, { tag: 'pure' | 'op' }>;
 
 export const pure = (value: Value): Comp => ({ tag: 'pure', value });
 
@@ -81,11 +93,37 @@ export const perform = (name: string, arg: Value): Comp => ({
   resume: pure,
 });
 
-// ponytail: 左結合の bind 連鎖は O(n^2)。文書が大きくなり実測で問題になったら
-// 継続キュー（右結合化）にする。
-export function bind(c: Comp, f: (v: Value) => Comp): Comp {
-  if (c.tag === 'pure') return f(c.value);
-  return { tag: 'op', name: c.name, arg: c.arg, resume: (v) => bind(c.resume(v), f) };
+export const bind = (c: Comp, f: (v: Value) => Comp): Comp => ({ tag: 'bind', comp: c, fn: f });
+
+/**
+ * bind を剥がして pure か op にする。
+ * モナド結合律 `(m >>= f) >>= g  ==  m >>= (\v -> f v >>= g)` で右結合化するだけで、
+ * 演算そのものは実行しない。一段ごとに O(1)、再帰は使わない。
+ *
+ * 右結合化が作る合成継続 `g_k = v => bind(f_k(v), g_{k+1})` は、呼ぶと元の f_k だけを
+ * 呼び、g_{k+1} は bind へ「データとして」渡す。だから合成が何段積もうと入れ子の呼び出しにならず、
+ * ほどくのはこのループの仕事になる。resume の作り直しも一段ぶん O(1) で済む。
+ */
+export function force(c: Comp): Forced {
+  let cur = c;
+  for (;;) {
+    if (cur.tag !== 'bind') return cur;
+    const outer = cur;
+    const m = outer.comp;
+    if (m.tag === 'pure') {
+      cur = outer.fn(m.value);
+      continue;
+    }
+    if (m.tag === 'op') {
+      return {
+        tag: 'op',
+        name: m.name,
+        arg: m.arg,
+        resume: (v) => bind(m.resume(v), outer.fn),
+      };
+    }
+    cur = { tag: 'bind', comp: m.comp, fn: (v) => bind(m.fn(v), outer.fn) };
+  }
 }
 
 /** 言語仕様の「エラー」。fail 作用（$fail）とは別物で、ハンドラでは捕捉できない。 */
