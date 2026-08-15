@@ -18,4 +18,15 @@ describe('examples', () => {
   it('range.yaml は自己適用の range で hello を 100 個並べる', async () => {
     await expect(runExample('range.yaml')).resolves.toEqual(Array(100).fill('hello'));
   });
+
+  it('docker-compose.yaml のような作用を含まない文書は、それ自身に評価される（identity）', async () => {
+    await expect(runExample('docker-compose.yaml')).resolves.toEqual({
+      services: {
+        nginx: {
+          image: 'nginx:alpine',
+          ports: ['8080:80'],
+        },
+      },
+    });
+  });
 });
