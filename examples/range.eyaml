@@ -1,0 +1,34 @@
+# $let は非再帰だが、関数を引数 self として自分自身に渡す自己適用なら反復を書ける。
+# go は {self, lo, hi} を取り、lo..hi の各整数を選択の分岐として一つずつ出す。
+# 呼び出し形 $.名前 はパスを許さないので、引数の中の閉包は $pipe の $through で呼ぶ。
+$do:
+- $let:
+    go:
+      $fn: a
+      $body:
+        $do:
+        - $where: ${a.lo <= a.hi}
+        - $let: {k: {$each: [this, rest]}}
+        - $if: ${k == 'this'}
+          $then: ${a.lo}
+          $else:
+            $pipe:
+              self: ${a.self}
+              lo: ${a.lo + 1}
+              hi: ${a.hi}
+            $through:
+            - ${a.self}
+- $let:
+    range:
+      $fn: r
+      $body:
+        $pipe:
+          self: ${go}
+          lo: ${r.lo}
+          hi: ${r.hi}
+        $through:
+        - ${go}
+# {$.range: {lo, hi}} は $each と同じ選択として振る舞い、静的追跡も通る。
+- $let:
+    n: {$.range: {lo: 1, hi: 100}}
+- hello
