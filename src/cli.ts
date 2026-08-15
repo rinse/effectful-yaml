@@ -1,5 +1,5 @@
 /**
- * eyaml CLI の本体。
+ * eff-yaml CLI の本体。
  * 入出力を注入できるよう run() に切り出し、プロセスへの接続は bin.ts が行う。
  */
 import { parseArgs } from 'node:util';
@@ -14,7 +14,7 @@ export interface CliIo {
 }
 
 const USAGE = `\
-Usage: eyaml [file] [-p name=value]...
+Usage: eff-yaml [file] [-p name=value]...
 
 effectful-yaml 文書を評価し、結果を YAML で標準出力に書く。
 $log の中身は標準エラー出力に書く。
@@ -68,7 +68,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     io.stdout(stringify(value));
     return 0;
   } catch (e) {
-    io.stderr(`eyaml: ${e instanceof Error ? e.message : String(e)}\n`);
+    io.stderr(`eff-yaml: ${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
 }

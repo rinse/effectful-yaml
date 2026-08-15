@@ -1,5 +1,5 @@
 /**
- * eyaml CLI の run() を偽の入出力で検査する。
+ * eff-yaml CLI の run() を偽の入出力で検査する。
  */
 import { describe, expect, it } from 'vitest';
 import { run } from '../src/cli.js';
@@ -23,7 +23,7 @@ async function runCli(argv: string[], stdin = ''): Promise<Captured> {
   return { code, out, err };
 }
 
-describe('eyaml CLI', () => {
+describe('eff-yaml CLI', () => {
   it('標準入力の文書を評価して YAML を標準出力に書く', async () => {
     const r = await runCli(
       ['-p', 'db_host=example.com'],

@@ -1,4 +1,4 @@
-# CLI（eyaml）
+# CLI（eff-yaml）
 
 effectful-yaml 文書をコマンドラインから評価する CLI である。
 標準の `$` アクションだけを持ち、登録演算は使えない。
@@ -7,7 +7,7 @@ effectful-yaml 文書をコマンドラインから評価する CLI である。
 ## 使い方
 
 ```
-eyaml [file] [-p name=value]...
+eff-yaml [file] [-p name=value]...
 ```
 
 - **`file`**：入力の YAML ファイル。省略時と `-` は標準入力から読む。
@@ -21,6 +21,12 @@ eyaml [file] [-p name=value]...
 パラメータの値は YAML として解釈する。
 `-p port=5432` は数値になり、文字列にしたければ `-p 'host="5432"'` のように引用する。
 
+## 拡張子
+
+effectful-yaml の文書だと明示したいときは、ファイルの拡張子に `.eyaml` を用いる。
+文書は素の YAML としてもそのまま妥当なので、`.yaml` のままでもよい。
+CLI は拡張子を検査しない。
+
 ## 実行
 
 パッケージは未公開なので、リポジトリ内でビルドして使う。
@@ -31,7 +37,7 @@ echo 'greeting: {$param: name, $default: world}' | node dist/bin.js -p name=CLI
 # greeting: CLI
 ```
 
-`npm link` を実行すると `eyaml` コマンドとして PATH に入る。
-Puppet の hiera-eyaml も `eyaml` コマンドを提供するため、衝突する環境では `package.json` の `bin` の名前を変える。
+`npm link` を実行すると `eff-yaml` コマンドとして PATH に入る。
+コマンド名を `eyaml` にしないのは、Puppet の hiera-eyaml が同名のコマンドを提供していて衝突するからである。
 
 本ページの挙動は `tests/cli.test.ts` が固定している。

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "eyaml": "dist/bin.js"
+    "eff-yaml": "dist/bin.js"
   },
   "engines": {
     "node": ">=20"
