@@ -305,9 +305,10 @@ class Analyzer {
         );
       case 'fn':
       case 'op':
-        // 値を作るだけで作用は起こさない。本体は呼び出し側で数える。
-        // ただし本体の境界の形は登録しておく（追跡できない経路で呼ばれても形が要る）。
-        this.callable(node, senv);
+        // 値を作るだけで作用は起こさない。本体の作用は呼び出しを追跡できる側
+        // （$let の束縛、$pipe の段、$handle の節）が callable() で数える。
+        // ここで本体を走査してはならない。定義のたびに二重走査になり、
+        // 入れ子の深さに対して指数的になる。
         return new Set();
       case 'pipe': {
         const stages = Array.isArray(aux('through')) ? (aux('through') as unknown[]) : [];
@@ -371,10 +372,9 @@ class Analyzer {
 
   /**
    * ノードが表す関数値を呼んだときの作用集合。追跡できなければ undefined。
-   * $pipe の段やパス経由の参照は追跡できないので、事前検証の対象から外れる。
-   *
-   * ponytail: $fn の本体は effects() 側でも走査するので、$let + $fn の入れ子の深さに対して
-   * 走査が指数的になる。文書は小さい前提。実測で問題になったらノードごとにメモ化する。
+   * パス経由の参照（`${a.b}`）は追跡できないので、事前検証の対象から外れる。
+   * 各 $fn 本体の走査はここだけが行う（effects() は $fn を素通りする）ので、
+   * 走査は定義ごとに一度で済む。
    */
   private callable(node: unknown, senv: SEnv): ReadonlySet<string> | undefined {
     if (typeof node === 'string') {
@@ -416,11 +416,18 @@ export interface EvaluateOptions {
   onLog?: (value: Value) => void;
 }
 
-/** $param の演算引数の内部表現（$default を境界で先に確定させて運ぶ）。 */
+/**
+ * $param の演算引数の内部表現。
+ * optional は「呼び出し位置に $default があるので、未提供なら ABSENT を返してよい」。
+ * $default のノード自体は呼び出し位置に留まり、未提供のときだけ評価される（遅延位置）。
+ */
 interface ParamArg {
   readonly name: string;
-  readonly fallback?: Value;
+  readonly optional?: boolean;
 }
+
+/** handleParam が「渡されていない」を伝える番兵。同一性でだけ判定し、文書からは作れない。 */
+const ABSENT: Value = Object.freeze({});
 
 class Evaluator {
   constructor(
@@ -485,7 +492,7 @@ class Evaluator {
             if (Object.prototype.hasOwnProperty.call(this.params, spec.name)) {
               return k(this.params[spec.name]!);
             }
-            if ('fallback' in spec) return k(spec.fallback!);
+            if (spec.optional === true) return k(ABSENT);
             throw new EffectfulYamlError(`parameter not provided: ${spec.name}`);
           },
         ],
@@ -623,9 +630,10 @@ class Evaluator {
         return bind(this.node(arg, env), (name) => {
           const spec: ParamArg = { name: requireString(name, '$param name') };
           if (!shape.aux.has('default')) return perform('param', spec);
-          // $default も値渡しで先に評価される（パラメータが渡されていても中の作用は起きる）。
-          return bind(this.node(aux('default'), env), (fallback) =>
-            perform('param', { ...spec, fallback }),
+          // $default は $if の分岐と同じ遅延位置。パラメータが渡されていれば評価しない
+          // （作用の推論は出現主義なので、集合には数える）。
+          return bind(perform('param', { ...spec, optional: true }), (v) =>
+            v === ABSENT ? this.node(aux('default'), env) : pure(v),
           );
         });
       case 'get':

@@ -164,6 +164,32 @@ port: {$param: db_port, $default: 5432}
     await expect(run('{$param: nope}')).rejects.toThrow(EffectfulYamlError);
   });
 
+  it('$default は遅延位置：パラメータが渡されていれば中の作用は起きない', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+port:
+  $param: port
+  $default:
+    $do:
+    - $log: defaulted
+    - $fail: port is required
+`,
+        { params: { port: 8080 }, onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toEqual({ port: 8080 });
+    expect(logs).toEqual([]);
+  });
+
+  it('評価されない $default の演算も作用に数える（$if の分岐と同じ出現主義）', async () => {
+    // 選択が $default にだけ現れるので境界はリスト形。渡されていれば分岐せず要素 1 になる。
+    await expect(
+      run('{$param: x, $default: {$each: [1, 2]}}', { params: { x: 5 } }),
+    ).resolves.toEqual([5]);
+    await expect(run('{$param: x, $default: {$each: [1, 2]}}')).resolves.toEqual([1, 2]);
+  });
+
   it('grammar.md の用例（パラメータと条件分岐）', async () => {
     await expect(
       run(
@@ -725,5 +751,16 @@ $do:
       $body: \${s.acc + s.x}
 `),
     ).resolves.toBe(6);
+  });
+});
+
+describe('作用の推論の計算量', () => {
+  it('$let + $fn の深い入れ子でも走査は線形で終わる', async () => {
+    // かつて $fn の定義ごとに本体を二重走査していたため 2^深さ に爆発した。回帰を防ぐ。
+    let body: unknown = '${x}';
+    for (let i = 0; i < 32; i++) {
+      body = { $do: [{ $let: { f: { $fn: 'x', $body: body } } }, { '$.f': i }] };
+    }
+    await expect(evaluate(body)).resolves.toBe(0);
   });
 });
