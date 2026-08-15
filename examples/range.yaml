@@ -11,23 +11,18 @@ $do:
         - $if: ${k == 'this'}
           $then: ${a.from}
           $else:
-            # 呼び出し形 $.a.self: {object} は許されないので、$pipe の $through で呼んでいる
-            $pipe:
-              # 引数の設定; 引数はオブジェクト {self, from, to}
+            # 引数の中の閉包はパス呼び出し $.a.self で直接呼べる; 引数はオブジェクト {self, from, to}
+            $.a.self:
               self: ${a.self}
               from: ${a.from + 1}
               to: ${a.to}
-            $through:
-            - ${a.self}
     range:
       $fn: r
       $body:
-        $pipe:
+        $.go:
           self: ${go}
           from: ${r.from}
           to: ${r.to}
-        $through:
-        - ${go}
 
 # {$.range: {from, to}} は $each と同じ選択として振る舞い、静的追跡も通る。
 - $let:
