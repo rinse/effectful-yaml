@@ -125,6 +125,18 @@ $do:
   it('演算の引数も合成なので、$each の入れ子が平坦化される', async () => {
     await expect(run('{$each: {$each: [[1, 2], [3, 4]]}}')).resolves.toEqual([1, 2, 3, 4]);
   });
+
+  it('データ文脈では最も外側の $ 式だけが境界になる（$do の中との対比）', async () => {
+    // 上の $do のテストでは同じ字面がブロック全体を分岐させる。
+    // データ文脈では {$each} 自身が境界なので、そこで収集されてリストになる。
+    await expect(run('x: [1, {$each: [a, b]}]')).resolves.toEqual({ x: [1, ['a', 'b']] });
+  });
+
+  it('兄弟の境界は作用を共有しない（状態は島ごとに独立）', async () => {
+    await expect(
+      run('a: {$do: [{$set: {n: 1}}, {$get: n}]}\nb: {$get: n}'),
+    ).rejects.toThrow('uninitialized cell: n');
+  });
 });
 
 describe('$where（where.md）', () => {
