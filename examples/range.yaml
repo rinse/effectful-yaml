@@ -1,0 +1,35 @@
+# $let は非再帰だが、関数を引数 self として自分自身に渡す自己適用なら反復を書ける。
+$do:
+- $let:
+    # go は {self, from, to} を取り、from..to の各整数を選択の分岐として一つずつ出す。
+    go:
+      $fn: a
+      $body:
+        $do:
+        - $where: ${a.from <= a.to}
+        - $let: {k: {$each: [this, rest]}}
+        - $if: ${k == 'this'}
+          $then: ${a.from}
+          $else:
+            # 呼び出し形 $.a.self: {object} は許されないので、$pipe の $through で呼んでいる
+            $pipe:
+              # 引数の設定; 引数はオブジェクト {self, from, to}
+              self: ${a.self}
+              from: ${a.from + 1}
+              to: ${a.to}
+            $through:
+            - ${a.self}
+    range:
+      $fn: r
+      $body:
+        $pipe:
+          self: ${go}
+          from: ${r.from}
+          to: ${r.to}
+        $through:
+        - ${go}
+
+# {$.range: {from, to}} は $each と同じ選択として振る舞い、静的追跡も通る。
+- $let:
+    n: {$.range: {from: 1, to: 100}}
+- hello

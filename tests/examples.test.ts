@@ -15,7 +15,7 @@ describe('examples', () => {
     await expect(runExample('hello100.eyaml')).resolves.toEqual(Array(100).fill('hello'));
   });
 
-  it('range.eyaml は自己適用の range で hello を 100 個並べる', async () => {
-    await expect(runExample('range.eyaml')).resolves.toEqual(Array(100).fill('hello'));
+  it('range.yaml は自己適用の range で hello を 100 個並べる', async () => {
+    await expect(runExample('range.yaml')).resolves.toEqual(Array(100).fill('hello'));
   });
 });
