@@ -1,0 +1,18 @@
+# 代数的作用とハンドラの例。
+# throw は $op で宣言しただけの抽象的な演算で、それ自体は意味を持たない。
+# 「エラー終了」という意味は、$handle の節が標準の失敗への翻訳として与える。
+$do:
+- $let:
+    throw: {$op: exn.throw}
+- $handle:
+    $do:
+    - $log: start
+    - {$.throw: error message}
+    - $log: unreachable    # 節が $resume を呼ばないので、ここには到達しない
+  $with:
+    exn.throw:
+      $fn: msg
+      $body:
+        # 打ち切って標準の失敗に翻訳する。CLI はこれを受けて終了コード 1 で止まる。
+        # ここを既定値に置き換えれば、同じ本体のまま回復の意味に変わる。
+        $fail: ${msg}
