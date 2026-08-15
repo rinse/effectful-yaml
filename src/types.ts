@@ -36,26 +36,43 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 export const isOpRef = (v: unknown): v is OpRef => v instanceof OpRef;
 
 /**
- * レキシカル環境。拡張はコピーで行い、閉包が捕まえた環境は決して変化しない。
+ * レキシカル環境。一件の束縛を持つフレームの親チェーン。フレームは不変なので、
+ * 閉包が捕まえた環境は後から変化しない（拡張は新しいフレームを足すだけで、
+ * 既存のフレームを書き換えない）。
  * resume は $handle の節の本体でだけ束縛される継続（レキシカルスコープ）。
+ * チェーンの手前のフレームが奥のフレームを隠す（シャドーイング／resume の入れ替え）。
  */
 export interface Env {
-  readonly vars: ReadonlyMap<string, Value>;
+  readonly parent?: Env;
+  readonly name?: string;
+  readonly value?: Value;
   readonly resume?: (v: Value) => Comp;
 }
 
-export const emptyEnv: Env = { vars: new Map() };
+export const emptyEnv: Env = {};
 
-// ponytail: 拡張のたびに Map を全コピーする O(n)。文書の束縛数は小さい前提。
-// 実測で問題になったら親チェーン式の永続構造にする。
-export function extendEnv(env: Env, name: string, value: Value): Env {
-  const vars = new Map(env.vars);
-  vars.set(name, value);
-  return env.resume !== undefined ? { vars, resume: env.resume } : { vars };
+export const extendEnv = (env: Env, name: string, value: Value): Env => ({
+  parent: env,
+  name,
+  value,
+});
+
+// ponytail: 参照はチェーンを手前からたどるので O(束縛の深さ)。書き込み側の O(n) コピーを
+// 読み出し側へ移す代わり。深い文書で参照が多発して実測で問題になったら、
+// ハッシュ配列マップ（HAMT）等の永続マップに昇格する。
+export function lookupEnv(env: Env, name: string): Value | undefined {
+  for (let cur: Env | undefined = env; cur !== undefined; cur = cur.parent) {
+    if (cur.name === name) return cur.value;
+  }
+  return undefined;
 }
 
-export function lookupEnv(env: Env, name: string): Value | undefined {
-  return env.vars.get(name);
+/** チェーンをたどって最初に見つかる resume（$handle の節の本体でだけ束縛される継続）。 */
+export function resumeOf(env: Env): ((v: Value) => Comp) | undefined {
+  for (let cur: Env | undefined = env; cur !== undefined; cur = cur.parent) {
+    if (cur.resume !== undefined) return cur.resume;
+  }
+  return undefined;
 }
 
 /**

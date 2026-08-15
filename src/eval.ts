@@ -35,6 +35,7 @@ import {
   OpRef,
   perform,
   pure,
+  resumeOf,
   STATE_OPS,
   STD_OPS,
   type Comp,
@@ -843,7 +844,7 @@ class Evaluator {
       case 'handle':
         return this.handle(arg, aux('with'), env);
       case 'resume': {
-        const k = env.resume;
+        const k = resumeOf(env);
         if (k === undefined) {
           throw new EffectfulYamlError('$resume is only allowed inside a $handle clause');
         }
@@ -899,10 +900,7 @@ class Evaluator {
       clauses.set(name, (arg, resume) => {
         // 節のパラメータには演算の引数そのものを渡す（$param の内部表現はここで剥がす）。
         const value = name === 'param' ? (arg as ParamArg).name : arg;
-        const inner: Env = {
-          vars: new Map(closure.env.vars).set(closure.param, value),
-          resume,
-        };
+        const inner: Env = { parent: closure.env, name: closure.param, value, resume };
         return this.node(closure.body, inner);
       });
     }
