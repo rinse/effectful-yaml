@@ -10,6 +10,7 @@ YAML の配列を do 文のように解釈し、中で利用しているアク�
 - [ドキュメント索引](docs/index.md)：`docs/` 配下の全ドキュメントへの入口。
 - [言語仕様（草案 0.3）](docs/grammar.md)：DSL の文法と評価モデルの規範。
 - [処理系の利用](docs/usage.md)：TypeScript から評価器を呼び出す API と評価オプション。
+- [CLI（eyaml）](docs/cli.md)：標準の `$` アクションだけで文書を評価するコマンド。
 - `docs/reference/`：予約キーごとのリファレンス。
 
 ## ドキュメント管理
