@@ -95,3 +95,14 @@ describe('逐次組み立ての計算量', () => {
     expect(result[`k${n - 1}`]).toBe(n);
   }, 5000);
 });
+
+describe('状態の書き込みの計算量', () => {
+  it('1 万個の別々のセルへの $set が二乗にならない', async () => {
+    // 記憶の複製が「$set のたびに全セルをコピー」だと、i 個目の書き込みで i 個写すので
+    // 総計 Sigma i = O(n^2) になる。永続木なら書き込みごとに O(log n)。
+    const stmts: unknown[] = [];
+    for (let i = 0; i < 10000; i++) stmts.push({ $set: { [`c${i}`]: i } });
+    stmts.push({ $get: 'c0' });
+    await expect(evaluate({ $do: stmts })).resolves.toBe(0);
+  }, 3000);
+});

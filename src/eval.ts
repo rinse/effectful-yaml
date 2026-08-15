@@ -227,25 +227,29 @@ function collectFirst(comp: Comp): Comp {
  * 記憶を再帰の引数として持ち回るので、外側のハンドラが複数回 resume すると
  * 各再開はその演算の時点の記憶から分岐する（= ハンドラは自分より内側だけを見る）。
  */
-function handleState(comp: Comp, init: ReadonlyMap<string, Value>): Comp {
+function handleState(comp: Comp, init: PMap<Value>): Comp {
   // 記憶は再帰ではなくループの変数として持ち回る（文の数だけ入れ子にならないように）。
-  const rec = (c0: Comp, s0: ReadonlyMap<string, Value>): Comp => {
+  // 記憶も環境と同じ永続平衡木である。$set ごとの全コピーだと書き込み回数 x セル数で
+  // 二乗になるが、木なら書き込みごとに O(log セル数)。セルの値は Value（undefined を
+  // 含まない）ので、get の undefined は「未作成」の合図として使える。
+  const rec = (c0: Comp, s0: PMap<Value>): Comp => {
     let c = force(c0);
     let s = s0;
     for (;;) {
       if (c.tag === 'pure') return pure(c.value);
       if (c.name === 'get') {
         const name = requireString(c.arg, '$get cell name');
-        if (!s.has(name)) throw new EffectfulYamlError(`uninitialized cell: ${name}`);
-        c = force(c.resume(s.get(name)!));
+        const v = get(s, name);
+        if (v === undefined) throw new EffectfulYamlError(`uninitialized cell: ${name}`);
+        c = force(c.resume(v));
         continue;
       }
       if (c.name === 'set') {
         if (!isValueMap(c.arg)) {
           throw new EffectfulYamlError(`$set requires a mapping, got: ${describe(c.arg)}`);
         }
-        const next = new Map(s);
-        for (const [cell, v] of Object.entries(c.arg)) next.set(cell, v);
+        let next = s;
+        for (const [cell, v] of Object.entries(c.arg)) next = insert(next, cell, v);
         c = force(c.resume(null));
         s = next;
         continue;
@@ -755,7 +759,7 @@ class Evaluator {
    */
   boundary(node: unknown, env: Env): Comp {
     const drained = this.handleParam(
-      this.handleLog(handleState(collectChoice(this.data(node, env, true)), new Map())),
+      this.handleLog(handleState(collectChoice(this.data(node, env, true)), empty)),
     );
     if (typeof node === 'object' && node !== null && this.analyzer.listBoundaries.has(node)) {
       return drained;
@@ -979,7 +983,9 @@ class Evaluator {
           if (!isValueMap(cells)) {
             throw new EffectfulYamlError(`$state requires a mapping of cells, got: ${describe(cells)}`);
           }
-          return handleState(this.node(aux('in'), env), new Map(Object.entries(cells)));
+          let init: PMap<Value> = empty;
+          for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
+          return handleState(this.node(aux('in'), env), init);
         });
       case 'handle':
         return this.handle(arg, aux('with'), env);
