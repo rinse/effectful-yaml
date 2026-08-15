@@ -518,6 +518,96 @@ $body: \${x}
   });
 });
 
+describe('$. のパス呼び出し（fn.md）', () => {
+  it('2 区画：マッピングに入れた閉包を呼ぶ', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    helpers:
+      double:
+        $fn: x
+        $body: \${x * 2}
+- {$.helpers.double: 21}
+`),
+    ).resolves.toBe(42);
+  });
+
+  it('3 区画：入れ子のマッピングをたどって呼ぶ', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    a:
+      b:
+        c:
+          $fn: x
+          $body: \${x + 1}
+- {$.a.b.c: 41}
+`),
+    ).resolves.toBe(42);
+  });
+
+  it('$op で作った演算参照をマッピング経由で呼ぶ', async () => {
+    await expect(
+      run(
+        `
+$do:
+- $let:
+    helpers:
+      read: {$op: vault.secrets.read}
+- {$.helpers.read: db/password}
+`,
+        { ops: { 'vault.secrets.read': (k) => `secret(${String(k)})` } },
+      ),
+    ).resolves.toBe('secret(db/password)');
+  });
+
+  it('先頭区画の束縛が無ければ undefined reference', async () => {
+    await expect(run('{$.a.self: 1}')).rejects.toThrow(/undefined reference: a/);
+  });
+
+  it('途中の区画が非マッピングなら cannot access key', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    a: 1
+- {$.a.self: 1}
+`),
+    ).rejects.toThrow(/cannot access key '\.self' of a non-mapping value/);
+  });
+
+  it('途中の区画にキーが無ければ missing key', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    a: {}
+- {$.a.self: 1}
+`),
+    ).rejects.toThrow(/missing key 'self'/);
+  });
+
+  it('たどり着いた値が関数でなければ is not a function（パス全体の名前で）', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    a:
+      self: 1
+- {$.a.self: 1}
+`),
+    ).rejects.toThrow(/a\.self is not a function/);
+  });
+
+  it('空区画・添字は invalid lexical call name（広げた正規表現が過大に許さないこと）', async () => {
+    await expect(run('$..a: 1')).rejects.toThrow(/invalid lexical call name/);
+    await expect(run('$.a.: 1')).rejects.toThrow(/invalid lexical call name/);
+    await expect(run('$.a[0]: 1')).rejects.toThrow(/invalid lexical call name/);
+  });
+});
+
 describe('$handle / $with / $resume（handle.md）', () => {
   it('失敗を捕捉して既定値に置き換える', async () => {
     const logs: Value[] = [];

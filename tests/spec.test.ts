@@ -261,6 +261,20 @@ $do:
 `,
     expected: 42,
   },
+  {
+    file: 'reference/fn.md',
+    name: 'マッピングに入れた閉包を $.名前.名前 のパスで呼ぶ',
+    yaml: `
+$do:
+- $let:
+    helpers:
+      double:
+        $fn: x
+        $body: \${x * 2}
+- {$.helpers.double: 21}
+`,
+    expected: 42,
+  },
 
   // -------------------------------------------------------------------------
   // docs/reference/get.md

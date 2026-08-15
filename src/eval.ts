@@ -361,7 +361,12 @@ function refsOf(node: unknown): ReadonlySet<string> {
   const out = new Set<string>();
   const children = Array.isArray(node) ? node : Object.values(node);
   if (!Array.isArray(node)) {
-    for (const key of Object.keys(node)) if (key.startsWith('$.')) out.add(key.slice(2));
+    // `$.a.self` が読むレキシカルな束縛は先頭区画の a だけ（self 以降はその値のキーアクセス）。
+    // パス全体 "a.self" を足すと a の読みを鍵から落とし、環境が異なる閉包同士が
+    // 正準形の同じ鍵（canonKey の case 'closure'）に潰れて作用の行が不健全になる。
+    for (const key of Object.keys(node)) {
+      if (key.startsWith('$.')) out.add(key.slice(2).split('.')[0]!);
+    }
   }
   for (const child of children) for (const name of refsOf(child)) out.add(name);
   refsCache.set(node, out);
@@ -488,12 +493,16 @@ class Analyzer {
     switch (shape.kind) {
       case 'plain':
         return new Set();
-      case 'lexical':
+      case 'lexical': {
+        // 先頭区画は束縛の解決、残りは値の追跡木をたどるキーアクセス（track() の ref と同じ形）。
+        const path = shape.name.split('.');
+        const target = path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
         return union(
           this.effects(node[shape.raw], senv),
           // 引数の追跡木をパラメータに束縛して本体を解析する（多相的解析）。
-          this.call(get(senv, shape.name), this.track(node[shape.raw], senv)) ?? [],
+          this.call(target, this.track(node[shape.raw], senv)) ?? [],
         );
+      }
       case 'op':
         return union(this.effects(node[shape.raw], senv), [shape.name]);
       case 'reserved':
@@ -870,8 +879,21 @@ class Evaluator {
       case 'plain':
         throw new EffectfulYamlError('unreachable: plain mapping is not a $ form');
       case 'lexical': {
-        const f = lookupEnv(env, shape.name);
-        if (f === undefined) throw new EffectfulYamlError(`undefined reference: ${shape.name}`);
+        // 先頭区画はレキシカルな束縛の解決、残りの区画は値のマッピングのキーアクセス。
+        // エラーの語彙は式の参照 ${a.self}（expr.ts の evalNode の case 'ref'）に揃える。
+        const [head, ...rest] = shape.name.split('.');
+        let cur = lookupEnv(env, head!);
+        if (cur === undefined) throw new EffectfulYamlError(`undefined reference: ${head}`);
+        for (const seg of rest) {
+          if (!isValueMap(cur)) {
+            throw new EffectfulYamlError(`cannot access key '.${seg}' of a non-mapping value`);
+          }
+          if (!Object.prototype.hasOwnProperty.call(cur, seg)) {
+            throw new EffectfulYamlError(`missing key '${seg}'`);
+          }
+          cur = cur[seg]!;
+        }
+        const f = cur;
         return bind(this.node(node[shape.raw], env), (arg) => this.apply(f, arg, shape.name));
       }
       case 'op':

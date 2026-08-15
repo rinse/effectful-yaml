@@ -66,7 +66,8 @@ export const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   handle: new Set(['with']),
 };
 
-const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** `IDENT(\.IDENT)*`。レキシカル呼び出し `$.名前` の名前部分（先頭の `.` を除いた残り）。 */
+const LEXICAL_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const DOTTED = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$/;
 
 /**
@@ -89,7 +90,15 @@ export type DollarKeyKind =
 
 /**
  * $ を除いたキー本体を分類する。
- * `.名前` はレキシカルな束縛（$let の束縛名にドットは使えないため、名前は単純な識別子に限る）。
+ * `.名前` はレキシカルな束縛の呼び出しで、名前はドット区切りの単純な識別子の列
+ * （`IDENT(\.IDENT)*`）を許す。先頭区画がレキシカルな束縛、残りはその値のマッピングを
+ * たどるキーアクセスである。この形を許してもグローバル名前空間は崩れない。
+ * 先頭のドットで登録演算（ドットを含む名前）とも予約キー（ドットを含まない名前）とも
+ * 区別がつくため、区画がいくつ続いても衝突しない。
+ * また `$let` の束縛名自体にはドットを使えない（束縛と制御の節）ので、
+ * 名前の中のドットは常に「束縛名の終わり・キーアクセスの始まり」の区切りとして読める。
+ * それ以外（空区画・記号・添字）は従来どおりエラーにする。添字アクセスは対象外で、
+ * 必要なら `$pipe` に式として渡す。
  * ドットを含む名前は登録演算。それ以外は予約キーでなければエラー。
  */
 export function classifyDollarKey(nameAfterDollar: string): DollarKeyKind {
@@ -98,7 +107,7 @@ export function classifyDollarKey(nameAfterDollar: string): DollarKeyKind {
   }
   if (nameAfterDollar.startsWith('.')) {
     const name = nameAfterDollar.slice(1);
-    if (!IDENT.test(name)) {
+    if (!LEXICAL_PATH.test(name)) {
       throw new EffectfulYamlError(`invalid lexical call name: $${nameAfterDollar}`);
     }
     return { kind: 'lexical', name };

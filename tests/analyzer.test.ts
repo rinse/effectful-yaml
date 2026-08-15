@@ -153,6 +153,26 @@ $do:
       ),
     ).resolves.toEqual(['single']);
   });
+
+  it('マッピング経由のパス呼び出し（$.fns.choose）でも $each の境界がリスト形に決まる', async () => {
+    // $. の呼び出しがパスを取れるのは fns.choose のように束縛の先のマッピングをたどる形。
+    // 先頭区画 fns を senv から引いた後、残りの区画 choose を追跡木の field() でたどれて
+    // 初めて閉包の本体が解析され、$each が境界の形をリストに決める。
+    // たどれなければ実行時に「expected 1 result」で落ちるので、
+    // 結果がちゃんと 3 要素のリストになることが、パスの追跡が効いている証拠になる。
+    await expect(
+      run(`
+$do:
+- $let:
+    fns:
+      choose:
+        $fn: x
+        $body:
+          $each: [a, b, c]
+- {$.fns.choose: ignored}
+`),
+    ).resolves.toEqual(['a', 'b', 'c']);
+  });
 });
 
 describe('追跡できない呼び出し', () => {
@@ -245,6 +265,67 @@ $do:
       }),
     ).resolves.toBe('secret(db/password)');
     expect(logs).toEqual(['before']);
+  });
+
+  it('マッピング経由のパス呼び出し（$.helpers.read）で呼ぶ関数の中の登録演算も、評価前に要求される', async () => {
+    const logs: Value[] = [];
+    const doc = `
+$do:
+- $let:
+    helpers:
+      read: {$op: vault.read}
+- $log: before
+- {$.helpers.read: db/password}
+`;
+    await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
+      /unregistered operation: \$vault\.read/,
+    );
+    // 評価そのものが始まっていないこと（事前検証で拒否された）。
+    expect(logs).toEqual([]);
+
+    await expect(
+      run(doc, {
+        ops: { 'vault.read': (k) => `secret(${String(k)})` },
+        onLog: (v) => logs.push(v),
+      }),
+    ).resolves.toBe('secret(db/password)');
+    expect(logs).toEqual(['before']);
+  });
+
+  it('同じ $fn を違う束縛の中身で 2 回捕まえても、閉包の正準形が別の鍵になる', async () => {
+    // refsOf(t.body) はパス呼び出し `$.h.op` が実際に読む束縛名（先頭区画 h）だけを
+    // 閉包の正準形の鍵に入れなければならない。パス全体（h.op）を鍵に入れると、
+    // senv には "h.op" というキーは無いので参照は常に外れ（canon(undefined) = 定数 -1）、
+    // h の中身が違っても同じ鍵になってしまう。
+    // ここでは同じ $fn ノード（inner）を、h が「登録演算」の場合と「純粋な恒等関数」の場合の
+    // 2 通りの環境で捕まえ、先に解析される側（b、作用なし）のメモが後の側（a、未登録演算）を
+    // 誤って上書きしないことを確かめる。誤って潰れれば a の未登録演算が見逃され、
+    // 評価前の事前検証をすり抜けて実行時まで進んでしまう（$log: before が先に流れる）。
+    const logs: Value[] = [];
+    const doc = `
+$do:
+- $let:
+    outer:
+      $fn: h
+      $body:
+        $do:
+        - $let:
+            inner:
+              $fn: x
+              $body: {$.h.op: '\${x}'}
+        - {$.inner: 1}
+- $log: before
+- $let:
+    b: {$.outer: {op: {$fn: y, $body: '\${y}'}}}
+- $let:
+    a: {$.outer: {op: {$op: vault.unregistered}}}
+`;
+    await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
+      /unregistered operation: \$vault\.unregistered/,
+    );
+    // 評価そのものが始まっていないこと（事前検証で拒否された）。潰れていれば
+    // 評価が実際に走ってしまい、$log: before が流れた後に実行時エラーになる。
+    expect(logs).toEqual([]);
   });
 });
 
