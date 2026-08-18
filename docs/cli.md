@@ -1,7 +1,7 @@
 # CLI（eff-yaml）
 
 effectful-yaml 文書をコマンドラインから評価する CLI である。
-標準の `$` アクションだけを持ち、登録演算は使えない。
+カーネルの構文と `std.` 名前空間の演算だけを持ち、ホストに登録する演算は使えない。
 登録演算を使いたい場合は[処理系の利用](usage.md)の API から評価する。
 
 ## 使い方
@@ -11,11 +11,11 @@ eff-yaml [file] [-p name=value]...
 ```
 
 - **`file`**：入力の YAML ファイル。省略時と `-` は標準入力から読む。
-- **`-p, --param`**：`$param` が読む起動時パラメータ。繰り返し指定できる。
+- **`-p, --param`**：`$std.param` が読む起動時パラメータ。繰り返し指定できる。
 - **`-h, --help`**：ヘルプを表示する。
 
 評価した結果を YAML として標準出力に書く。
-`$log` の中身は標準エラー出力に書くので、結果だけをパイプやリダイレクトで受け取れる。
+`$std.log` の中身は標準エラー出力に書くので、結果だけをパイプやリダイレクトで受け取れる。
 評価に失敗すると終了コード 1 で、メッセージを標準エラー出力に書く。
 
 パラメータの値は YAML として解釈する。
@@ -33,7 +33,7 @@ CLI は拡張子を検査しない。
 
 ```
 npm run build
-echo 'greeting: {$param: name, $default: world}' | node dist/bin.js -p name=CLI
+echo 'greeting: {$std.param: name, $default: world}' | node dist/bin.js -p name=CLI
 # greeting: CLI
 ```
 

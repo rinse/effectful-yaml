@@ -16,9 +16,9 @@ Promise なのは、登録演算のホスト関数が非同期でありうるか
 
 ## 評価オプション
 
-- **`params`**：`$param` が読む起動時パラメータ。名前から値へのマッピング。
+- **`params`**：`$std.param` が読む起動時パラメータ。名前から値へのマッピング。
 - **`ops`**：登録演算のハンドラ。名前は `vault.read` のようにドットを含み、値は `(引数) => 値 | Promise<値>` のホスト関数である。
-- **`onLog`**：`$log` の値の受け皿。省略すると標準エラー出力に書く。
+- **`onLog`**：`$std.log` の値の受け皿。省略すると標準エラー出力に書く。
 
 ## 最小の例
 
@@ -28,8 +28,8 @@ import { evaluateYaml } from './src/index.js';
 const value = await evaluateYaml(
   `
 server:
-  host: {$param: db_host}
-  port: {$param: db_port, $default: 5432}
+  host: {$std.param: db_host}
+  port: {$std.param: db_port, $default: 5432}
 `,
   { params: { db_host: 'example.com' } },
 );
@@ -43,7 +43,7 @@ const logs: unknown[] = [];
 const value = await evaluateYaml(
   `
 $do:
-- $log: reading secret
+- $std.log: reading secret
 - password: {$vault.read: secret/db}
 `,
   {
@@ -58,16 +58,16 @@ $do:
 
 評価の失敗はすべて `EffectfulYamlError` で reject される。
 
-- 言語仕様上のエラー（未定義参照、型の不一致、未初期化セルの読み出しなど）。
+- 言語仕様上のエラー（未定義参照、型の不一致など、文書の形の誤り）。
 - 未登録演算：既定ハンドラが処理しない演算が `ops` に無い文書は、評価を始める前に拒否される。ただし静的に追跡できない経路（実行時のデータから選んだ関数など）の演算は、実行がそこへ達した時点で同じエラーになる。
-- `$fail`：文書内のハンドラ（`$handle`、`$first`）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。
+- `$std.fail`：明示の `$std.fail` 呼び出しのほか、存在しないキーと添字、未渡しのパラメータ、未初期化セルの読み出しもこの作用を起こす。文書内のハンドラ（`$handle`、`$std.first` など）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。
 - 関数値の脱出：閉包や `$op` の演算参照が文書の値に残るとエラーになる。
 
 ```ts
 import { EffectfulYamlError, evaluateYaml } from './src/index.js';
 
 try {
-  await evaluateYaml('{$fail: boom}');
+  await evaluateYaml('{$std.fail: boom}');
 } catch (e) {
   // e は EffectfulYamlError、メッセージは 'failure: boom'
 }

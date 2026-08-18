@@ -19,18 +19,19 @@ $else: 式
 - `$else` は省略できない。「暗黙の null を作らない」原則による。
 - 条件は真偽値でなければならない。真偽値への暗黙の変換は行わない。
 - データの位置にもブロックの文としても書ける。
-- 作用の推論は出現主義なので、実行されない側の分岐の演算も作用集合に数える。
+- 作用の推論は出現主義なので、実行されない側の分岐の演算も作用集合に数える。選ばれなかった側に選択が残っていれば、境界の値はリストになる。
 
 ## 例
 
-`use_tls: false` を渡して評価する。
-
 ```yaml
 tls:
-  $if: {$param: use_tls}
-  $then: {cert: /etc/ssl/cert.pem}
+  $if: {$std.param: use_tls}
+  $then:
+    cert: /etc/ssl/cert.pem
   $else: null
 ```
+
+`use_tls: false` を渡して評価する。
 
 ```yaml
 tls: null
@@ -38,5 +39,5 @@ tls: null
 
 ## 関連
 
-- [$where](where.md)（分岐でなく打ち切りが必要なとき）
-- [$param](param.md)
+- [std.where](std.where.md)（分岐でなく打ち切りが必要なとき）
+- [std.param](std.param.md)
