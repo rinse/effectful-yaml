@@ -468,7 +468,8 @@ $with:
       $collect: ${xs}
       $with:
         $fn: x
-        $body: {$resume: ${x}}
+        $body:
+          $resume: ${x}
   std.where:
     $fn: b
     $body:
@@ -511,8 +512,9 @@ std.get:
                 - ${e.value}
                 $else: []
       - $let:
-          k: {$resume: ${hits[0]}}
-      - {$.k: ${s}}
+          k:
+            $resume: ${hits[0]}
+      - $.k: ${s}
 ```
 
 継続の再開結果も状態変換関数なので、それを現在の状態に適用して続行する。
