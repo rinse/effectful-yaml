@@ -1,10 +1,19 @@
 /**
  * `${式}` の式言語（参照・比較・算術・論理演算）と文字列補間。
- * 仕様: docs/grammar.md（草案 0.3）「参照と式」節。
+ * 仕様: docs/grammar.md（草案 0.4）「参照と式」節。
  *
  * この式言語に作用は無い。Value と Env だけを相手にする純粋な関数として実装する。
+ * 作用を起こしうるのはパスの部分性だけで、それも MissingPathError を投げるにとどめ、
+ * std.fail への翻訳は評価器（eval.ts の compose）が行う。
  */
 import { EffectfulYamlError, isClosure, isOpRef, lookupEnv, type Env, type Value } from './types.js';
+
+/**
+ * データ起因の部分性：存在しないキーと添字。
+ * 文書の形の誤り（未定義の束縛、非コンテナの走査、型の不一致）とは区別され、
+ * 評価器がこれを失敗作用 std.fail に翻訳するのでハンドラで捕捉できる。
+ */
+export class MissingPathError extends EffectfulYamlError {}
 
 // ---------------------------------------------------------------------------
 // トークナイザ
@@ -321,7 +330,7 @@ function evalNode(node: Node, env: Env): Value {
             throw new EffectfulYamlError(`cannot access key '.${seg.name}' of a non-mapping value`);
           }
           if (!Object.prototype.hasOwnProperty.call(cur, seg.name)) {
-            throw new EffectfulYamlError(`missing key '${seg.name}'`);
+            throw new MissingPathError(`missing key '${seg.name}'`);
           }
           cur = cur[seg.name]!;
         } else {
@@ -329,7 +338,7 @@ function evalNode(node: Node, env: Env): Value {
             throw new EffectfulYamlError(`cannot access index [${seg.i}] of a non-list value`);
           }
           if (seg.i >= cur.length) {
-            throw new EffectfulYamlError(`index [${seg.i}] out of range`);
+            throw new MissingPathError(`index [${seg.i}] out of range`);
           }
           cur = cur[seg.i]!;
         }
@@ -479,6 +488,44 @@ export function interpolate(scalar: string, env: Env): Value {
     out += seg.kind === 'lit' ? seg.text : stringifyForInterpolation(evalExpr(seg.src, env));
   }
   return out;
+}
+
+/** 部分式のどこかにパスをたどる参照があるか。 */
+function anyPathRef(node: Node): boolean {
+  switch (node.k) {
+    case 'ref':
+      return node.path.length > 0;
+    case 'not':
+      return anyPathRef(node.e);
+    case 'bin':
+      return anyPathRef(node.l) || anyPathRef(node.r);
+    default:
+      return false;
+  }
+}
+
+/**
+ * スカラーの中に、キーや添字をたどる参照（`${x.y}` `${xs[0]}`）が出現するか。
+ * 出現すれば失敗しうるので、作用の推論はそのスカラーに std.fail を数える。
+ * 裸の `${x}` は純粋なので数えない。パースできない文字列は評価時に報告するので false。
+ */
+export function hasPathRef(scalar: string): boolean {
+  if (!scalar.includes('${')) return false;
+  let segments: Segment[];
+  try {
+    segments = splitInterpolation(scalar);
+  } catch {
+    return false;
+  }
+  for (const seg of segments) {
+    if (seg.kind !== 'expr') continue;
+    try {
+      if (anyPathRef(parse(seg.src))) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 /**

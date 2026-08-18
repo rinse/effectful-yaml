@@ -1,6 +1,6 @@
 /**
  * 静的な作用推論と評価器。
- * 仕様: docs/grammar.md（草案 0.3）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar.md（草案 0.4）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
  * 二つのことを一体で行う。
  * 1. Analyzer: 文書を実行せずに各ノードの作用集合を求める。
@@ -10,25 +10,28 @@
  *    ハンドラは Comp → Comp の純粋変換なので、$handle の節は $resume を何度でも呼べる。
  *
  * 作用境界は、文書全体と、データの中に現れた最も外側の `$` 式だけである。
- * 境界の内側には、明示のハンドラ（$list/$mapping/$first/$state/$handle）を除いて
+ * 境界の内側には、明示のハンドラ（$handle と std の派生ハンドラ）を除いて
  * 作用を堰き止める場所はない。データ構成（リストの要素、`$` キーを持たないマッピングの値）も、
- * 演算の引数も、呼び出しの引数と本体も、すべて合成であり、作用はそのまま周囲へ合流する。
+ * 演算の引数も、呼び出しの引数と本体も、$collect の対象と関数本体も、
+ * すべて合成であり、作用はそのまま周囲へ合流する。
  *
  * この三態を Analyzer と Evaluator が同じ形で持つ（片方だけ直すのは誤り）。
  *   - data:     まだどの `$` 式にも入っていないデータ位置。`$` 式に出会ったらそこが境界。
  *   - boundary: 境界。中身を評価し、既定ハンドラ一式で処理し尽くす。
  *   - node:     合成位置（`$` 式の内側）。子も一律に合成。
  */
-import { interpolate, refPathOf } from './expr.js';
+import { hasPathRef, interpolate, MissingPathError, refPathOf } from './expr.js';
 import { analyzeMapping, HANDLER_REMOVES, unescapeDollar, type MappingShape } from './forms.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 import {
   bind,
   CHOICE_OPS,
   Closure,
+  DERIVED_HANDLERS,
   EffectfulYamlError,
   emptyEnv,
   extendEnv,
+  FAIL_OPS,
   force,
   isClosure,
   isOpRef,
@@ -38,7 +41,6 @@ import {
   pure,
   resumeOf,
   STATE_OPS,
-  STD_OPS,
   type Comp,
   type Env,
   type Value,
@@ -50,9 +52,9 @@ import {
 
 /** 境界の既定ハンドラ一式が処理する演算（外側から 失敗・パラメータ・ログ・状態・選択）。 */
 const DEFAULT_OPS: ReadonlySet<string> = new Set([
-  'fail',
-  'param',
-  'log',
+  ...FAIL_OPS,
+  'std.param',
+  'std.log',
   ...STATE_OPS,
   ...CHOICE_OPS,
 ]);
@@ -104,12 +106,55 @@ function describe(v: Value): string {
   return JSON.stringify(v) ?? String(v);
 }
 
-/** $each が選ぶ要素の並び。マッピングは {key, value} に分解する。 */
-function eachItems(arg: Value): Value[] {
+/**
+ * $op が参照できる名前か。演算はドット入りの名前に限り、std の派生ハンドラは形なので参照できない。
+ * 解析と評価の両方から呼ぶ（解析だけが通ると「未登録の演算」という無関係な文言で拒まれる）。
+ */
+function assertOpRefName(name: string): void {
+  if (!name.includes('.')) {
+    throw new EffectfulYamlError(`$op requires a namespaced operation name, got: $${name}`);
+  }
+  if (DERIVED_HANDLERS.has(name)) {
+    throw new EffectfulYamlError(`$op cannot reference the derived handler $${name}`);
+  }
+}
+
+/** 構造を回る形（$std.each の分岐、$collect の対象）。マッピングは {key, value} に分解する。 */
+function entriesOf(arg: Value, what: string): Value[] {
   if (Array.isArray(arg)) return arg;
   if (isValueMap(arg)) return Object.entries(arg).map(([key, value]) => ({ key, value }));
-  throw new EffectfulYamlError(`$each requires a list or mapping, got: ${describe(arg)}`);
+  throw new EffectfulYamlError(`${what} requires a list or mapping, got: ${describe(arg)}`);
 }
+
+/**
+ * 第一階の標準演算（値から値を計算するだけ）。導出できないが評価器の協力も要らないので、
+ * カーネルではなく「処理系が事前登録する演算」として供給の層に置く。
+ * ホスト登録の演算と同じ経路（境界を抜けてドライバへ）を通る。
+ */
+const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
+  'std.range': (n) => {
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      throw new EffectfulYamlError(`$std.range requires a natural number, got: ${describe(n)}`);
+    }
+    return Array.from({ length: n }, (_, i) => i);
+  },
+  'std.upper': (s) => requireString(s, '$std.upper argument').toUpperCase(),
+  'std.lower': (s) => requireString(s, '$std.lower argument').toLowerCase(),
+  'std.resolve': (arg) => {
+    if (!isValueMap(arg)) {
+      throw new EffectfulYamlError(
+        `$std.resolve requires a mapping {base, path}, got: ${describe(arg)}`,
+      );
+    }
+    const base = requireString(arg['base'], '$std.resolve base');
+    const path = requireString(arg['path'], '$std.resolve path');
+    try {
+      return new URL(path, base).href;
+    } catch {
+      throw new EffectfulYamlError(`$std.resolve cannot resolve '${path}' against '${base}'`);
+    }
+  },
+};
 
 // ---------------------------------------------------------------------------
 // 汎用ハンドラ（部分処理）
@@ -177,15 +222,15 @@ function materializeMap(entries: Cons<readonly [string, Value]> | null): ValueMa
   return out;
 }
 
-/** 選択を処理し、全分岐の結果を文書順に並べたリストにする（$list、および境界の既定）。 */
+/** 選択を処理し、全分岐の結果を文書順に並べたリストにする（$std.list、および境界の既定）。 */
 function collectChoice(comp: Comp): Comp {
   return handleOps(
     comp,
     new Map<string, Clause>([
       [
-        'each',
+        'std.each',
         (arg, k) => {
-          const items = eachItems(arg);
+          const items = entriesOf(arg, '$std.each');
           const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp =>
             i >= items.length
               ? pure(flattenChunks(chunks))
@@ -193,21 +238,25 @@ function collectChoice(comp: Comp): Comp {
           return go(0, null);
         },
       ],
-      ['where', (arg, k) => (requireBoolean(arg, '$where') ? k(null) : pure([]))],
+      ['std.where', (arg, k) => (requireBoolean(arg, '$std.where') ? k(null) : pure([]))],
     ]),
     (v) => pure([v]),
   );
 }
 
-/** 選択と失敗を処理し、成功した最初の分岐を [v]、全滅を [] で表す（$first）。 */
+/**
+ * 選択と失敗を処理し、成功した最初の分岐を [v]、全滅を [] で表す（$std.first）。
+ * go(i) は成功を得た時点で go(i + 1) を呼ばないので、最初の成功より後の分岐は
+ * 評価されず、その作用も起きない。
+ */
 function collectFirst(comp: Comp): Comp {
   return handleOps(
     comp,
     new Map<string, Clause>([
       [
-        'each',
+        'std.each',
         (arg, k) => {
-          const items = eachItems(arg);
+          const items = entriesOf(arg, '$std.each');
           const go = (i: number): Comp =>
             i >= items.length
               ? pure([])
@@ -215,15 +264,27 @@ function collectFirst(comp: Comp): Comp {
           return go(0);
         },
       ],
-      ['where', (arg, k) => (requireBoolean(arg, '$where') ? k(null) : pure([]))],
-      ['fail', () => pure([])],
+      ['std.where', (arg, k) => (requireBoolean(arg, '$std.where') ? k(null) : pure([]))],
+      ['std.fail', () => pure([])],
     ]),
     (v) => pure([v]),
   );
 }
 
+/** $std.opt: 失敗を null に変える（節は $resume を呼ばないので打ち切りになる）。 */
+const OPT_CLAUSES: ReadonlyMap<string, Clause> = new Map([['std.fail', () => pure(null)]]);
+
 /**
- * 状態を処理する（$state、および境界の既定の $state: {}）。
+ * $std.prune: 失敗を包囲する選択の打ち切りに変える。
+ * 節の本体が起こす std.where はこのハンドラ自身では処理されず外側へ抜けるので、
+ * 包囲する選択の分岐ごと打ち切られる（$handle の規則）。
+ */
+const PRUNE_CLAUSES: ReadonlyMap<string, Clause> = new Map([
+  ['std.fail', () => perform('std.where', false)],
+]);
+
+/**
+ * 状態を処理する（$std.state、および境界の既定の `$std.state: {}`）。
  * 記憶を再帰の引数として持ち回るので、外側のハンドラが複数回 resume すると
  * 各再開はその演算の時点の記憶から分岐する（= ハンドラは自分より内側だけを見る）。
  */
@@ -237,16 +298,27 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
     let s = s0;
     for (;;) {
       if (c.tag === 'pure') return pure(c.value);
-      if (c.name === 'get') {
-        const name = requireString(c.arg, '$get cell name');
+      if (c.name === 'std.get') {
+        const name = requireString(c.arg, '$std.get cell name');
         const v = get(s, name);
-        if (v === undefined) throw new EffectfulYamlError(`uninitialized cell: ${name}`);
+        if (v === undefined) {
+          // 未初期化のセルは失敗作用。仕様の展開では節の本体の `${hits[0]}` が起こすので、
+          // このハンドラ自身では捕まらず外側へ抜ける（外側が再開すればその値が読み出しの値）。
+          const m = c;
+          const here = s;
+          return {
+            tag: 'op',
+            name: 'std.fail',
+            arg: `uninitialized cell: ${name}`,
+            resume: (x) => rec(m.resume(x), here),
+          };
+        }
         c = force(c.resume(v));
         continue;
       }
-      if (c.name === 'set') {
+      if (c.name === 'std.set') {
         if (!isValueMap(c.arg)) {
-          throw new EffectfulYamlError(`$set requires a mapping, got: ${describe(c.arg)}`);
+          throw new EffectfulYamlError(`$std.set requires a mapping, got: ${describe(c.arg)}`);
         }
         let next = s;
         for (const [cell, v] of Object.entries(c.arg)) next = insert(next, cell, v);
@@ -482,6 +554,8 @@ class Analyzer {
 
   /** データ構成（スカラー・リスト・プレーンマッピング）。`$` 式なら undefined。 */
   private compose(node: unknown, rec: (n: unknown) => Set<string>): Set<string> | undefined {
+    // パスをたどる参照は欠落しうるので std.fail を数える（裸の ${x} は純粋）。
+    if (typeof node === 'string') return hasPathRef(node) ? new Set(FAIL_OPS) : new Set();
     if (Array.isArray(node)) return union(...node.map(rec));
     if (!isNodeMap(node)) return new Set();
     if (analyzeMapping(Object.keys(node)).kind !== 'plain') return undefined;
@@ -504,9 +578,46 @@ class Analyzer {
         );
       }
       case 'op':
-        return union(this.effects(node[shape.raw], senv), [shape.name]);
+        return this.operation(shape, node, senv);
       case 'reserved':
         return this.reserved(shape, node, senv);
+    }
+  }
+
+  /**
+   * 演算の呼び出し。std の派生ハンドラだけが部分処理を行い、それ以外は
+   * 「引数の作用 ∪ 自分の名前」である（標準演算もホスト登録の演算も同じ規則）。
+   */
+  private operation(
+    shape: Extract<MappingShape, { kind: 'op' }>,
+    node: NodeMap,
+    senv: SEnv,
+  ): Set<string> {
+    const arg = node[shape.raw];
+    const aux = (name: string): unknown => {
+      const raw = shape.aux.get(name);
+      return raw === undefined ? undefined : node[raw];
+    };
+    switch (shape.name) {
+      case 'std.list':
+      case 'std.mapping':
+      case 'std.first':
+      case 'std.opt':
+        return without(this.effects(arg, senv), HANDLER_REMOVES[shape.name]!);
+      case 'std.prune':
+        // 節の本体の {$std.where: false} はこのハンドラの外で処理されるので、加わる。
+        return union(without(this.effects(arg, senv), FAIL_OPS), ['std.where']);
+      case 'std.state':
+        return union(this.effects(arg, senv), without(this.effects(aux('in'), senv), STATE_OPS));
+      case 'std.param':
+        // $default は遅延位置だが、作用の推論は出現主義なので中の演算も数える。
+        return union(
+          this.effects(arg, senv),
+          shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
+          ['std.param'],
+        );
+      default:
+        return union(this.effects(arg, senv), [shape.name]);
     }
   }
 
@@ -543,11 +654,13 @@ class Analyzer {
           this.effects(aux('else'), senv),
         );
       case 'fn':
-      case 'op':
         // 値を作るだけで作用は起こさない。本体の作用は呼び出しを追跡できる側
-        // （$let の束縛、$pipe の段、$handle の節）が callable() で数える。
+        // （$let の束縛、$pipe の段、$handle の節）が call() で数える。
         // ここで本体を走査してはならない。定義のたびに二重走査になり、
         // 入れ子の深さに対して指数的になる。
+        return new Set();
+      case 'op':
+        if (typeof arg === 'string') assertOpRefName(arg);
         return new Set();
       case 'pipe': {
         const stages = Array.isArray(aux('through')) ? (aux('through') as unknown[]) : [];
@@ -560,27 +673,14 @@ class Analyzer {
         }
         return union(...rows);
       }
-      case 'each':
-      case 'where':
-      case 'get':
-      case 'set':
-      case 'log':
-      case 'fail':
-        return union(this.effects(arg, senv), [shape.main]);
-      case 'param':
+      case 'collect':
+        // $collect 自身は作用を持たない。対象の作用と、追跡できる関数本体の作用の合併。
+        // ponytail: 関数へ渡す引数の追跡木は undefined（$handle の節と同じ天井）。
+        // 要素ごとの追跡が要るようになったら対象がリテラルのときだけ altOf で渡す。
         return union(
           this.effects(arg, senv),
-          shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
-          ['param'],
-        );
-      case 'list':
-      case 'mapping':
-      case 'first':
-        return without(this.effects(arg, senv), HANDLER_REMOVES[shape.main]!);
-      case 'state':
-        return union(
-          this.effects(arg, senv),
-          without(this.effects(aux('in'), senv), STATE_OPS),
+          this.effects(aux('with'), senv),
+          this.call(this.track(aux('with'), senv), undefined) ?? [],
         );
       case 'handle': {
         const clauses = isNodeMap(aux('with')) ? (aux('with') as NodeMap) : {};
@@ -644,6 +744,13 @@ class Analyzer {
         Object.entries(node).map(([k, v]) => [unescapeDollar(k), this.track(v, senv)] as const),
       );
     }
+    if (shape.kind === 'op') {
+      // リテラルのリストから選ぶ形だけ追える。マッピングの $std.each が選ぶのは
+      // 値そのものではなく {key, value} なので、値の木で近似してはならない。
+      if (shape.name !== 'std.each') return undefined;
+      const items = node[shape.raw];
+      return Array.isArray(items) ? altOf(items.map((n) => this.track(n, senv))) : undefined;
+    }
     if (shape.kind !== 'reserved') return undefined;
     switch (shape.main) {
       case 'fn': {
@@ -666,12 +773,6 @@ class Analyzer {
           this.track(node[shape.aux.get('then')!], senv),
           this.track(node[shape.aux.get('else')!], senv),
         ]);
-      case 'each': {
-        // リテラルのリストから選ぶ形だけ追える。マッピングの $each が選ぶのは
-        // 値そのものではなく {key, value} なので、値の木で近似してはならない。
-        const items = node[shape.mainRaw];
-        return Array.isArray(items) ? altOf(items.map((n) => this.track(n, senv))) : undefined;
-      }
       default:
         return undefined;
     }
@@ -741,16 +842,14 @@ export interface EvaluateOptions {
 }
 
 /**
- * $param の演算引数の内部表現。
- * optional は「呼び出し位置に $default があるので、未提供なら ABSENT を返してよい」。
- * $default のノード自体は呼び出し位置に留まり、未提供のときだけ評価される（遅延位置）。
+ * 既定のパラメータハンドラが「渡されていない」を伝える番兵。
+ * 同一性でだけ判定し、文書からは作れない。
+ *
+ * 未渡しを std.fail に翻訳するのは既定ハンドラではなく呼び出し位置である。
+ * 既定ハンドラは境界にあるので、そこで失敗を起こしても呼び出し位置を包む
+ * $handle（$default の展開）はもう戻ってしまっている。仕様が「$default が
+ * なければ std.fail が境界まで伝播する」と言うとおり、失敗は呼び出し位置で生じる。
  */
-interface ParamArg {
-  readonly name: string;
-  readonly optional?: boolean;
-}
-
-/** handleParam が「渡されていない」を伝える番兵。同一性でだけ判定し、文書からは作れない。 */
 const ABSENT: Value = Object.freeze({});
 
 class Evaluator {
@@ -787,7 +886,7 @@ class Evaluator {
       `boundary was inferred to be a single value but ${cause}: expected 1 result, got ${results.length}. ` +
         `Choice most likely reached this boundary through a call the analyzer cannot track ` +
         `(a function value picked at run time, e.g. out of data or out of a $do result). ` +
-        `Wrap the call in an explicit handler ($list:, $first: or $mapping:) to declare the shape ` +
+        `Wrap the call in an explicit handler ($std.list:, $std.first: or $std.mapping:) to declare the shape ` +
         `instead of relying on static tracking; the choice is then handled there. ` +
         `Boundary node: ${where}`,
     );
@@ -798,7 +897,7 @@ class Evaluator {
       comp,
       new Map<string, Clause>([
         [
-          'log',
+          'std.log',
           (v, k) => {
             this.onLog(v);
             return k(null);
@@ -808,22 +907,40 @@ class Evaluator {
     );
   }
 
+  /** パラメータ表を読むだけの全域なハンドラ。未渡しは ABSENT で返す（判断は呼び出し位置）。 */
   private handleParam(comp: Comp): Comp {
     return handleOps(
       comp,
       new Map<string, Clause>([
         [
-          'param',
+          'std.param',
           (arg, k) => {
-            const spec = arg as ParamArg;
-            if (Object.prototype.hasOwnProperty.call(this.params, spec.name)) {
-              return k(this.params[spec.name]!);
-            }
-            if (spec.optional === true) return k(ABSENT);
-            throw new EffectfulYamlError(`parameter not provided: ${spec.name}`);
+            const name = requireString(arg, '$std.param name');
+            return k(
+              Object.prototype.hasOwnProperty.call(this.params, name)
+                ? this.params[name]!
+                : ABSENT,
+            );
           },
         ],
       ]),
+    );
+  }
+
+  /**
+   * `{$std.param: 名前}` の呼び出し位置。未渡しならその場で std.fail を起こす。
+   * `$default` があるときは、その std.fail を捕まえて `$default` の式を返す $handle で包む
+   * （仕様が定める展開そのもの）。節が $resume を呼ばないので、失敗した時点で
+   * ハンドラ全体の値が `$default` の値になり、渡されていれば `$default` は評価されない。
+   */
+  private param(name: string, defaultNode: unknown, hasDefault: boolean, env: Env): Comp {
+    const read = bind(perform('std.param', name), (v) =>
+      v === ABSENT ? perform('std.fail', `parameter not provided: ${name}`) : pure(v),
+    );
+    if (!hasDefault) return read;
+    return handleOps(
+      read,
+      new Map<string, Clause>([['std.fail', () => this.node(defaultNode, env)]]),
     );
   }
 
@@ -847,7 +964,16 @@ class Evaluator {
    * データ構成は作用を起こさないが、遮りもしない（bind でつなぐだけ）。
    */
   private compose(node: unknown, env: Env, rec: (n: unknown) => Comp): Comp | undefined {
-    if (typeof node === 'string') return pure(interpolate(node, env));
+    if (typeof node === 'string') {
+      // 欠落したキーと添字は失敗作用（捕捉できる）。束縛の未定義や非コンテナの走査、
+      // 型の不一致は文書の形の誤りなので、そのままエラーとして投げ抜ける。
+      try {
+        return pure(interpolate(node, env));
+      } catch (e) {
+        if (e instanceof MissingPathError) return perform('std.fail', e.message);
+        throw e;
+      }
+    }
     if (node === null || node === undefined) return pure(null);
     if (typeof node === 'number' || typeof node === 'boolean') return pure(node);
     if (Array.isArray(node)) {
@@ -897,25 +1023,77 @@ class Evaluator {
         return bind(this.node(node[shape.raw], env), (arg) => this.apply(f, arg, shape.name));
       }
       case 'op':
-        return bind(this.node(node[shape.raw], env), (arg) => perform(shape.name, arg));
+        return this.operation(shape, node, env);
       case 'reserved':
         return this.reserved(shape, node, env);
+    }
+  }
+
+  /**
+   * 演算の呼び出し。標準演算もホスト登録の演算も同じ経路（引数を評価してから perform）を通る。
+   * std の派生ハンドラだけは本体を内側に持つ形なので、それぞれの展開に相当する処理を行う。
+   */
+  private operation(
+    shape: Extract<MappingShape, { kind: 'op' }>,
+    node: NodeMap,
+    env: Env,
+  ): Comp {
+    const arg = node[shape.raw];
+    const aux = (name: string): unknown => {
+      const raw = shape.aux.get(name);
+      return raw === undefined ? undefined : node[raw];
+    };
+    switch (shape.name) {
+      case 'std.list':
+        return collectChoice(this.node(arg, env));
+      case 'std.mapping':
+        return bind(collectChoice(this.node(arg, env)), (l) => pure(toMapping(asList(l))));
+      case 'std.first':
+        return bind(collectFirst(this.node(arg, env)), (r) =>
+          asList(r).length > 0
+            ? pure(asList(r)[0]!)
+            : perform('std.fail', 'every branch of $std.first failed or was cut'),
+        );
+      case 'std.opt':
+        return handleOps(this.node(arg, env), OPT_CLAUSES);
+      case 'std.prune':
+        return handleOps(this.node(arg, env), PRUNE_CLAUSES);
+      case 'std.state':
+        return bind(this.node(arg, env), (cells) => {
+          if (!isValueMap(cells)) {
+            throw new EffectfulYamlError(
+              `$std.state requires a mapping of cells, got: ${describe(cells)}`,
+            );
+          }
+          let init: PMap<Value> = empty;
+          for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
+          return handleState(this.node(aux('in'), env), init);
+        });
+      case 'std.param':
+        return bind(this.node(arg, env), (name) =>
+          this.param(
+            requireString(name, '$std.param name'),
+            aux('default'),
+            shape.aux.has('default'),
+            env,
+          ),
+        );
+      default:
+        // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
+        return bind(this.node(arg, env), (v) => perform(shape.name, v));
     }
   }
 
   /** 関数値（閉包 / 演算参照）の適用。引数も本体も合成である。 */
   private apply(f: Value, arg: Value, what: string): Comp {
     if (isClosure(f)) return this.node(f.body, extendEnv(f.env, f.param, arg));
-    if (isOpRef(f)) return this.performStd(f.name, arg);
-    throw new EffectfulYamlError(`${what} is not a function: ${describe(f)}`);
-  }
-
-  /** $op 経由の演算呼び出し。$param だけは内部表現へ合わせる。 */
-  private performStd(name: string, arg: Value): Comp {
-    if (name === 'param') {
-      return perform('param', { name: requireString(arg, '$param name') } satisfies ParamArg);
+    // $op 経由でも $std.param の未渡しは呼び出し位置で std.fail になる（番兵を漏らさない）。
+    if (isOpRef(f)) {
+      return f.name === 'std.param'
+        ? this.param(requireString(arg, '$std.param name'), undefined, false, emptyEnv)
+        : perform(f.name, arg);
     }
-    return perform(name, arg);
+    throw new EffectfulYamlError(`${what} is not a function: ${describe(f)}`);
   }
 
   private reserved(
@@ -945,9 +1123,7 @@ class Evaluator {
         return pure(new Closure(requireString(arg, '$fn parameter name'), aux('body'), env));
       case 'op': {
         const name = requireString(arg, '$op operation name');
-        if (!STD_OPS.has(name) && !name.includes('.')) {
-          throw new EffectfulYamlError(`$op cannot reference the reserved key $${name}`);
-        }
+        assertOpRefName(name);
         return pure(new OpRef(name));
       }
       case 'pipe': {
@@ -963,52 +1139,8 @@ class Evaluator {
         }
         return comp;
       }
-      // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
-      case 'each':
-        return bind(this.node(arg, env), (v) => perform('each', v));
-      case 'where':
-        return bind(this.node(arg, env), (v) =>
-          perform('where', requireBoolean(v, '$where condition')),
-        );
-      case 'param':
-        return bind(this.node(arg, env), (name) => {
-          const spec: ParamArg = { name: requireString(name, '$param name') };
-          if (!shape.aux.has('default')) return perform('param', spec);
-          // $default は $if の分岐と同じ遅延位置。パラメータが渡されていれば評価しない
-          // （作用の推論は出現主義なので、集合には数える）。
-          return bind(perform('param', { ...spec, optional: true }), (v) =>
-            v === ABSENT ? this.node(aux('default'), env) : pure(v),
-          );
-        });
-      case 'get':
-        return bind(this.node(arg, env), (name) =>
-          perform('get', requireString(name, '$get cell name')),
-        );
-      case 'set':
-        return bind(this.node(arg, env), (cells) => perform('set', cells));
-      case 'log':
-        return bind(this.node(arg, env), (v) => perform('log', v));
-      case 'fail':
-        return bind(this.node(arg, env), (v) => perform('fail', v));
-      case 'list':
-        return collectChoice(this.node(arg, env));
-      case 'mapping':
-        return bind(collectChoice(this.node(arg, env)), (l) => pure(toMapping(asList(l))));
-      case 'first':
-        return bind(collectFirst(this.node(arg, env)), (r) =>
-          asList(r).length > 0
-            ? pure(asList(r)[0]!)
-            : perform('fail', 'every branch of $first failed or was cut'),
-        );
-      case 'state':
-        return bind(this.node(arg, env), (cells) => {
-          if (!isValueMap(cells)) {
-            throw new EffectfulYamlError(`$state requires a mapping of cells, got: ${describe(cells)}`);
-          }
-          let init: PMap<Value> = empty;
-          for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
-          return handleState(this.node(aux('in'), env), init);
-        });
+      case 'collect':
+        return this.collect(arg, aux('with'), intoOf(aux('into')), env);
       case 'handle':
         return this.handle(arg, aux('with'), env);
       case 'resume': {
@@ -1021,6 +1153,39 @@ class Evaluator {
       default:
         throw new EffectfulYamlError(`$${shape.main} cannot be used as a main key`);
     }
+  }
+
+  /**
+   * 唯一の原始演算 $collect。構造を文書順に回り、要素ごとの結果（リスト）を一つに組み立てる。
+   * 対象も関数本体も合成なので、そこで起きた作用は周囲へ合流する。
+   * $collect 自身は作用を起こさないので、ハンドラで捕捉されることはない。
+   */
+  private collect(
+    target: unknown,
+    withNode: unknown,
+    into: 'list' | 'mapping',
+    env: Env,
+  ): Comp {
+    return bind(this.node(target, env), (structure) =>
+      bind(this.node(withNode, env), (f) => {
+        const items = entriesOf(structure, '$collect');
+        const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp => {
+          if (i >= items.length) {
+            const flat = flattenChunks(chunks);
+            return pure(into === 'mapping' ? toMapping(flat) : flat);
+          }
+          return bind(this.apply(f, items[i]!, '$collect $with'), (r) => {
+            if (!Array.isArray(r)) {
+              throw new EffectfulYamlError(
+                `$collect requires the $with function to return a list, got: ${describe(r)}`,
+              );
+            }
+            return go(i + 1, { head: r, tail: chunks });
+          });
+        };
+        return go(0, null);
+      }),
+    );
   }
 
   /** $do の文の並び。$let だけは残りの文へ束縛を伸ばす。 */
@@ -1060,16 +1225,20 @@ class Evaluator {
     const clauses = new Map<string, Clause>();
     let ret: (v: Value) => Comp = pure;
     for (const [name, clauseNode] of Object.entries(withNode)) {
+      if (name !== 'return' && !name.includes('.')) {
+        throw new EffectfulYamlError(
+          `$handle clause name must be a namespaced operation name or 'return', got: ${name}`,
+        );
+      }
       const closure = this.closureOf(clauseNode, env, name);
       if (name === 'return') {
         ret = (v) => this.node(closure.body, extendEnv(closure.env, closure.param, v));
         continue;
       }
       clauses.set(name, (arg, resume) => {
-        // 節のパラメータには演算の引数そのものを渡す（$param の内部表現はここで剥がす）。
-        const value = name === 'param' ? (arg as ParamArg).name : arg;
         // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
-        const inner: Env = { vars: insert(closure.env.vars, closure.param, value), resume };
+        // 本体の中で作られた閉包も env ごと resume を捕まえるので、そこからも再開できる。
+        const inner: Env = { vars: insert(closure.env.vars, closure.param, arg), resume };
         return this.node(closure.body, inner);
       });
     }
@@ -1096,24 +1265,36 @@ function letBindingsOf(stmt: unknown): (readonly [string, unknown])[] | undefine
   return Object.entries(bindings);
 }
 
-function toMapping(branches: readonly Value[]): Value {
+/** $into の値。書かれていなければ list。式ではなくキーワードなので生のノードを見る。 */
+function intoOf(node: unknown): 'list' | 'mapping' {
+  if (node === undefined) return 'list';
+  if (node === 'list' || node === 'mapping') return node;
+  throw new EffectfulYamlError(`$into must be 'list' or 'mapping', got: ${JSON.stringify(node)}`);
+}
+
+/**
+ * エントリの列をマッピングにする（$collect の $into: mapping の契約）。
+ * $std.mapping はこの上の導出なので、集めた分岐にも同じ検査が効く。
+ * 契約違反はデータの変動ではなく文書の形の誤りなので、失敗作用ではなくエラーにする。
+ */
+function toMapping(entries: readonly Value[]): Value {
   const out: ValueMap = {};
-  for (const b of branches) {
+  for (const b of entries) {
     if (!isValueMap(b)) {
-      throw new EffectfulYamlError(`$mapping branch must be a {key, value} mapping, got: ${describe(b)}`);
+      throw new EffectfulYamlError(`$collect entry must be a {key, value} mapping, got: ${describe(b)}`);
     }
     const keys = Object.keys(b);
     if (keys.length !== 2 || !('key' in b) || !('value' in b)) {
       throw new EffectfulYamlError(
-        `$mapping branch must have exactly the keys 'key' and 'value', got: ${keys.join(', ')}`,
+        `$collect entry must have exactly the keys 'key' and 'value', got: ${keys.join(', ')}`,
       );
     }
     const key = b['key']!;
     if (typeof key !== 'string') {
-      throw new EffectfulYamlError(`$mapping key must be a string, got: ${describe(key)}`);
+      throw new EffectfulYamlError(`$collect key must be a string, got: ${describe(key)}`);
     }
     if (Object.prototype.hasOwnProperty.call(out, key)) {
-      throw new EffectfulYamlError(`duplicate key in $mapping: ${key}`);
+      throw new EffectfulYamlError(`duplicate key in $collect: ${key}`);
     }
     out[key] = b['value']!;
   }
@@ -1137,8 +1318,8 @@ function assertNoFunctionValue(v: Value): void {
 // ---------------------------------------------------------------------------
 
 /**
- * 境界の既定ハンドラを通り抜けて残るのは、失敗と登録演算だけである。
- * 失敗は文書全体のエラーにし、登録演算はホスト関数へ渡す（非同期でよい）。
+ * 境界の既定ハンドラを通り抜けて残るのは、失敗と、第一階の標準演算とホスト登録の演算だけである。
+ * 失敗は文書全体のエラーにし、演算はその実装へ渡す（ホスト関数は非同期でよい）。
  */
 async function drive(
   comp: Comp,
@@ -1147,8 +1328,8 @@ async function drive(
   let c = force(comp);
   for (;;) {
     if (c.tag === 'pure') return c.value;
-    if (c.name === 'fail') throw new EffectfulYamlError(`failure: ${describe(c.arg)}`);
-    const host = ops[c.name];
+    if (c.name === 'std.fail') throw new EffectfulYamlError(`failure: ${describe(c.arg)}`);
+    const host = ops[c.name] ?? BUILTIN_OPS[c.name];
     if (host === undefined) throw new EffectfulYamlError(`unregistered operation: $${c.name}`);
     c = force(c.resume(await host(c.arg)));
   }
@@ -1157,11 +1338,19 @@ async function drive(
 /** 文書を評価する。文書全体が一つの作用境界である。 */
 export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Promise<Value> {
   const ops = options.ops ?? {};
+
+  // std. 名前空間は標準演算のためにあり、ホストは登録できない。
+  for (const name of Object.keys(ops)) {
+    if (name.startsWith('std.')) {
+      throw new EffectfulYamlError(`host cannot register an operation in the std namespace: $${name}`);
+    }
+  }
+
   const analyzer = new Analyzer();
 
-  // 作用シグネチャ。既定ハンドラが処理しない = 登録が要る演算だけが残る。
+  // 作用シグネチャ。既定ハンドラが処理しない = 実装が要る演算だけが残る。
   for (const name of analyzer.boundary(doc, empty)) {
-    if (!(name in ops)) {
+    if (!(name in ops) && !(name in BUILTIN_OPS)) {
       throw new EffectfulYamlError(`unregistered operation: $${name}`);
     }
   }

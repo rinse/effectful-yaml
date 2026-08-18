@@ -6,13 +6,13 @@ $do:
     throw: {$op: exn.throw}
 - $handle:
     $do:
-    - $log: start
+    - $std.log: start
     - {$.throw: error message}
-    - $log: unreachable    # 節が $resume を呼ばないので、ここには到達しない
+    - $std.log: unreachable    # 節が $resume を呼ばないので、ここには到達しない
   $with:
     exn.throw:
       $fn: msg
       $body:
         # 打ち切って標準の失敗に翻訳する。CLI はこれを受けて終了コード 1 で止まる。
         # ここを既定値に置き換えれば、同じ本体のまま回復の意味に変わる。
-        $fail: ${msg}
+        $std.fail: ${msg}

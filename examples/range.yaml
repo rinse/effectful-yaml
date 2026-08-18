@@ -1,30 +1,13 @@
-# $let は非再帰だが、関数を引数 self として自分自身に渡す自己適用なら反復を書ける。
-$do:
-- $let:
-    # go は {self, from, to} を取り、from..to の各整数を選択の分岐として一つずつ出す。
-    go:
-      $fn: a
-      $body:
-        $do:
-        - $where: ${a.from <= a.to}
-        - $let: {k: {$each: [this, rest]}}
-        - $if: ${k == 'this'}
-          $then: ${a.from}
-          $else:
-            # 引数の中の閉包はパス呼び出し $.a.self で直接呼べる; 引数はオブジェクト {self, from, to}
-            $.a.self:
-              self: ${a.self}
-              from: ${a.from + 1}
-              to: ${a.to}
-    range:
-      $fn: r
-      $body:
-        $.go:
-          self: ${go}
-          from: ${r.from}
-          to: ${r.to}
-
-# {$.range: {from, to}} は $each と同じ選択として振る舞い、静的追跡も通る。
-- $let:
-    n: {$.range: {from: 1, to: 100}}
-- hello
+# hello を 100 個並べたリストに評価される。
+#
+# 反復はデータ構造に沿って書く。数を構造に変えるのが第一階の標準演算 $std.range で、
+# その構造を回るのが唯一の原始演算 $collect である。
+# $collect は要素ごとの結果リストを連結するので、各要素で一要素のリストを返せば
+# 長さ 100 のリストになる（作用は起きないので、この文書は分岐しない）。
+#
+# 言語は fix に相当する原始を持たず、$let も非再帰なので、反復をこの形以外で書く道はない。
+$collect: {$std.range: 100}
+$with:
+  $fn: i
+  $body:
+  - hello

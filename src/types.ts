@@ -138,18 +138,38 @@ export class EffectfulYamlError extends Error {
 }
 
 /** 選択の作用に属する演算。境界にこれが残ると値はリストになる。 */
-export const CHOICE_OPS: ReadonlySet<string> = new Set(['each', 'where']);
+export const CHOICE_OPS: ReadonlySet<string> = new Set(['std.each', 'std.where']);
 
 /** 状態の作用に属する演算。 */
-export const STATE_OPS: ReadonlySet<string> = new Set(['get', 'set']);
+export const STATE_OPS: ReadonlySet<string> = new Set(['std.get', 'std.set']);
 
-/** 標準演算（ドットなしで $op から参照できるもの）。 */
+/** 失敗の作用。 */
+export const FAIL_OPS: ReadonlySet<string> = new Set(['std.fail']);
+
+/**
+ * 標準演算。作用を起こす 7 つと、値から値を計算するだけの第一階の 4 つ。
+ * std の派生ハンドラ（$std.list など）は演算ではないので含まない。
+ */
 export const STD_OPS: ReadonlySet<string> = new Set([
-  'each',
-  'where',
-  'param',
-  'get',
-  'set',
-  'log',
-  'fail',
+  'std.each',
+  'std.where',
+  'std.param',
+  'std.get',
+  'std.set',
+  'std.log',
+  'std.fail',
+  'std.range',
+  'std.upper',
+  'std.lower',
+  'std.resolve',
+]);
+
+/** std の派生ハンドラ。演算ではなく形なので、$op では参照できず捕捉もできない。 */
+export const DERIVED_HANDLERS: ReadonlySet<string> = new Set([
+  'std.list',
+  'std.mapping',
+  'std.first',
+  'std.state',
+  'std.opt',
+  'std.prune',
 ]);

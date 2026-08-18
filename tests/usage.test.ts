@@ -11,8 +11,8 @@ describe('docs/usage.md の例', () => {
       evaluateYaml(
         `
 server:
-  host: {$param: db_host}
-  port: {$param: db_port, $default: 5432}
+  host: {$std.param: db_host}
+  port: {$std.param: db_port, $default: 5432}
 `,
         { params: { db_host: 'example.com' } },
       ),
@@ -25,7 +25,7 @@ server:
       evaluateYaml(
         `
 $do:
-- $log: reading secret
+- $std.log: reading secret
 - password: {$vault.read: secret/db}
 `,
         {
@@ -37,8 +37,8 @@ $do:
     expect(logs).toEqual(['reading secret']);
   });
 
-  it('$fail は EffectfulYamlError で reject される', async () => {
-    const p = evaluateYaml('{$fail: boom}');
+  it('$std.fail は EffectfulYamlError で reject される', async () => {
+    const p = evaluateYaml('{$std.fail: boom}');
     await expect(p).rejects.toBeInstanceOf(EffectfulYamlError);
     await expect(p).rejects.toThrow('failure: boom');
   });

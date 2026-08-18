@@ -27,7 +27,7 @@ describe('eff-yaml CLI', () => {
   it('標準入力の文書を評価して YAML を標準出力に書く', async () => {
     const r = await runCli(
       ['-p', 'db_host=example.com'],
-      'server: {host: {$param: db_host}, port: {$param: db_port, $default: 5432}}',
+      'server: {host: {$std.param: db_host}, port: {$std.param: db_port, $default: 5432}}',
     );
     expect(r.code).toBe(0);
     expect(r.out).toBe('server:\n  host: example.com\n  port: 5432\n');
@@ -35,20 +35,20 @@ describe('eff-yaml CLI', () => {
   });
 
   it('パラメータの値は YAML として解釈される', async () => {
-    const r = await runCli(['-p', 'n=3'], 'value: {$param: n}');
+    const r = await runCli(['-p', 'n=3'], 'value: {$std.param: n}');
     expect(r.code).toBe(0);
     expect(r.out).toBe('value: 3\n');
   });
 
-  it('$log は標準エラー出力に出る', async () => {
-    const r = await runCli([], '{$do: [{$log: working}, done]}');
+  it('$std.log は標準エラー出力に出る', async () => {
+    const r = await runCli([], '{$do: [{$std.log: working}, done]}');
     expect(r.code).toBe(0);
     expect(r.out).toBe('done\n');
     expect(r.err).toBe('working\n');
   });
 
-  it('$fail は終了コード 1 とエラーメッセージになる', async () => {
-    const r = await runCli([], '{$fail: boom}');
+  it('$std.fail は終了コード 1 とエラーメッセージになる', async () => {
+    const r = await runCli([], '{$std.fail: boom}');
     expect(r.code).toBe(1);
     expect(r.out).toBe('');
     expect(r.err).toContain('failure: boom');

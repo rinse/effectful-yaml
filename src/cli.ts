@@ -17,7 +17,7 @@ const USAGE = `\
 Usage: eff-yaml [file] [-p name=value]...
 
 effectful-yaml 文書を評価し、結果を YAML で標準出力に書く。
-$log の中身は標準エラー出力に書く。
+$std.log の中身は標準エラー出力に書く。
 
   file             入力ファイル。省略時と "-" は標準入力。
   -p, --param      起動時パラメータ。値は YAML として解釈する。繰り返し可。

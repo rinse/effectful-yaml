@@ -42,7 +42,7 @@ describe('環境の計算量', () => {
     // 読みが O(束縛数) だと 5 万 x 2 万 = 10^9 ステップになる（実測 2.9 秒）。
     const stmts: unknown[] = [];
     for (let i = 0; i < 20000; i++) stmts.push({ $let: { [`x${i}`]: i } });
-    stmts.push({ $list: { $do: [{ $each: range(50000) }, '${x0}'] } });
+    stmts.push({ '$std.list': { $do: [{ '$std.each': range(50000) }, '${x0}'] } });
     const t0 = performance.now();
     const result = (await evaluate({ $do: stmts })) as number[];
     const elapsed = performance.now() - t0;
@@ -101,9 +101,9 @@ $do:
     await expect(
       run(`
 $handle:
-  $log: hello
+  $std.log: hello
 $with:
-  log:
+  std.log:
     $fn: msg
     $body:
       $do:

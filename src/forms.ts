@@ -1,13 +1,13 @@
 /**
  * `$` キーの分類と、マッピングノードの形の判定。
- * 仕様: docs/grammar.md（草案 0.3）呼び出しと名前空間 / 各フォームの節。
+ * 仕様: docs/grammar.md（草案 0.4）呼び出しと名前空間 / 各フォームの節。
  *
  * effect-infer（eval-core に同居）と evaluator の双方が、同じマッピングを
  * 同じ形として認識しなければならないため、その判定をここに集約する。
  */
-import { CHOICE_OPS, EffectfulYamlError, STATE_OPS } from './types.js';
+import { CHOICE_OPS, EffectfulYamlError, FAIL_OPS, STATE_OPS } from './types.js';
 
-/** 予約主キー（$ を除く）。補助キーも合わせて 26 個。 */
+/** 予約キー（$ を除く）。仕様の 17 個がすべてであり、演算はここに現れない。 */
 export const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'do',
   'let',
@@ -19,22 +19,13 @@ export const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'op',
   'pipe',
   'through',
-  'each',
-  'where',
-  'param',
-  'default',
-  'get',
-  'set',
-  'log',
-  'fail',
-  'list',
-  'first',
-  'mapping',
-  'state',
-  'in',
   'handle',
   'with',
   'resume',
+  'collect',
+  'into',
+  'in',
+  'default',
 ]);
 
 /** 補助キー名の集合。主キー候補から除外するために使う。 */
@@ -43,27 +34,34 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
   'else',
   'body',
   'through',
-  'default',
-  'in',
   'with',
+  'into',
+  'in',
+  'default',
 ]);
 
-/** 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。 */
+/**
+ * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
+ * `$in` と `$default` は std の演算（`$std.state` と `$std.param`）が使うので、
+ * 予約キーだけでなく演算の名前でも引ける表にする。
+ */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
   pipe: new Set(['through']),
-  param: new Set(['default']),
-  state: new Set(['in']),
   handle: new Set(['with']),
+  collect: new Set(['with', 'into']),
+  'std.state': new Set(['in']),
+  'std.param': new Set(['default']),
 };
 
 /** 主キーのうち、必須の補助キー（省略するとエラー）。 */
 export const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
-  state: new Set(['in']),
   handle: new Set(['with']),
+  collect: new Set(['with']),
+  'std.state': new Set(['in']),
 };
 
 /** `IDENT(\.IDENT)*`。レキシカル呼び出し `$.名前` の名前部分（先頭の `.` を除いた残り）。 */
@@ -129,13 +127,28 @@ export type MappingShape =
       readonly aux: ReadonlyMap<string, string>;
     }
   | { readonly kind: 'lexical'; readonly name: string; readonly raw: string }
-  | { readonly kind: 'op'; readonly name: string; readonly raw: string };
+  | {
+      readonly kind: 'op';
+      readonly name: string;
+      readonly raw: string;
+      /** 補助キー名（$ なし） -> 生キー。$std.state の $in、$std.param の $default。 */
+      readonly aux: ReadonlyMap<string, string>;
+    };
+
+const NO_AUX: ReadonlySet<string> = new Set();
+
+/** エラー文言に使う主キーの表示名。 */
+function displayName(k: DollarKeyKind): string {
+  if (k.kind === 'lexical') return `$.${k.name}`;
+  return `$${k.kind === 'op' ? k.name : k.main}`;
+}
 
 /**
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
  * - $ 式でないキーが一つでもあれば、$ キーの有無に関わらず plain（混在はエラー）。
  * - $ キーは主キーちょうど一つと、その主キーが許す補助キーだけを許す。
- * - 呼び出し（レキシカル・登録演算）は補助キーを取らない。
+ * - 補助キーを許すのは予約キーのほか、`$in` を取る `$std.state` と `$default` を取る `$std.param` だけ。
+ *   レキシカル呼び出しは補助キーを取らない。
  */
 export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   const dollarKeys = rawKeys.filter(isDollarFormKey);
@@ -172,44 +185,43 @@ export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   const mainEntry = mainCandidates[0]!;
   const { raw: mainRaw, c: mainKind } = mainEntry;
 
-  if (mainKind.kind === 'lexical' || mainKind.kind === 'op') {
-    if (auxCandidates.length > 0) {
-      throw new EffectfulYamlError(
-        `call $${mainKind.kind === 'lexical' ? '.' : ''}${mainKind.name} does not take auxiliary keys: ${auxCandidates.map(({ raw }) => raw).join(', ')}`,
-      );
-    }
-    return { kind: mainKind.kind, name: mainKind.name, raw: mainRaw };
-  }
-
-  const allowed = AUX_OF[mainKind.main] ?? new Set<string>();
+  // 補助キーの持ち主は、予約キーならその名前、演算ならドット入りの演算名。
+  // レキシカル呼び出しは補助キーを取らない（表に載せない）。
+  const owner = mainKind.kind === 'reserved' ? mainKind.main : mainKind.kind === 'op' ? mainKind.name : '';
+  const allowed = AUX_OF[owner] ?? NO_AUX;
   const aux = new Map<string, string>();
   for (const { raw, c } of auxCandidates) {
     if (c.kind !== 'reserved') continue;
     if (!allowed.has(c.main)) {
-      throw new EffectfulYamlError(`$${mainKind.main} does not accept $${c.main}`);
+      throw new EffectfulYamlError(`${displayName(mainKind)} does not accept $${c.main}`);
     }
     aux.set(c.main, raw);
   }
 
-  const required = REQUIRED_AUX_OF[mainKind.main];
+  const required = REQUIRED_AUX_OF[owner];
   if (required !== undefined) {
     for (const name of required) {
       if (!aux.has(name)) {
-        throw new EffectfulYamlError(`$${mainKind.main} requires $${name}`);
+        throw new EffectfulYamlError(`${displayName(mainKind)} requires $${name}`);
       }
     }
   }
 
+  if (mainKind.kind === 'lexical') return { kind: 'lexical', name: mainKind.name, raw: mainRaw };
+  if (mainKind.kind === 'op') return { kind: 'op', name: mainKind.name, raw: mainRaw, aux };
   return { kind: 'reserved', main: mainKind.main, mainRaw, aux };
 }
 
 /**
- * 作用集合（演算名の集合）に対するハンドラの部分処理。
+ * 作用集合（演算名の集合）に対する std の派生ハンドラの部分処理。
  * 「宣言した作用だけを取り除く」の宣言側の一覧。$handle は $with の節名で動的に決まるため含まない。
+ * $std.prune は取り除くほかに節の本体の std.where を加えるので、加える側は eval.ts が持つ。
  */
 export const HANDLER_REMOVES: Readonly<Record<string, ReadonlySet<string>>> = {
-  list: CHOICE_OPS,
-  mapping: CHOICE_OPS,
-  first: new Set([...CHOICE_OPS, 'fail']),
-  state: STATE_OPS,
+  'std.list': CHOICE_OPS,
+  'std.mapping': CHOICE_OPS,
+  'std.first': new Set([...CHOICE_OPS, ...FAIL_OPS]),
+  'std.state': STATE_OPS,
+  'std.opt': FAIL_OPS,
+  'std.prune': FAIL_OPS,
 };

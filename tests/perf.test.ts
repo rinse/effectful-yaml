@@ -14,17 +14,17 @@ import type { Value } from '../src/types.js';
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 
 describe('大きな文書', () => {
-  it('$list の中の $each が 8000 分岐しても溢れない', async () => {
+  it('$std.list の中の $std.each が 8000 分岐しても溢れない', async () => {
     // 8000 要素のデータリスト（compose の逐次組み立て）と、8000 分岐の畳み込みの両方を踏む。
-    await expect(evaluate({ $list: { $each: range(8000) } })).resolves.toEqual(range(8000));
+    await expect(evaluate({ '$std.list': { '$std.each': range(8000) } })).resolves.toEqual(range(8000));
   });
 
-  it('8000 分岐がそれぞれ $log しても溢れない', async () => {
-    // $log の節はその場で resume するので、handleOps が入れ子になっていると溢れる。
+  it('8000 分岐がそれぞれ $std.log しても溢れない', async () => {
+    // $std.log の節はその場で resume するので、handleOps が入れ子になっていると溢れる。
     const seen: Value[] = [];
     await expect(
       evaluate(
-        { $list: { $do: [{ $let: { x: { $each: range(8000) } } }, { $log: '${x}' }, '${x}'] } },
+        { '$std.list': { $do: [{ $let: { x: { '$std.each': range(8000) } } }, { '$std.log': '${x}' }, '${x}'] } },
         { onLog: (v) => seen.push(v) },
       ),
     ).resolves.toEqual(range(8000));
@@ -32,18 +32,18 @@ describe('大きな文書', () => {
   });
 
   it('8000 分岐が状態を貫流させても溢れない', async () => {
-    // 選択（$each）は $list が、状態（$get/$set）はその外側の既定ハンドラが処理する。
+    // 選択（$std.each）は $std.list が、状態（$std.get/$std.set）はその外側の既定ハンドラが処理する。
     // 状態は分岐をまたいで文書順に貫流するので、最後の分岐の値は 8000 になる。
     const doc = {
       $do: [
-        { $set: { n: 0 } },
+        { '$std.set': { n: 0 } },
         {
-          $list: {
+          '$std.list': {
             $do: [
-              { $each: range(8000) },
-              { $let: { v: { $get: 'n' } } },
-              { $set: { n: '${v + 1}' } },
-              { $get: 'n' },
+              { '$std.each': range(8000) },
+              { $let: { v: { '$std.get': 'n' } } },
+              { '$std.set': { n: '${v + 1}' } },
+              { '$std.get': 'n' },
             ],
           },
         },
@@ -54,11 +54,11 @@ describe('大きな文書', () => {
 
   it('2 万文の $do が溢れずにカウンタを数え切る', async () => {
     // 1 万回ぶんの「読んで足して書く」= 2 万文。状態の演算は 2 万回を超える。
-    const stmts: unknown[] = [{ $set: { n: 0 } }];
+    const stmts: unknown[] = [{ '$std.set': { n: 0 } }];
     for (let i = 0; i < 10000; i++) {
-      stmts.push({ $let: { v: { $get: 'n' } } }, { $set: { n: '${v + 1}' } });
+      stmts.push({ $let: { v: { '$std.get': 'n' } } }, { '$std.set': { n: '${v + 1}' } });
     }
-    stmts.push({ $get: 'n' });
+    stmts.push({ '$std.get': 'n' });
     await expect(evaluate({ $do: stmts })).resolves.toBe(10000);
   });
 
@@ -74,8 +74,8 @@ describe('逐次組み立ての計算量', () => {
   //  compose のリスト 3.2 万要素で 4.6 秒・10 万要素は 40 秒でタイムアウト、
   //  compose のマッピング 8000 キーで 9.4 秒）。
 
-  it('$list: {$each: ...} が 10 万分岐でも妥当な時間で終わる', async () => {
-    await expect(evaluate({ $list: { $each: range(100000) } })).resolves.toEqual(range(100000));
+  it('$std.list: {$std.each: ...} が 10 万分岐でも妥当な時間で終わる', async () => {
+    await expect(evaluate({ '$std.list': { '$std.each': range(100000) } })).resolves.toEqual(range(100000));
   }, 5000);
 
   it('10 万要素のデータリストのリテラルが妥当な時間で終わる', async () => {
@@ -97,12 +97,12 @@ describe('逐次組み立ての計算量', () => {
 });
 
 describe('状態の書き込みの計算量', () => {
-  it('1 万個の別々のセルへの $set が二乗にならない', async () => {
-    // 記憶の複製が「$set のたびに全セルをコピー」だと、i 個目の書き込みで i 個写すので
+  it('1 万個の別々のセルへの $std.set が二乗にならない', async () => {
+    // 記憶の複製が「$std.set のたびに全セルをコピー」だと、i 個目の書き込みで i 個写すので
     // 総計 Sigma i = O(n^2) になる。永続木なら書き込みごとに O(log n)。
     const stmts: unknown[] = [];
-    for (let i = 0; i < 10000; i++) stmts.push({ $set: { [`c${i}`]: i } });
-    stmts.push({ $get: 'c0' });
+    for (let i = 0; i < 10000; i++) stmts.push({ '$std.set': { [`c${i}`]: i } });
+    stmts.push({ '$std.get': 'c0' });
     await expect(evaluate({ $do: stmts })).resolves.toBe(0);
   }, 3000);
 });

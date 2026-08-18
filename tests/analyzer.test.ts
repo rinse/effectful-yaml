@@ -28,7 +28,7 @@ $do:
   });
 
   it('リストの添字をたどるパス参照も追える', async () => {
-    // 2 段目の本体の $each は、添字のパス参照を追えたときだけ境界の形に効く
+    // 2 段目の本体の $std.each は、添字のパス参照を追えたときだけ境界の形に効く
     // （追えなければ境界は単値と推論され、分岐 2 本で実行時エラーになる）。
     await expect(
       run(`
@@ -39,7 +39,7 @@ $do:
       $body: \${x * 2}
     - $fn: x
       $body:
-        $each:
+        $std.each:
         - \${x}
         - \${x + 1}
 - $pipe: 20
@@ -52,7 +52,7 @@ $do:
 
   it('引数のマッピングの中の関数を段に置くと、その本体の選択が境界の形に効く', async () => {
     // ${arg.step} は呼び出し側から渡された関数に解決される（引数伝播）。
-    // その本体に $each があるので境界は静的にリスト形になり、実行時エラーにならない。
+    // その本体に $std.each があるので境界は静的にリスト形になり、実行時エラーにならない。
     await expect(
       run(`
 $do:
@@ -68,7 +68,7 @@ $do:
     step:
       $fn: x
       $body:
-        $each:
+        $std.each:
         - \${x}
         - \${x + 1}
 `),
@@ -96,21 +96,21 @@ $do:
     ).resolves.toBe(11);
   });
 
-  it('リテラルのリストからの $each で選んだ関数も追える（分岐の合併）', async () => {
-    // $each 自身の選択は境界の形を見ても判別できないので、事前検証で確かめる。
-    // 合併の一方に登録演算があることは、$each の要素をたどれたときだけ分かる。
-    // 未登録の演算は実行時にも同じ文言で拒まれるため、$log が流れたかどうかで
+  it('リテラルのリストからの $std.each で選んだ関数も追える（分岐の合併）', async () => {
+    // $std.each 自身の選択は境界の形を見ても判別できないので、事前検証で確かめる。
+    // 合併の一方に登録演算があることは、$std.each の要素をたどれたときだけ分かる。
+    // 未登録の演算は実行時にも同じ文言で拒まれるため、$std.log が流れたかどうかで
     // 「評価前に拒否された」ことを見分ける。
     const logs: Value[] = [];
     const doc = `
 $do:
 - $let:
     f:
-      $each:
+      $std.each:
       - {$op: vault.read}
       - $fn: x
         $body: plain-\${x}
-- $log: before
+- $std.log: before
 - $pipe: db/pw
   $through:
   - \${f}
@@ -131,7 +131,7 @@ $do:
 
 describe('出現主義（追跡が効くと形が変わる）', () => {
   it('実行時の分岐が 1 本でも、追跡できる呼び出しの選択は要素 1 のリストになる', async () => {
-    // 関数の本体の $if は合成なので、選ばれない $then の $each も作用に数える。
+    // 関数の本体の $if は合成なので、選ばれない $then の $std.each も作用に数える。
     // 実行時は $else 側だけを通るが、境界の形は静的な作用集合が決める。
     await expect(
       run(
@@ -143,9 +143,9 @@ $do:
         $fn: flag
         $body:
           $if: \${flag}
-          $then: {$each: [a, b]}
+          $then: {$std.each: [a, b]}
           $else: single
-- $pipe: {$param: branch}
+- $pipe: {$std.param: branch}
   $through:
   - \${helpers.choose}
 `,
@@ -154,10 +154,10 @@ $do:
     ).resolves.toEqual(['single']);
   });
 
-  it('マッピング経由のパス呼び出し（$.fns.choose）でも $each の境界がリスト形に決まる', async () => {
+  it('マッピング経由のパス呼び出し（$.fns.choose）でも $std.each の境界がリスト形に決まる', async () => {
     // $. の呼び出しがパスを取れるのは fns.choose のように束縛の先のマッピングをたどる形。
     // 先頭区画 fns を senv から引いた後、残りの区画 choose を追跡木の field() でたどれて
-    // 初めて閉包の本体が解析され、$each が境界の形をリストに決める。
+    // 初めて閉包の本体が解析され、$std.each が境界の形をリストに決める。
     // たどれなければ実行時に「expected 1 result」で落ちるので、
     // 結果がちゃんと 3 要素のリストになることが、パスの追跡が効いている証拠になる。
     await expect(
@@ -168,7 +168,7 @@ $do:
       choose:
         $fn: x
         $body:
-          $each: [a, b, c]
+          $std.each: [a, b, c]
 - {$.fns.choose: ignored}
 `),
     ).resolves.toEqual(['a', 'b', 'c']);
@@ -183,10 +183,10 @@ describe('追跡できない呼び出し', () => {
 $do:
 - $let:
     chosen:
-      $if: {$param: fancy}
+      $if: {$std.param: fancy}
       $then:
         $fn: x
-        $body: {$each: [1, 2]}
+        $body: {$std.each: [1, 2]}
       $else: 0
 - $pipe: 0
   $through:
@@ -196,22 +196,22 @@ $do:
       /expected 1 result, got 2/,
     );
     // 回避策は明示のハンドラで形を宣言すること、とエラーが案内する。
-    await expect(run(doc, { params: { fancy: true } })).rejects.toThrow(/\$list/);
+    await expect(run(doc, { params: { fancy: true } })).rejects.toThrow(/\$std.list/);
   });
 
-  it('案内どおり $list で包めば形が明示になり、実行時エラーにならない', async () => {
+  it('案内どおり $std.list で包めば形が明示になり、実行時エラーにならない', async () => {
     await expect(
       run(
         `
 $do:
 - $let:
     chosen:
-      $if: {$param: fancy}
+      $if: {$std.param: fancy}
       $then:
         $fn: x
-        $body: {$each: [1, 2]}
+        $body: {$std.each: [1, 2]}
       $else: 0
-- $list:
+- $std.list:
     $pipe: 0
     $through:
     - \${chosen}
@@ -247,7 +247,7 @@ $do:
 - $let:
     helpers:
       read: {$op: vault.read}
-- $log: before
+- $std.log: before
 - $pipe: db/password
   $through:
   - \${helpers.read}
@@ -274,7 +274,7 @@ $do:
 - $let:
     helpers:
       read: {$op: vault.read}
-- $log: before
+- $std.log: before
 - {$.helpers.read: db/password}
 `;
     await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
@@ -300,7 +300,7 @@ $do:
     // ここでは同じ $fn ノード（inner）を、h が「登録演算」の場合と「純粋な恒等関数」の場合の
     // 2 通りの環境で捕まえ、先に解析される側（b、作用なし）のメモが後の側（a、未登録演算）を
     // 誤って上書きしないことを確かめる。誤って潰れれば a の未登録演算が見逃され、
-    // 評価前の事前検証をすり抜けて実行時まで進んでしまう（$log: before が先に流れる）。
+    // 評価前の事前検証をすり抜けて実行時まで進んでしまう（$std.log: before が先に流れる）。
     const logs: Value[] = [];
     const doc = `
 $do:
@@ -314,7 +314,7 @@ $do:
               $fn: x
               $body: {$.h.op: '\${x}'}
         - {$.inner: 1}
-- $log: before
+- $std.log: before
 - $let:
     b: {$.outer: {op: {$fn: y, $body: '\${y}'}}}
 - $let:
@@ -324,7 +324,7 @@ $do:
       /unregistered operation: \$vault\.unregistered/,
     );
     // 評価そのものが始まっていないこと（事前検証で拒否された）。潰れていれば
-    // 評価が実際に走ってしまい、$log: before が流れた後に実行時エラーになる。
+    // 評価が実際に走ってしまい、$std.log: before が流れた後に実行時エラーになる。
     expect(logs).toEqual([]);
   });
 });

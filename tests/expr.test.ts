@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evalExpr, interpolate } from '../src/expr.js';
+import { evalExpr, hasPathRef, interpolate, MissingPathError } from '../src/expr.js';
 import { EffectfulYamlError, emptyEnv, extendEnv, type Env, type Value } from '../src/types.js';
 
 function envOf(vars: Record<string, Value>): Env {
@@ -128,12 +128,35 @@ describe('evalExpr: references and paths', () => {
     expect(evalExpr('obj.a.b[2].c', env)).toBe('deep');
   });
 
-  it('errors on missing keys, out-of-range indices, and type mismatches', () => {
+  it('missing keys and out-of-range indices are MissingPathError (the evaluator turns them into std.fail)', () => {
     const env = envOf({ obj: { a: 1 }, xs: [1, 2] });
-    expect(() => evalExpr('obj.missing', env)).toThrow(EffectfulYamlError);
-    expect(() => evalExpr('xs[5]', env)).toThrow(EffectfulYamlError);
-    expect(() => evalExpr('obj[0]', env)).toThrow(EffectfulYamlError); // not a list
-    expect(() => evalExpr('xs.a', env)).toThrow(EffectfulYamlError); // not a mapping
+    expect(() => evalExpr('obj.missing', env)).toThrow(MissingPathError);
+    expect(() => evalExpr('xs[5]', env)).toThrow(MissingPathError);
+  });
+
+  it('walking a non-container is a hard error, not data partiality', () => {
+    const env = envOf({ obj: { a: 1 }, xs: [1, 2] });
+    for (const src of ['obj[0]', 'xs.a']) {
+      expect(() => evalExpr(src, env)).toThrow(EffectfulYamlError);
+      expect(() => evalExpr(src, env)).not.toThrow(MissingPathError);
+    }
+  });
+});
+
+describe('hasPathRef（作用の推論が std.fail を数える条件）', () => {
+  it('パスをたどる参照だけを見つける', () => {
+    expect(hasPathRef('${x.y}')).toBe(true);
+    expect(hasPathRef('${xs[0]}')).toBe(true);
+    expect(hasPathRef('prefix ${a + b.c} suffix')).toBe(true);
+  });
+
+  it('裸の参照・補間なし・パースできない文字列は数えない', () => {
+    expect(hasPathRef('${x}')).toBe(false);
+    expect(hasPathRef('${x + 1}')).toBe(false);
+    expect(hasPathRef('plain text')).toBe(false);
+    expect(hasPathRef('costs $$5')).toBe(false);
+    expect(hasPathRef('${')).toBe(false);
+    expect(hasPathRef('${!!!}')).toBe(false);
   });
 });
 
