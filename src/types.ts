@@ -83,6 +83,8 @@ export type Comp =
       readonly name: string;
       readonly arg: Value;
       readonly resume: (v: Value) => Comp;
+      /** 呼び出し位置で std.fail を起こして続ける継続。ハンドラは resume と同じ包み直しを施す。 */
+      readonly raise: (v: Value) => Comp;
     }
   | { readonly tag: 'bind'; readonly comp: Comp; readonly fn: (v: Value) => Comp };
 
@@ -96,6 +98,7 @@ export const perform = (name: string, arg: Value): Comp => ({
   name,
   arg,
   resume: pure,
+  raise: (v) => perform('std.fail', v),
 });
 
 export const bind = (c: Comp, f: (v: Value) => Comp): Comp => ({ tag: 'bind', comp: c, fn: f });
@@ -125,6 +128,7 @@ export function force(c: Comp): Forced {
         name: m.name,
         arg: m.arg,
         resume: (v) => bind(m.resume(v), outer.fn),
+        raise: (v) => bind(m.raise(v), outer.fn),
       };
     }
     cur = { tag: 'bind', comp: m.comp, fn: (v) => bind(m.fn(v), outer.fn) };
@@ -136,6 +140,18 @@ export class EffectfulYamlError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'EffectfulYamlError';
+  }
+}
+
+/**
+ * ホスト演算が「データ起因の失敗」を通知する例外。
+ * ドライバが演算の呼び出し位置の std.fail に翻訳するので、文書側のハンドラが捕捉できる。
+ * これ以外の例外は従来どおり捕捉できない文書のエラーである。
+ */
+export class OperationFailure extends Error {
+  constructor(readonly value: Value) {
+    super(typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value)));
+    this.name = 'OperationFailure';
   }
 }
 

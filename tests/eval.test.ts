@@ -1,7 +1,7 @@
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { evaluate, type EvaluateOptions } from '../src/eval.js';
-import { EffectfulYamlError, type Value } from '../src/types.js';
+import { EffectfulYamlError, OperationFailure, type Value } from '../src/types.js';
 
 const run = (src: string, options?: EvaluateOptions): Promise<Value> =>
   evaluate(parse(src), options);
@@ -1654,5 +1654,114 @@ $with:
     $body: {$resume: null}
 `),
     ).resolves.toBe('shadowed-n');
+  });
+});
+
+describe('ホスト演算の失敗通知', () => {
+  it('捕捉されなければ、呼び出し位置の std.fail が文書全体のエラーになる', async () => {
+    await expect(
+      run('{$site.sel: h1}', {
+        ops: {
+          'site.sel': () => {
+            throw new OperationFailure('no match: h1');
+          },
+        },
+      }),
+    ).rejects.toThrow(/failure: no match: h1/);
+  });
+
+  it('$std.opt が捕捉して null になる', async () => {
+    await expect(
+      run('{$std.opt: {$site.sel: h1}}', {
+        ops: {
+          'site.sel': () => {
+            throw new OperationFailure('no match: h1');
+          },
+        },
+      }),
+    ).resolves.toBe(null);
+  });
+
+  it('$std.prune が失敗した分岐だけを落とす', async () => {
+    await expect(
+      run(
+        `
+$std.list:
+  $do:
+  - $let:
+      v: {$std.each: [a, b, c]}
+  - $std.prune:
+      $site.sel: \${v}
+`,
+        {
+          ops: {
+            'site.sel': (v) => {
+              if (v === 'b') throw new OperationFailure('no match: b');
+              return v;
+            },
+          },
+        },
+      ),
+    ).resolves.toEqual(['a', 'c']);
+  });
+
+  it('$handle の std.fail 節が $resume で呼び出し位置に代替値を返し、続く計算に反映される', async () => {
+    await expect(
+      run(
+        `
+$handle:
+  $do:
+  - $let:
+      v:
+        $site.sel: h1
+  - prefix-\${v}
+$with:
+  std.fail:
+    $fn: msg
+    $body: {$resume: fallback}
+`,
+        {
+          ops: {
+            'site.sel': () => {
+              throw new OperationFailure('no match: h1');
+            },
+          },
+        },
+      ),
+    ).resolves.toBe('prefix-fallback');
+  });
+
+  it('OperationFailure でない例外は $std.opt でも捕捉されず reject される', async () => {
+    await expect(
+      run('{$std.opt: {$site.sel: h1}}', {
+        ops: {
+          'site.sel': () => {
+            throw new Error('boom');
+          },
+        },
+      }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it('$std.first は失敗した分岐を飛ばして次の分岐の値になる', async () => {
+    await expect(
+      run(
+        `
+$std.first:
+  $do:
+  - $let:
+      v: {$std.each: [x, y]}
+  - $site.sel: \${v}
+`,
+        {
+          ops: {
+            'site.sel': (v) => {
+              if (v === 'x') throw new OperationFailure('no match: x');
+              return v;
+            },
+          },
+        },
+      ),
+    ).resolves.toBe('y');
   });
 });

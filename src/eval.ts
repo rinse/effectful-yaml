@@ -36,6 +36,7 @@ import {
   isClosure,
   isOpRef,
   lookupEnv,
+  OperationFailure,
   OpRef,
   perform,
   pure,
@@ -197,8 +198,11 @@ function handleOps(
     // 節はその場で resume することがある（$log や $where）。そこで直に rec を呼ぶと
     // 演算の回数だけ入れ子になるので、bind の節を一枚かませて force のループへ返す。
     const next = (v: Value): Comp => bind(pure(null), () => rec(c.resume(v)));
+    // raise された std.fail も同じ形で包み直す。rec を通すことで、raise された std.fail を
+    // このハンドラ自身の節（たとえば $std.opt の std.fail 節）が捕捉できる。
+    const nextRaise = (v: Value): Comp => bind(pure(null), () => rec(c.raise(v)));
     if (clause !== undefined) return clause(c.arg, next);
-    return { tag: 'op', name: c.name, arg: c.arg, resume: next };
+    return { tag: 'op', name: c.name, arg: c.arg, resume: next, raise: nextRaise };
   };
   return rec(comp);
 }
@@ -328,6 +332,9 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
             name: 'std.fail',
             arg: `uninitialized cell: ${name}`,
             resume: (x) => rec(m.resume(x), here),
+            // このノードは手組みの std.fail であり、ドライバが raise を呼ぶことはないので、
+            // resume と同じ包み方で型を満たすだけでよい。
+            raise: (x) => rec(m.raise(x), here),
           };
         }
         c = force(c.resume(v));
@@ -345,7 +352,13 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
       }
       const m = c;
       const here = s;
-      return { tag: 'op', name: m.name, arg: m.arg, resume: (v) => rec(m.resume(v), here) };
+      return {
+        tag: 'op',
+        name: m.name,
+        arg: m.arg,
+        resume: (v) => rec(m.resume(v), here),
+        raise: (v) => rec(m.raise(v), here),
+      };
     }
   };
   return rec(comp, init);
@@ -649,7 +662,10 @@ class Analyzer {
           ['std.param'],
         );
       default:
-        return union(this.effects(arg, senv), [shape.name]);
+        // ホスト登録の演算は失敗を通知できるので、出現は std.fail も数える（パスをたどる参照と同じ扱い）。
+        return shape.name.startsWith('std.')
+          ? union(this.effects(arg, senv), [shape.name])
+          : union(this.effects(arg, senv), [shape.name], FAIL_OPS);
     }
   }
 
@@ -826,7 +842,11 @@ class Analyzer {
     switch (t.kind) {
       case 'opref':
         // 演算の結果の値は追跡しない（既定の意味も捕捉時の意味も値は自由）。
-        return { row: new Set([t.name]), out: undefined };
+        // ホスト登録の演算は失敗を通知できるので、std.fail も加える。
+        return {
+          row: t.name.startsWith('std.') ? new Set([t.name]) : new Set([t.name, 'std.fail']),
+          out: undefined,
+        };
       case 'struct':
         // マッピングやリストは呼べない。呼べば実行時のエラーだが、推論は行を作らない。
         return UNTRACKED_CALL;
@@ -1398,7 +1418,18 @@ async function drive(
     if (c.name === 'std.fail') throw new EffectfulYamlError(`failure: ${describe(c.arg)}`);
     const host = ops[c.name] ?? BUILTIN_OPS[c.name];
     if (host === undefined) throw new EffectfulYamlError(`unregistered operation: $${c.name}`);
-    c = force(c.resume(await host(c.arg)));
+    let out: Value;
+    try {
+      out = await host(c.arg);
+    } catch (e) {
+      if (e instanceof OperationFailure) {
+        // 通知された失敗を呼び出し位置の std.fail に翻訳する。内側のハンドラが捕捉できる。
+        c = force(c.raise(e.value));
+        continue;
+      }
+      throw e;
+    }
+    c = force(c.resume(out));
   }
 }
 
