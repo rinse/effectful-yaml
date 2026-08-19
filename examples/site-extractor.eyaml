@@ -1,0 +1,126 @@
+# site-extractor の設定の effectful-yaml 版。
+#
+# 評価の規約:
+#   ホストはこのファイルを素の YAML として読み、parsers.*.when と parsers.*.output を
+#   それぞれ独立の文書として、取得結果のパラメータを与えて評価する。
+#   input: json のパーサーはレスポンスの JSON を doc に受け取る。パスアクセスがそのまま選択子になる。
+#   input: html のパーサーはルートノードを root に受け取り、ホスト登録の演算で選択する。
+#   url と request の {article} {id} はツール自身のテンプレート機能であり、この言語の補間ではない。
+#
+# ホスト登録の演算:
+#   site.sel: {selector, node}  最初の一致。一致すれば {value: テキスト}、無ければ {} を返す。
+#   site.all: {selector, node}  一致したノードのリスト。
+#   site.sel が {value} の形を返すのは、パスアクセス ${r.value} が欠落を std.fail に変え、
+#   以後を言語の部分性（$std.opt / $std.prune）で扱えるようにするためである。
+
+version: 8
+sites:
+  # rss-feeder の genshin-code フィードの移植。
+  # GameWith の原神交換コード一覧ページからコードの表を抽出する。
+  gamewith-genshin-code:
+    url: https://gamewith.jp/genshin/article/show/{article}
+    parsers:
+      codes:
+        output:
+          $do:
+          - $let:
+              root: {$std.param: root}
+              # {value} の規約を値そのものに変換する取り出し関数。
+              # 部分適用でセレクタを固定し、列ごとの関数を作る。
+              sel:
+                $fn: [q, n]
+                $body:
+                  $do:
+                  - $let:
+                      r:
+                        $site.sel:
+                          selector: ${q}
+                          node: ${n}
+                  - ${r.value}
+              date: {$.sel: "th:first-child"}
+              code: {$.sel: "td:nth-child(2) div.w-clipboard-copy-ui"}
+              desc: {$.sel: "td:nth-child(3)"}
+          - codes:
+              $std.list:
+                $do:
+                - $let:
+                    row:
+                      $std.each:
+                        $site.all:
+                          selector: .genshin_table_table > table tr
+                          node: ${root}
+                # ヘッダ行や特典画像だけの行は code を持たないので、$std.prune が枝ごと落とす。
+                - $std.prune:
+                    date:
+                      $std.opt:
+                        $.date: ${row}
+                    code:
+                      $.code: ${row}
+                    description:
+                      $std.opt:
+                        $.desc: ${row}
+
+  # gallery-collector の 1pondo のギャラリー取得の移植（JSON レスポンス）。
+  # JSON はパラメータ doc の素の値なので、選択はすべてパスアクセスと選択の作用で書ける。
+  1pondo-gallery:
+    url: https://www.1pondo.tv/dyn/dla/json/movie_gallery/
+    parsers:
+      gallery:
+        input: json
+        when:
+          $do:
+          - $let:
+              doc: {$std.param: doc}
+              rows:
+                $std.opt: ${doc.Rows}
+          - ${rows != null}
+        output:
+          $do:
+          - $let:
+              doc: {$std.param: doc}
+          - images:
+              $std.list:
+                $do:
+                - $let:
+                    row:
+                      $std.each: ${doc.Rows}
+                - $std.where: ${row.Protected == false}
+                - $std.resolve:
+                    base: https://www.1pondo.tv/dyn/dla/images/
+                    path: ${row.Img}
+
+  # gallery-collector の dmm の移植（GraphQL エンドポイントへの POST）。
+  # request は取得の宣言（素のデータ）であり、抽出だけがプログラムである。
+  dmm:
+    url: https://video.dmm.co.jp/av/content/{id}
+    request:
+      url: https://api.video.dmm.co.jp/graphql
+      method: POST
+      body:
+        query: |
+          query($id: ID!) {
+            ppvContent(id: $id) {
+              title
+              packageImage { largeUrl }
+              sampleImages { largeImageUrl }
+            }
+          }
+        variables:
+          id: "{id}"
+    parsers:
+      detail:
+        input: json
+        output:
+          $do:
+          - $let:
+              doc: {$std.param: doc}
+              c: ${doc.data.ppvContent}
+          - title: ${c.title}
+            thumbnail: ${c.packageImage.largeUrl}
+            gallery:
+              $std.list:
+                $do:
+                - $let:
+                    img:
+                      $std.each: ${c.sampleImages}
+                - ${img.largeImageUrl}
