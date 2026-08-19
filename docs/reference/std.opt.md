@@ -1,9 +1,10 @@
 # std.opt
 
-`std.opt` は失敗を null に翻訳する。
+`std.opt` は失敗を翻訳する（既定は null、`$default` があればその値）。
 
 - 種別：std の派生ハンドラ
 - 処理する演算：`std.fail`
+- 補助キー：`$default`
 
 ## 形
 
@@ -11,24 +12,34 @@
 {$std.opt: 式}
 ```
 
+```yaml
+$std.opt: 式
+$default: 既定値の式
+```
+
 ## 規則
 
 - 本体が値に達すればその値になる。
-- 本体が `std.fail` を起こせば、その分岐は null になる（エラーにはならない）。
-- 選択は処理しない。`$std.list` などの選択のハンドラと組み合わせて、失敗しうる要素を null で埋めたまま選択に残す用途に使う。
+- 本体が `std.fail` を起こせば、その分岐は既定値になる（エラーにはならない）。既定値は `$default` の式の値であり、`$default` を省いたときは null になる。
+- `$default` は本体が失敗したときだけ評価され、成功時は評価されず、その中の作用も起きない（`$if` の選ばれない分岐、`$std.param` の `$default` と同じ遅延位置である）。
+- 作用の推論は出現主義なので、`$default` の中の演算は評価されない場合でも作用集合に数える。
+- 選択は処理しない。`$std.list` などの選択のハンドラと組み合わせて、失敗しうる要素を既定値で埋めたまま選択に残す用途に使う。
 
 ## 展開
 
+`$default` はハンドラの語彙で説明できる（`$std.param` の `$default` と同じ骨格）。
+
 ```yaml
-# $std.opt: 式 の展開。失敗を null に変える。
+# {$std.opt: 式, $default: 既定値の式} の展開。失敗を既定値に変える。
 $handle: 式
 $with:
   std.fail:
     $fn: _
-    $body: null
+    $body: 既定値の式
 ```
 
-`std.fail` の節が `$resume` を呼ばずに `null` へ達するので、失敗した時点で本体は打ち切られ、`null` がハンドラ全体の値になる。
+`std.fail` の節が `$resume` を呼ばずに既定値の式へ達するので、失敗した時点で本体は打ち切られ、既定値がハンドラ全体の値になる。
+`$default` を省いた `{$std.opt: 式}` は `$default: null` と等価であり、この展開の `$body` が `null` になる。
 
 ## 例
 
@@ -55,8 +66,27 @@ $std.list:
 2 行目には `code` が無いので、パスアクセス `${row.code}` が `std.fail` を起こし、`$std.opt` がそれを `null` に翻訳する。
 行そのものを削りたいときは [std.prune](std.prune.md) を使う。
 
+`$default` を添えると、null 以外の既定値でパスアクセスの欠落を埋められる。
+フロー形式 `{...}` の中に裸の `${...}` は置けない（YAML 自体の制約）ので、`${...}` を含むときはブロック形式で書く。
+
+```yaml
+$do:
+- $let:
+    spec: {}
+- pre:
+    $std.opt: ${spec.pre}
+    $default: ''
+```
+
+```yaml
+pre: ''
+```
+
+`spec` に `pre` が無いので、パスアクセス `${spec.pre}` が `std.fail` を起こし、`$std.opt` がそれを空文字列に翻訳する。
+
 ## 関連
 
 - [std.fail](std.fail.md)
-- [std.prune](std.prune.md)（失敗を null でなく打ち切りに変える）
+- [std.param](std.param.md)（`$default` の先行例。同じ遅延位置と出現主義に従う）
+- [std.prune](std.prune.md)（失敗を既定値でなく打ち切りに変える）
 - [$handle](handle.md)

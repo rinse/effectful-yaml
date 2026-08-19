@@ -42,8 +42,8 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
- * `$in` と `$default` は std の演算（`$std.state` と `$std.param`）が使うので、
- * 予約キーだけでなく演算の名前でも引ける表にする。
+ * `$in` と `$default` は std の演算とハンドラ（`$std.state` と `$std.param` と `$std.opt`）が
+ * 使うので、予約キーだけでなく演算の名前でも引ける表にする。
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
@@ -53,6 +53,7 @@ const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   collect: new Set(['with', 'into']),
   'std.state': new Set(['in']),
   'std.param': new Set(['default']),
+  'std.opt': new Set(['default']),
 };
 
 /** 主キーのうち、必須の補助キー（省略するとエラー）。 */
@@ -131,7 +132,7 @@ export type MappingShape =
       readonly kind: 'op';
       readonly name: string;
       readonly raw: string;
-      /** 補助キー名（$ なし） -> 生キー。$std.state の $in、$std.param の $default。 */
+      /** 補助キー名（$ なし） -> 生キー。$std.state の $in、$std.param と $std.opt の $default。 */
       readonly aux: ReadonlyMap<string, string>;
     };
 
@@ -147,8 +148,8 @@ function displayName(k: DollarKeyKind): string {
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
  * - $ 式でないキーが一つでもあれば、$ キーの有無に関わらず plain（混在はエラー）。
  * - $ キーは主キーちょうど一つと、その主キーが許す補助キーだけを許す。
- * - 補助キーを許すのは予約キーのほか、`$in` を取る `$std.state` と `$default` を取る `$std.param` だけ。
- *   レキシカル呼び出しは補助キーを取らない。
+ * - 補助キーを許すのは予約キーのほか、`$in` を取る `$std.state` と `$default` を取る
+ *   `$std.param` と `$std.opt` だけ。レキシカル呼び出しは補助キーを取らない。
  */
 export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   const dollarKeys = rawKeys.filter(isDollarFormKey);

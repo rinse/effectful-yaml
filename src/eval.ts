@@ -292,9 +292,6 @@ function collectFirst(comp: Comp): Comp {
   );
 }
 
-/** $std.opt: 失敗を null に変える（節は $resume を呼ばないので打ち切りになる）。 */
-const OPT_CLAUSES: ReadonlyMap<string, Clause> = new Map([['std.fail', () => pure(null)]]);
-
 /**
  * $std.prune: 失敗を包囲する選択の打ち切りに変える。
  * 節の本体が起こす std.where はこのハンドラ自身では処理されず外側へ抜けるので、
@@ -647,8 +644,13 @@ class Analyzer {
       case 'std.list':
       case 'std.mapping':
       case 'std.first':
-      case 'std.opt':
         return without(this.effects(arg, senv), HANDLER_REMOVES[shape.name]!);
+      case 'std.opt':
+        // $default は遅延位置だが、作用の推論は出現主義なので中の演算も数える（$std.param と同じ）。
+        return union(
+          without(this.effects(arg, senv), FAIL_OPS),
+          shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
+        );
       case 'std.prune':
         // 節の本体の {$std.where: false} はこのハンドラの外で処理されるので、加わる。
         return union(without(this.effects(arg, senv), FAIL_OPS), ['std.where']);
@@ -1134,7 +1136,12 @@ class Evaluator {
             : perform('std.fail', 'every branch of $std.first failed or was cut'),
         );
       case 'std.opt':
-        return handleOps(this.node(arg, env), OPT_CLAUSES);
+        // $default の展開（std.fail の節が $default の式を返す）。$default が無ければ
+        // aux('default') は undefined で、node() が pure(null) にするので従来の null になる。
+        return handleOps(
+          this.node(arg, env),
+          new Map([['std.fail', () => this.node(aux('default'), env)]]),
+        );
       case 'std.prune':
         return handleOps(this.node(arg, env), PRUNE_CLAUSES);
       case 'std.state':

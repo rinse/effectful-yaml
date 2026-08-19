@@ -688,6 +688,18 @@ $std.list:
     ],
   },
   {
+    name: 'std.opt.md の例（$default でパスアクセスの欠落を埋める）',
+    yaml: `
+$do:
+- $let:
+    spec: {}
+- pre:
+    $std.opt: \${spec.pre}
+    $default: ''
+`,
+    expected: { pre: '' },
+  },
+  {
     name: 'std.param.md の例（渡されたパラメータと $default）',
     yaml: `
 host: {$std.param: db_host}

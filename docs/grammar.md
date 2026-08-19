@@ -53,7 +53,7 @@ effectful-yaml は、素の YAML の上に**作用**（effect）つきの計算�
 - 畳み込み `$collect`（`$with` `$into`）
 
 `$op` と `$pipe`（`$through`）、そして `$fn` に引数名の列を書く形は**導出形**であり、意味はカーネルへの展開で定める。
-`$in` と `$default` は std の演算とハンドラ（`$std.state` と `$std.param`）が使う補助キーである。
+`$in` と `$default` は std の演算とハンドラ（`$std.state` と `$std.param` と `$std.opt`）が使う補助キーである。
 
 演算はカーネルに属さない。
 `$collect` はただ一つの例外であり、これを原始に置く理由は設計判断の節で述べる。
@@ -492,7 +492,7 @@ $with:
 | `$std.mapping: 式` | `std.each` `std.where` | 全分岐の `{key, value}` を集めたマッピング |
 | `$std.first: 式` | `std.each` `std.where` `std.fail` | 失敗しなかった最初の分岐の値 |
 | `$std.state: 初期値, $in: 式` | `std.get` `std.set` | 本体の値 |
-| `$std.opt: 式` | `std.fail` | 本体の値。失敗なら null |
+| `$std.opt: 式` | `std.fail` | 本体の値。失敗なら `$default` の式の値（省略時 null） |
 | `$std.prune: 式` | `std.fail` | 本体の値。失敗なら包囲する選択の分岐を打ち切る |
 
 派生ハンドラの意味論は展開が定める。
@@ -585,15 +585,20 @@ $std.list:
 展開は成功の印を私的な演算のパラメータ付きハンドラで持ち回る形になり、紙面に収まらないので参照文書に置く。
 
 **$std.opt** と **$std.prune** は失敗を翻訳する。
+`$std.opt` は補助キー `$default` を取れる。
 
 ```yaml
-# $std.opt: 式 の展開。失敗を null に変える。
+# {$std.opt: 式, $default: 既定値の式} の展開。失敗を既定値に変える。
 $handle: 式
 $with:
   std.fail:
     $fn: _
-    $body: null
+    $body: 既定値の式
 ```
+
+`$default` を省いた `{$std.opt: 式}` は `$default: null` と等価である。
+`$default` は `$std.param` の `$default` と同じ遅延位置であり、本体が失敗したときだけ評価される。
+出現主義なので、評価されない場合でも `$default` の中の演算は作用集合に数える。
 
 ```yaml
 # $std.prune: 式 の展開。失敗を包囲する選択の打ち切りに変える。
@@ -980,6 +985,7 @@ Koka で `ask()` と自作関数の呼び出しが同形であることに対応
 `$param` の `$default` を失敗の捕捉への展開で定義し直した。
 `$fn` に引数名の列（カリー化の導出形）を加え、部分適用を通常の適用として書けるようにした。
 ホスト登録の演算が失敗を通知できるようになり、通知は呼び出し位置の `std.fail` になる。
+`$std.opt` が `$default` を取り、失敗を null 以外の既定値に変えられるようにした。
 
 ## Haskell との対応
 

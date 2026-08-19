@@ -1442,6 +1442,102 @@ $std.list:
   });
 });
 
+describe('$std.opt の $default', () => {
+  it('欠落したパスアクセスの失敗は $default の値になる', async () => {
+    await expect(
+      run(`
+$do:
+- $let: {m: {}}
+- $std.opt: \${m.nope}
+  $default: fallback
+`),
+    ).resolves.toBe('fallback');
+  });
+
+  it('成功時は本体の値になり、$default は評価されない', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+$std.opt: ok
+$default:
+  $do:
+  - $std.log: defaulted
+  - fallback
+`,
+        { onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toBe('ok');
+    expect(logs).toEqual([]);
+  });
+
+  it('失敗時は $default が一度だけ評価される', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+$do:
+- $let: {m: {}}
+- $std.opt: \${m.nope}
+  $default:
+    $do:
+    - $std.log: defaulted
+    - fallback
+`,
+        { onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toBe('fallback');
+    expect(logs).toEqual(['defaulted']);
+  });
+
+  it('$default の式自身が失敗すると外へ伝播して reject される', async () => {
+    await expect(
+      run(`
+$do:
+- $let: {m: {}}
+- $std.opt: \${m.nope}
+  $default: {$std.fail: still missing}
+`),
+    ).rejects.toThrow('failure: still missing');
+  });
+
+  it('$default: {} のような空マッピングも既定値にできる', async () => {
+    await expect(
+      run(`
+$do:
+- $let: {m: {}}
+- $std.opt: \${m.nope}
+  $default: {}
+`),
+    ).resolves.toEqual({});
+  });
+
+  it('未渡しパラメータの失敗も捕捉できる', async () => {
+    await expect(run('{$std.opt: {$std.param: nope}, $default: 5}')).resolves.toBe(5);
+  });
+
+  it('$std.opt と $default を取らない主キーの組み合わせは形の誤りになる', async () => {
+    await expect(run('{$std.prune: 1, $default: 2}')).rejects.toThrow(/does not accept \$default/);
+  });
+
+  it('本体が成功しても、$default の中の演算は作用集合に数える（出現主義。$std.param の $default と同じ）', async () => {
+    // 選択が $default にだけ現れるので境界はリスト形。本体が成功すれば分岐せず要素 1 になる。
+    await expect(run('{$std.opt: ok, $default: {$std.each: [1, 2]}}')).resolves.toEqual(['ok']);
+  });
+
+  it('ホスト演算の失敗通知（OperationFailure）も $default で埋められる', async () => {
+    await expect(
+      run('{$std.opt: {$x.op: a}, $default: d}', {
+        ops: {
+          'x.op': () => {
+            throw new OperationFailure('no match: a');
+          },
+        },
+      }),
+    ).resolves.toBe('d');
+  });
+});
+
 describe('$resume（節の本体で作られた閉包から）', () => {
   it('節の本体の閉包からも、その節の起動に対応する継続を再開できる', async () => {
     await expect(
