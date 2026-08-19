@@ -19,10 +19,12 @@ export type Value =
  * $fn が作る閉包。YAML データからは決して作れない値なので、
  * データとの混同を避けるためクラス（instanceof で判別可能）にする。
  * body は未評価の YAML ノードを保持する。
+ * params は 1 個以上。先頭が次の適用で束縛され、2 個以上残っていれば
+ * 適用は残りを待つ閉包を返す（$fn の列の形のカリー化展開に一致する）。
  */
 export class Closure {
   constructor(
-    readonly param: string,
+    readonly params: readonly string[],
     readonly body: unknown,
     readonly env: Env,
   ) {}

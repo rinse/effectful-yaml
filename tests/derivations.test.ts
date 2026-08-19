@@ -584,3 +584,68 @@ $in:
     ).resolves.toBe(14);
   });
 });
+
+// -----------------------------------------------------------------------------
+// 2. $fn の列（カリー化の導出形、grammar.md「引数名の列と部分適用」節）
+// -----------------------------------------------------------------------------
+
+describe('$fn の列のカリー化展開', () => {
+  it('列の形と入れ子の $fn は同じ値になる（3 引数、順に部分適用）', async () => {
+    const use = `
+- $let:
+    f1: {$.f: 100}
+    f2: {$.f1: 20}
+- $.f2: 3
+`;
+    const listed = await run(`
+$do:
+- $let:
+    f:
+      $fn: [a, b, c]
+      $body: ${'$'}{a + b + c}${use}`);
+    const nested = await run(`
+$do:
+- $let:
+    f:
+      $fn: a
+      $body:
+        $fn: b
+        $body:
+          $fn: c
+          $body: ${'$'}{a + b + c}${use}`);
+    expect(listed).toBe(123);
+    expect(nested).toBe(123);
+  });
+
+  it('部分適用の引数の作用はその位置で一度だけ生じ、本体の作用は完成時に生じる', async () => {
+    const logs: Value[] = [];
+    const result = await run(
+      `
+$do:
+- $let:
+    tag:
+      $fn: [prefix, x]
+      $body:
+        $do:
+        - $std.log: body
+        - ${'$'}{prefix}-${'$'}{x}
+- $let:
+    warn:
+      $.tag:
+        $do:
+        - $std.log: fixing
+        - w
+- $std.log: fixed
+- $let:
+    a: {$.warn: 1}
+    b: {$.warn: 2}
+- - ${'$'}{a}
+  - ${'$'}{b}
+`,
+      { onLog: (v) => logs.push(v) },
+    );
+    expect(result).toEqual(['w-1', 'w-2']);
+    // fixing は部分適用の位置で一度だけ。本体の body は完成のたびに一度ずつ。
+    expect(logs).toEqual(['fixing', 'fixed', 'body', 'body']);
+  });
+});

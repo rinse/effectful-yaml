@@ -221,6 +221,40 @@ log_level:
 `,
     expected: { log_level: 'info' },
   },
+  {
+    name: '$fn の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
+    yaml: `
+$do:
+- $let:
+    add:
+      $fn: [a, b]
+      $body: \${a + b}
+    succ:
+      $.add: 1
+- $.succ: 41
+`,
+    expected: 42,
+  },
+  {
+    name: '演算の部分適用（基準 URL を固定した絶対化関数を選択の各分岐に適用する）',
+    yaml: `
+$std.list:
+  $do:
+  - $let:
+      resolve:
+        $fn: [base, path]
+        $body:
+          $std.resolve:
+            base: \${base}
+            path: \${path}
+  - $let:
+      abs:
+        $.resolve: https://example.com/articles/index.html
+      link: {$std.each: [../images/cover.png, style.css]}
+  - $.abs: \${link}
+`,
+    expected: ['https://example.com/images/cover.png', 'https://example.com/articles/style.css'],
+  },
 ];
 
 describe('grammar.md 用例（値の一致）', () => {
@@ -395,6 +429,24 @@ $do:
 - {$.helpers.double: 21}
 `,
     expected: 42,
+  },
+  {
+    name: 'fn.md の例（引数名の列の部分適用で基準 URL を固定した絶対化関数を作る）',
+    yaml: `
+$do:
+- $let:
+    resolve:
+      $fn: [base, path]
+      $body:
+        $std.resolve:
+          base: \${base}
+          path: \${path}
+- $let:
+    abs:
+      $.resolve: https://example.com/articles/index.html
+- $.abs: ../images/cover.png
+`,
+    expected: 'https://example.com/images/cover.png',
   },
   {
     name: 'op.md の例（$op で演算を関数値にして $pipe の段に置く）',

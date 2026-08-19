@@ -107,6 +107,23 @@ function describe(v: Value): string {
 }
 
 /**
+ * $fn のパラメータ。文字列一つ、または相異なる名前の 1 個以上の列（カリー化の導出形）。
+ * 形の誤りはデータの変動ではないのでエラーにする。解析と評価の両方から呼ぶ。
+ */
+function fnParamsOf(raw: unknown): readonly string[] {
+  if (typeof raw === 'string') return [raw];
+  if (Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')) {
+    if (new Set(raw).size !== raw.length) {
+      throw new EffectfulYamlError(`duplicate $fn parameter name: ${raw.join(', ')}`);
+    }
+    return raw as string[];
+  }
+  throw new EffectfulYamlError(
+    `$fn parameter must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
  * $op が参照できる名前か。演算はドット入りの名前に限り、std の派生ハンドラは形なので参照できない。
  * 解析と評価の両方から呼ぶ（解析だけが通ると「未登録の演算」という無関係な文言で拒まれる）。
  */
@@ -358,7 +375,8 @@ type Track =
       readonly kind: 'closure';
       /** 循環ガードの同一性に使う $fn ノード。 */
       readonly fn: object;
-      readonly param: string;
+      /** 残りのパラメータ（1 個以上）。部分適用のたびに先頭が senv へ移る。 */
+      readonly params: readonly string[];
       readonly body: unknown;
       /** 定義位置の追跡環境（レキシカル）。木は不変なので参照ひとつで捕まえられる。 */
       readonly senv: SEnv;
@@ -410,6 +428,17 @@ function hasFunction(t: Track): boolean {
   }
 }
 
+/**
+ * 呼び出しの解析結果。row は呼び出しが起こす作用集合（undefined は追跡不能）、
+ * out は返り値の追跡木（undefined は追跡不能）。
+ */
+type CallResult = {
+  readonly row: ReadonlySet<string> | undefined;
+  readonly out: Track | undefined;
+};
+
+const UNTRACKED_CALL: CallResult = { row: undefined, out: undefined };
+
 const NO_REFS: ReadonlySet<string> = new Set();
 const refsCache = new WeakMap<object, ReadonlySet<string>>();
 
@@ -454,7 +483,7 @@ class Analyzer {
   readonly listBoundaries = new WeakSet<object>();
 
   /** 閉包の呼び出しのメモ。鍵は「閉包の正準 ID, 引数の正準 ID」。 */
-  private readonly memo = new Map<string, ReadonlySet<string> | undefined>();
+  private readonly memo = new Map<string, CallResult>();
 
   /** 解析中の $fn ノード。再入は自己適用なので追跡不能に倒す（停止性）。 */
   private readonly inProgress = new Set<object>();
@@ -515,13 +544,16 @@ class Analyzer {
       case 'closure': {
         // 本体の解析が捕まえた環境から読みうる名前だけを鍵に入れる。ここを絞らないと、
         // 各レベルの環境に呼び出し経路が丸ごと残り、正準形にしても指数のままになる。
-        // パラメータは applyClosure が引数で必ず上書きするので除く。
+        // 残りのパラメータは applyClosure が引数で必ず上書きするので除く
+        // （部分適用で束縛済みのパラメータは params から抜けているため、鍵に入る）。
         // 追跡不能（-1）の束縛も入れる（名前の有無はシャドーイングとして意味を持つ）。
+        // 残り個数も鍵に入れる。同じ $fn でも部分適用の進み具合が違えば、適用の意味
+        // （本体を走らせるか、閉包を返すか）が違うからである。
         const env: (readonly [string, number])[] = [];
         for (const name of refsOf(t.body)) {
-          if (name !== t.param) env.push([name, this.canon(get(t.senv, name))] as const);
+          if (!t.params.includes(name)) env.push([name, this.canon(get(t.senv, name))] as const);
         }
-        return JSON.stringify(['c', this.objId(t.fn), env]);
+        return JSON.stringify(['c', this.objId(t.fn), t.params.length, env]);
       }
     }
   }
@@ -574,7 +606,7 @@ class Analyzer {
         return union(
           this.effects(node[shape.raw], senv),
           // 引数の追跡木をパラメータに束縛して本体を解析する（多相的解析）。
-          this.call(target, this.track(node[shape.raw], senv)) ?? [],
+          this.call(target, this.track(node[shape.raw], senv)).row ?? [],
         );
       }
       case 'op':
@@ -658,6 +690,7 @@ class Analyzer {
         // （$let の束縛、$pipe の段、$handle の節）が call() で数える。
         // ここで本体を走査してはならない。定義のたびに二重走査になり、
         // 入れ子の深さに対して指数的になる。
+        fnParamsOf(arg); // 形の検査だけ行う（出現主義なので、実行されない位置でも検査する）
         return new Set();
       case 'op':
         if (typeof arg === 'string') assertOpRefName(arg);
@@ -665,11 +698,12 @@ class Analyzer {
       case 'pipe': {
         const stages = Array.isArray(aux('through')) ? (aux('through') as unknown[]) : [];
         const rows: Iterable<string>[] = [this.effects(arg, senv)];
-        // 段に渡る値を静的に追えるのは先頭だけ。2 段目以降の引数は追跡不能に倒す。
+        // 段の結果の追跡木を次の段の引数へ流す。追えなくなった段から先は追跡不能。
         let argument = this.track(arg, senv);
         for (const stage of stages) {
-          rows.push(this.effects(stage, senv), this.call(this.track(stage, senv), argument) ?? []);
-          argument = undefined;
+          const r = this.call(this.track(stage, senv), argument);
+          rows.push(this.effects(stage, senv), r.row ?? []);
+          argument = r.out;
         }
         return union(...rows);
       }
@@ -680,7 +714,7 @@ class Analyzer {
         return union(
           this.effects(arg, senv),
           this.effects(aux('with'), senv),
-          this.call(this.track(aux('with'), senv), undefined) ?? [],
+          this.call(this.track(aux('with'), senv), undefined).row ?? [],
         );
       case 'handle': {
         const clauses = isNodeMap(aux('with')) ? (aux('with') as NodeMap) : {};
@@ -688,7 +722,7 @@ class Analyzer {
         return union(
           without(this.effects(arg, senv), removed),
           // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
-          ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined) ?? []),
+          ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined).row ?? []),
         );
       }
       case 'resume':
@@ -751,19 +785,22 @@ class Analyzer {
       const items = node[shape.raw];
       return Array.isArray(items) ? altOf(items.map((n) => this.track(n, senv))) : undefined;
     }
+    if (shape.kind === 'lexical') {
+      // 追跡できる呼び出しの結果（部分適用が返す閉包を含む）。dollar() と同じ経路解決。
+      const path = shape.name.split('.');
+      const target = path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
+      return this.call(target, this.track(node[shape.raw], senv)).out;
+    }
     if (shape.kind !== 'reserved') return undefined;
     switch (shape.main) {
-      case 'fn': {
-        const param = node[shape.mainRaw];
-        if (typeof param !== 'string') return undefined;
+      case 'fn':
         return {
           kind: 'closure',
           fn: node,
-          param,
+          params: fnParamsOf(node[shape.mainRaw]),
           body: node[shape.aux.get('body')!],
           senv,
         };
-      }
       case 'op': {
         const name = node[shape.mainRaw];
         return typeof name === 'string' ? { kind: 'opref', name } : undefined;
@@ -779,25 +816,31 @@ class Analyzer {
   }
 
   /**
-   * 追跡木の値を引数 argument で呼んだときの作用集合。追跡できなければ undefined。
+   * 追跡木の値を引数 argument で呼んだときの解析結果。
+   * row は作用集合（undefined は追跡不能）、out は返り値の追跡木
+   * （部分適用が返す閉包をここで追うことで、後続の適用の本体を算入できる）。
    * 各 $fn 本体の走査はここだけが行う（effects() は $fn を素通りする）。
    */
-  private call(t: Track | undefined, argument: Track | undefined): ReadonlySet<string> | undefined {
-    if (t === undefined) return undefined;
+  private call(t: Track | undefined, argument: Track | undefined): CallResult {
+    if (t === undefined) return UNTRACKED_CALL;
     switch (t.kind) {
       case 'opref':
-        return new Set([t.name]);
+        // 演算の結果の値は追跡しない（既定の意味も捕捉時の意味も値は自由）。
+        return { row: new Set([t.name]), out: undefined };
       case 'struct':
         // マッピングやリストは呼べない。呼べば実行時のエラーだが、推論は行を作らない。
-        return undefined;
+        return UNTRACKED_CALL;
       case 'alt': {
         const rows: ReadonlySet<string>[] = [];
+        const outs: (Track | undefined)[] = [];
+        let tracked = true;
         for (const a of t.alts) {
-          const row = this.call(a, argument);
-          if (row === undefined) return undefined;
-          rows.push(row);
+          const r = this.call(a, argument);
+          if (r.row === undefined) tracked = false;
+          else rows.push(r.row);
+          outs.push(r.out);
         }
-        return union(...rows);
+        return { row: tracked ? union(...rows) : undefined, out: altOf(outs) };
       }
       case 'closure':
         return this.applyClosure(t, argument === undefined || !hasFunction(argument) ? undefined : argument);
@@ -806,22 +849,38 @@ class Analyzer {
 
   /**
    * 閉包の本体を、引数の追跡木をパラメータに束縛して解析する。
-   * メモの鍵は（閉包の正準 ID、引数の正準 ID）。閉包の正準形は $fn ノードと、
+   * パラメータが 2 個以上残っていれば部分適用であり、本体は走らないので作用は無く、
+   * 引数を束縛した残りの閉包が結果になる（$fn の列のカリー化展開に一致する）。
+   * メモの鍵は（閉包の正準 ID、引数の正準 ID）。閉包の正準形は $fn ノードと残り個数と、
    * 捕まえた環境のうち本体が読みうる束縛なので、同じ $fn でも環境が違えば別の鍵になる。
-   * 進行中の $fn ノードへ再入したら自己適用なので undefined（追跡不能）に倒す。
+   * 進行中の $fn ノードへ再入したら自己適用なので追跡不能に倒す。
    * これで解析の停止性は $fn ノードの個数で押さえられる。
    */
-  private applyClosure(t: Track & { kind: 'closure' }, argument: Track | undefined): ReadonlySet<string> | undefined {
+  private applyClosure(t: Track & { kind: 'closure' }, argument: Track | undefined): CallResult {
+    if (t.params.length > 1) {
+      return {
+        row: new Set(),
+        out: {
+          kind: 'closure',
+          fn: t.fn,
+          params: t.params.slice(1),
+          body: t.body,
+          senv: insert(t.senv, t.params[0]!, argument),
+        },
+      };
+    }
     const key = `${this.canon(t)},${this.canon(argument)}`;
-    if (this.memo.has(key)) return this.memo.get(key);
-    if (this.inProgress.has(t.fn)) return undefined;
+    const hit = this.memo.get(key);
+    if (hit !== undefined) return hit;
+    if (this.inProgress.has(t.fn)) return UNTRACKED_CALL;
     this.inProgress.add(t.fn);
     try {
-      const row = this.effects(t.body, insert(t.senv, t.param, argument));
+      const senv = insert(t.senv, t.params[0]!, argument);
+      const result: CallResult = { row: this.effects(t.body, senv), out: this.track(t.body, senv) };
       // ponytail: 循環ガードが働いた内側の結果もそのままメモに残る（作用を数え落とす向き＝
       // 追跡不能と同じ扱いなので健全性は崩れない）。気になるならガード発火を数えて弾く。
-      this.memo.set(key, row);
-      return row;
+      this.memo.set(key, result);
+      return result;
     } finally {
       this.inProgress.delete(t.fn);
     }
@@ -1086,7 +1145,7 @@ class Evaluator {
 
   /** 関数値（閉包 / 演算参照）の適用。引数も本体も合成である。 */
   private apply(f: Value, arg: Value, what: string): Comp {
-    if (isClosure(f)) return this.node(f.body, extendEnv(f.env, f.param, arg));
+    if (isClosure(f)) return this.enter(f, extendEnv(f.env, f.params[0]!, arg));
     // $op 経由でも $std.param の未渡しは呼び出し位置で std.fail になる（番兵を漏らさない）。
     if (isOpRef(f)) {
       return f.name === 'std.param'
@@ -1094,6 +1153,14 @@ class Evaluator {
         : perform(f.name, arg);
     }
     throw new EffectfulYamlError(`${what} is not a function: ${describe(f)}`);
+  }
+
+  /**
+   * 先頭パラメータを束縛し終えた閉包に入る。パラメータが 2 個以上残っていれば
+   * 部分適用であり、本体は走らせず残りを待つ閉包を返す（$fn の列のカリー化展開と等価）。
+   */
+  private enter(f: Closure, inner: Env): Comp {
+    return f.params.length > 1 ? pure(new Closure(f.params.slice(1), f.body, inner)) : this.node(f.body, inner);
   }
 
   private reserved(
@@ -1120,7 +1187,7 @@ class Evaluator {
           this.node(requireBoolean(cond, '$if condition') ? aux('then') : aux('else'), env),
         );
       case 'fn':
-        return pure(new Closure(requireString(arg, '$fn parameter name'), aux('body'), env));
+        return pure(new Closure(fnParamsOf(arg), aux('body'), env));
       case 'op': {
         const name = requireString(arg, '$op operation name');
         assertOpRefName(name);
@@ -1232,14 +1299,14 @@ class Evaluator {
       }
       const closure = this.closureOf(clauseNode, env, name);
       if (name === 'return') {
-        ret = (v) => this.node(closure.body, extendEnv(closure.env, closure.param, v));
+        ret = (v) => this.enter(closure, extendEnv(closure.env, closure.params[0]!, v));
         continue;
       }
       clauses.set(name, (arg, resume) => {
         // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
         // 本体の中で作られた閉包も env ごと resume を捕まえるので、そこからも再開できる。
-        const inner: Env = { vars: insert(closure.env.vars, closure.param, arg), resume };
-        return this.node(closure.body, inner);
+        const inner: Env = { vars: insert(closure.env.vars, closure.params[0]!, arg), resume };
+        return this.enter(closure, inner);
       });
     }
     // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。

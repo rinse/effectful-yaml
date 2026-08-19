@@ -368,3 +368,69 @@ describe('作用の推論の計算量', () => {
     1000,
   );
 });
+
+describe('呼び出しの結果の追跡（部分適用）', () => {
+  it('部分適用を完成させる呼び出しの選択が境界の形に効く（明示のハンドラなしでリスト）', async () => {
+    // p1 は呼び出しの結果（部分適用が返した閉包）。結果を追跡できなければ
+    // 完成の呼び出しの $std.each が算入されず、境界は単値と推論されて実行時エラーになる。
+    await expect(
+      run(`
+$do:
+- $let:
+    pick:
+      $fn: [a, b]
+      $body:
+        $std.each:
+        - ${'$'}{a}
+        - ${'$'}{b}
+- $let:
+    p1: {$.pick: 10}
+- {$.p1: 20}
+`),
+    ).resolves.toEqual([10, 20]);
+  });
+
+  it('部分適用の先の未登録演算は、実行されない分岐でも評価前に拒否される', async () => {
+    // 実行される経路は $then 側だけなので、実行時エラーでは検出できない。
+    // 拒否されるのは、呼び出しの結果の追跡が $else 側の完成の呼び出しへ届く証拠である。
+    await expect(
+      run(`
+$do:
+- $let:
+    f:
+      $fn: [a, b]
+      $body:
+        $nope.op: ${'$'}{a}
+- $let:
+    g: {$.f: 1}
+- $if: true
+  $then: safe
+  $else: {$.g: 2}
+`),
+    ).rejects.toThrow('unregistered operation: $nope.op');
+  });
+
+  it('$pipe の段の結果が次の段の引数へ流れる（高階の段の選択も境界の形に効く）', async () => {
+    // 1 段目の結果（閉包）が 2 段目の引数として追跡され、2 段目の本体の完成の呼び出しが
+    // $std.each を算入する。追跡が切れると境界は単値と推論され、実行時エラーになる。
+    await expect(
+      run(`
+$do:
+- $let:
+    mk:
+      $fn: [a, b]
+      $body:
+        $std.each:
+        - ${'$'}{a}
+        - ${'$'}{b}
+    complete:
+      $fn: g
+      $body: {$.g: 99}
+- $pipe: 1
+  $through:
+  - ${'$'}{mk}
+  - ${'$'}{complete}
+`),
+    ).resolves.toEqual([1, 99]);
+  });
+});

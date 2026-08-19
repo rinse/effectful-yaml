@@ -571,6 +571,99 @@ $body: \${x}
   });
 });
 
+describe('$fn の列と部分適用', () => {
+  it('全引数を順に与えれば本体が走る', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    conc:
+      $fn: [a, b, c]
+      $body: \${a}\${b}\${c}
+    ab: {$.conc: a}
+    abc: {$.ab: b}
+- {$.abc: c}
+`),
+    ).resolves.toBe('abc');
+  });
+
+  it('部分適用の閉包は $collect の $with にも置ける', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    scaled:
+      $fn: [k, x]
+      $body:
+      - \${k * x}
+    tripled: {$.scaled: 3}
+- $collect: [1, 2, 3]
+  $with: \${tripled}
+`),
+    ).resolves.toEqual([3, 6, 9]);
+  });
+
+  it('長さ 1 の列は名前一つと同じ', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    double:
+      $fn: [x]
+      $body: \${x * 2}
+- {$.double: 21}
+`),
+    ).resolves.toBe(42);
+  });
+
+  it('空の列は形の誤り', async () => {
+    await expect(run('{$fn: [], $body: 1}')).rejects.toThrow(/\$fn parameter/);
+  });
+
+  it('名前の重複は形の誤り', async () => {
+    await expect(run('{$fn: [a, a], $body: 1}')).rejects.toThrow(/duplicate \$fn parameter/);
+  });
+
+  it('文字列でない要素は形の誤り', async () => {
+    await expect(run('{$fn: [a, 1], $body: 2}')).rejects.toThrow(/\$fn parameter/);
+  });
+
+  it('実行されない分岐の形の誤りも検査される（出現主義）', async () => {
+    await expect(
+      run(`
+$if: true
+$then: safe
+$else: {$fn: [], $body: 1}
+`),
+    ).rejects.toThrow(/\$fn parameter/);
+  });
+
+  it('引数が足りないまま文書の値に残れば脱出のエラー', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    add:
+      $fn: [a, b]
+      $body: \${a + b}
+- {$.add: 1}
+`),
+    ).rejects.toThrow(/cannot escape/);
+  });
+
+  it('$handle の節は一引数で呼ばれるので、多引数の節は閉包が値になり脱出のエラーに至る', async () => {
+    await expect(
+      run(`
+$handle: {$std.fail: boom}
+$with:
+  std.fail:
+    $fn: [msg, extra]
+    $body: \${msg}
+`),
+    ).rejects.toThrow(/cannot escape/);
+  });
+});
+
 describe('$. のパス呼び出し', () => {
   it('2 区画：マッピングに入れた閉包を呼ぶ', async () => {
     await expect(
