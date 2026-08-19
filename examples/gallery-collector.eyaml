@@ -155,42 +155,22 @@ sites:
             chuc: {pre: h_491}
             fone: {pre: h_491}
             ddhp: {sep: ''}
-          # 例外表をラベルで引く。式のパスは計算したキーをたどれないので、選択で照合する。
-          hit:
-            $std.opt:
-              $std.first:
-                $do:
-                - $let:
-                    e:
-                      $std.each: ${exceptions}
-                - $std.where: ${e.key == label}
-                - ${e.value}
-          # null を既定値で埋める関数。部分適用で欄ごとの既定を固定する。
-          or:
-            $fn: [d, v]
-            $body:
-              $if: ${v == null}
-              $then: ${d}
-              $else: ${v}
+          # 例外表をラベルで引く。無ければ既定だけの空の仕様にする。
           spec:
-            $if: ${hit == null}
-            $then: {}
-            $else: ${hit}
-          orEmpty:
-            $.or: ''
-          orPad:
-            $.or: '00'
-          orLabel:
-            $.or: ${label}
+            $std.opt:
+              $std.lookup:
+                in: ${exceptions}
+                key: ${label}
+            $default: {}
           pre:
-            $.orEmpty:
-              $std.opt: ${spec.pre}
+            $std.opt: ${spec.pre}
+            $default: ''
           sep:
-            $.orPad:
-              $std.opt: ${spec.sep}
+            $std.opt: ${spec.sep}
+            $default: '00'
           name:
-            $.orLabel:
-              $std.opt: ${spec.name}
+            $std.opt: ${spec.name}
+            $default: ${label}
       - ${pre}${name}${sep}${num}
     discovery:
       # 検索で ID の候補を引く。ラベルを大文字化して「LABEL 番号」を検索語にする。

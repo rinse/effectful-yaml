@@ -8,10 +8,9 @@
 #   url と request の {article} {id} はツール自身のテンプレート機能であり、この言語の補間ではない。
 #
 # ホスト登録の演算:
-#   site.sel: {selector, node}  最初の一致。一致すれば {value: テキスト}、無ければ {} を返す。
+#   site.sel: {selector, node}  最初の一致のテキスト。無ければ失敗を通知する
+#     （OperationFailure。呼び出し位置の std.fail になり、$std.opt / $std.prune で扱える）。
 #   site.all: {selector, node}  一致したノードのリスト。
-#   site.sel が {value} の形を返すのは、パスアクセス ${r.value} が欠落を std.fail に変え、
-#   以後を言語の部分性（$std.opt / $std.prune）で扱えるようにするためである。
 
 version: 8
 sites:
@@ -25,18 +24,13 @@ sites:
           $do:
           - $let:
               root: {$std.param: root}
-              # {value} の規約を値そのものに変換する取り出し関数。
-              # 部分適用でセレクタを固定し、列ごとの関数を作る。
+              # 部分適用でセレクタを固定し、列ごとの取り出し関数を作る。
               sel:
                 $fn: [q, n]
                 $body:
-                  $do:
-                  - $let:
-                      r:
-                        $site.sel:
-                          selector: ${q}
-                          node: ${n}
-                  - ${r.value}
+                  $site.sel:
+                    selector: ${q}
+                    node: ${n}
               date: {$.sel: "th:first-child"}
               code: {$.sel: "td:nth-child(2) div.w-clipboard-copy-ui"}
               desc: {$.sel: "td:nth-child(3)"}
