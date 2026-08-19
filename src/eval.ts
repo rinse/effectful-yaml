@@ -174,6 +174,22 @@ const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
   },
 };
 
+/**
+ * $std.lookup の意味（展開と等価な O(1) の照会）。無いキーは呼び出し位置の std.fail。
+ * in がマッピングでない・key が文字列でないのは形の誤りなのでエラー。
+ */
+function lookupComp(arg: Value): Comp {
+  if (!isValueMap(arg)) {
+    throw new EffectfulYamlError(`$std.lookup requires a mapping {in, key}, got: ${describe(arg)}`);
+  }
+  const m = arg['in'];
+  const k = requireString(arg['key'], '$std.lookup key');
+  if (m === undefined || !isValueMap(m)) {
+    throw new EffectfulYamlError(`$std.lookup 'in' must be a mapping, got: ${describe(m ?? null)}`);
+  }
+  return Object.prototype.hasOwnProperty.call(m, k) ? pure(m[k]!) : perform('std.fail', `missing key '${k}'`);
+}
+
 // ---------------------------------------------------------------------------
 // 汎用ハンドラ（部分処理）
 // ---------------------------------------------------------------------------
@@ -654,6 +670,9 @@ class Analyzer {
       case 'std.prune':
         // 節の本体の {$std.where: false} はこのハンドラの外で処理されるので、加わる。
         return union(without(this.effects(arg, senv), FAIL_OPS), ['std.where']);
+      case 'std.lookup':
+        // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
+        return union(this.effects(arg, senv), FAIL_OPS);
       case 'std.state':
         return union(this.effects(arg, senv), without(this.effects(aux('in'), senv), STATE_OPS));
       case 'std.param':
@@ -845,6 +864,7 @@ class Analyzer {
       case 'opref':
         // 演算の結果の値は追跡しない（既定の意味も捕捉時の意味も値は自由）。
         // ホスト登録の演算は失敗を通知できるので、std.fail も加える。
+        if (t.name === 'std.lookup') return { row: new Set(FAIL_OPS), out: undefined };
         return {
           row: t.name.startsWith('std.') ? new Set([t.name]) : new Set([t.name, 'std.fail']),
           out: undefined,
@@ -1164,6 +1184,8 @@ class Evaluator {
             env,
           ),
         );
+      case 'std.lookup':
+        return bind(this.node(arg, env), lookupComp);
       default:
         // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
         return bind(this.node(arg, env), (v) => perform(shape.name, v));
@@ -1173,11 +1195,14 @@ class Evaluator {
   /** 関数値（閉包 / 演算参照）の適用。引数も本体も合成である。 */
   private apply(f: Value, arg: Value, what: string): Comp {
     if (isClosure(f)) return this.enter(f, extendEnv(f.env, f.params[0]!, arg));
-    // $op 経由でも $std.param の未渡しは呼び出し位置で std.fail になる（番兵を漏らさない）。
     if (isOpRef(f)) {
-      return f.name === 'std.param'
-        ? this.param(requireString(arg, '$std.param name'), undefined, false, emptyEnv)
-        : perform(f.name, arg);
+      // $op 経由でも $std.param の未渡しは呼び出し位置で std.fail になる（番兵を漏らさない）。
+      if (f.name === 'std.param') {
+        return this.param(requireString(arg, '$std.param name'), undefined, false, emptyEnv);
+      }
+      // $op 経由でも $std.lookup は展開の意味で照会する（perform すると未登録演算になってしまう）。
+      if (f.name === 'std.lookup') return lookupComp(arg);
+      return perform(f.name, arg);
     }
     throw new EffectfulYamlError(`${what} is not a function: ${describe(f)}`);
   }

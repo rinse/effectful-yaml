@@ -649,3 +649,64 @@ $do:
     expect(logs).toEqual(['fixing', 'fixed', 'body', 'body']);
   });
 });
+
+// -----------------------------------------------------------------------------
+// 7. $std.lookup の展開（grammar.md「計算したキーの照会 $std.lookup」節）
+// -----------------------------------------------------------------------------
+
+/** `{$std.lookup: {in: inFlow, key: keyScalar}}` の展開。inFlow はフロー形式（例: "{a: 1}"）。 */
+function lookupExpanded(inFlow: string, keyScalar: string): string {
+  return `
+$do:
+- $let:
+    m: ${inFlow}
+    k: ${keyScalar}
+- $std.first:
+    $do:
+    - $let:
+        e:
+          $std.each: \${m}
+    - $std.where: \${e.key == k}
+    - \${e.value}
+`;
+}
+
+describe('$std.lookup の展開との等価性', () => {
+  it('キーが在れば、展開と組み込みが同じ値になる', async () => {
+    const expanded = await run(lookupExpanded('{a: 1, b: 2}', 'b'));
+    const builtin = await run(`
+$std.lookup:
+  in: {a: 1, b: 2}
+  key: b
+`);
+    expect(builtin).toEqual(expanded);
+    expect(builtin).toBe(2);
+  });
+
+  it('無いキーは、展開も組み込みも失敗になる（失敗の値の文言だけは仕様が展開に委ねない）', async () => {
+    await expect(run(lookupExpanded('{a: 1}', 'x'))).rejects.toThrow(/failure:/);
+    await expect(
+      run(`
+$std.lookup:
+  in: {a: 1}
+  key: x
+`),
+    ).rejects.toThrow(/failure: missing key 'x'/);
+  });
+
+  it('無いキーの失敗は、展開も組み込みも $std.opt の $default で同じ既定値になる', async () => {
+    const expanded = await run(`
+$std.opt:${block(lookupExpanded('{a: 1}', 'x'), 2)}
+$default: fallback
+`);
+    const builtin = await run(`
+$std.opt:
+  $std.lookup:
+    in: {a: 1}
+    key: x
+$default: fallback
+`);
+    expect(expanded).toBe('fallback');
+    expect(builtin).toBe('fallback');
+  });
+});

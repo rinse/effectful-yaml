@@ -366,7 +366,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 
 // -----------------------------------------------------------------------------
 // docs/reference/ 用例：カーネル 8（do / let / if / fn / op / pipe / handle / collect）と
-// std 17（std.each ほか）の「例」節にある実行可能な用例。
+// std 18（std.each ほか）の「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------
@@ -768,6 +768,34 @@ $do:
     path: \${link}
 `,
     expected: 'https://example.com/images/cover.png',
+  },
+  {
+    name: 'std.lookup.md の例（計算したキーで料金表を引く）',
+    yaml: `
+$do:
+- $let:
+    prices: {basic: 9, pro: 29, enterprise: 99}
+    plan: pro
+- $std.lookup:
+    in: \${prices}
+    key: \${plan}
+`,
+    expected: 29,
+  },
+  {
+    name: 'std.lookup.md の例（$std.opt の $default と組み合わせた既定値つきの照会）',
+    yaml: `
+$do:
+- $let:
+    overrides: {web: {timeout: 30}, db: {timeout: 60}}
+    label: cache
+- $std.opt:
+    $std.lookup:
+      in: \${overrides}
+      key: \${label}
+  $default: {}
+`,
+    expected: {},
   },
   {
     name: 'std.state.md の例（内側の $std.state は外の状態に触れない）',

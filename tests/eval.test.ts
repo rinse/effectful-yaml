@@ -1538,6 +1538,134 @@ $do:
   });
 });
 
+describe('$std.lookup', () => {
+  it('キーが在ればその値になる', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    table: {a: 1, b: 2}
+    label: b
+- $std.lookup:
+    in: \${table}
+    key: \${label}
+`),
+    ).resolves.toBe(2);
+  });
+
+  it('無いキーは捕捉しなければ missing key のメッセージで reject される', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    table: {a: 1}
+- $std.lookup:
+    in: \${table}
+    key: x
+`),
+    ).rejects.toThrow(/failure: missing key 'x'/);
+  });
+
+  it('$std.opt + $default と合成すると既定値になる', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    table: {a: 1}
+- $std.opt:
+    $std.lookup:
+      in: \${table}
+      key: x
+  $default: fallback
+`),
+    ).resolves.toBe('fallback');
+  });
+
+  it('$std.list の中の $std.prune と合成すると、無いキーの分岐だけが落ちる', async () => {
+    await expect(
+      run(`
+$std.list:
+  $do:
+  - $let:
+      row:
+        $std.each:
+        - {t: {a: 1}, k: a}
+        - {t: {a: 1}, k: x}
+        - {t: {a: 1}, k: a}
+  - $std.prune:
+      $std.lookup:
+        in: \${row.t}
+        key: \${row.k}
+`),
+    ).resolves.toEqual([1, 1]);
+  });
+
+  it("'in' がマッピングでなければエラーになり、$std.opt でも捕捉できない（形の誤り）", async () => {
+    await expect(run('{$std.lookup: {in: [1, 2, 3], key: a}}')).rejects.toThrow(
+      /'in' must be a mapping/,
+    );
+    await expect(
+      run('{$std.opt: {$std.lookup: {in: [1, 2, 3], key: a}}}'),
+    ).rejects.toThrow(/'in' must be a mapping/);
+  });
+
+  it('key が文字列でなければエラーになり、$std.opt でも捕捉できない（形の誤り）', async () => {
+    await expect(run('{$std.lookup: {in: {a: 1}, key: 1}}')).rejects.toThrow(
+      /\$std\.lookup key must be a string/,
+    );
+    await expect(
+      run('{$std.opt: {$std.lookup: {in: {a: 1}, key: 1}}}'),
+    ).rejects.toThrow(/\$std\.lookup key must be a string/);
+  });
+
+  it('引数全体を束縛で与える形（{in, key} のマッピングをまるごと渡す）でも動く', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    pair: {in: {a: 1, b: 2}, key: b}
+- $std.lookup: \${pair}
+`),
+    ).resolves.toBe(2);
+  });
+
+  it('{$op: std.lookup} で関数値にして $.名前 呼び出しや $pipe の段で使え、無いキーは捕捉できる失敗になる', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    lookup: {$op: std.lookup}
+    pair: {in: {a: 1, b: 2}, key: b}
+- {$.lookup: '\${pair}'}
+`),
+    ).resolves.toBe(2);
+
+    await expect(
+      run(`
+$do:
+- $let:
+    lookup: {$op: std.lookup}
+    pair: {in: {a: 1}, key: x}
+- $std.opt:
+    $pipe: \${pair}
+    $through:
+    - \${lookup}
+  $default: none
+`),
+    ).resolves.toBe('none');
+  });
+
+  it('境界の形に影響しない：単値の文書は選択なしにそのまま単値になり、ops を登録しなくても評価できる', async () => {
+    await expect(
+      run(`
+$std.lookup:
+  in: {a: 1}
+  key: a
+`),
+    ).resolves.toBe(1);
+  });
+});
+
 describe('$resume（節の本体で作られた閉包から）', () => {
   it('節の本体の閉包からも、その節の起動に対応する継続を再開できる', async () => {
     await expect(

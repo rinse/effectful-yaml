@@ -53,6 +53,12 @@ effectful-yaml のドキュメントの索引である。
 | `std.log` | ログ | [std.log.md](reference/std.log.md) | ログ出力 |
 | `std.fail` | 失敗 | [std.fail.md](reference/std.fail.md) | 計算の失敗（データ起因の部分性も同じ作用になる） |
 
+### std：計算したキーの照会
+
+| 演算 | ページ | 概要 |
+|---|---|---|
+| `std.lookup` | [std.lookup.md](reference/std.lookup.md) | マッピングを計算したキーで引く（意味は選択による照合への展開で定まる） |
+
 ### std：第一階の演算（作用を起こさない）
 
 | 演算 | ページ | 概要 |

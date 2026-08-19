@@ -165,7 +165,7 @@ export const STATE_OPS: ReadonlySet<string> = new Set(['std.get', 'std.set']);
 export const FAIL_OPS: ReadonlySet<string> = new Set(['std.fail']);
 
 /**
- * 標準演算。作用を起こす 7 つと、値から値を計算するだけの第一階の 4 つ。
+ * 標準演算。作用を起こす 7 つと、値から値を計算するだけの第一階の 4 つ、展開で意味が定まる `std.lookup`。
  * std の派生ハンドラ（$std.list など）は演算ではないので含まない。
  */
 export const STD_OPS: ReadonlySet<string> = new Set([
@@ -180,6 +180,7 @@ export const STD_OPS: ReadonlySet<string> = new Set([
   'std.upper',
   'std.lower',
   'std.resolve',
+  'std.lookup',
 ]);
 
 /** std の派生ハンドラ。演算ではなく形なので、$op では参照できず捕捉もできない。 */
