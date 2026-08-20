@@ -62,9 +62,6 @@ effectful-yaml のドキュメントの索引である。
 | 演算 | ページ | 概要 |
 |---|---|---|
 | `std.range` | [std.range.md](reference/std.range.md) | 自然数を添字のリストに変える |
-| `std.upper` | [std.upper.md](reference/std.upper.md) | 文字列の大文字化 |
-| `std.lower` | [std.lower.md](reference/std.lower.md) | 文字列の小文字化 |
-| `std.resolve` | [std.resolve.md](reference/std.resolve.md) | URL の解決 |
 
 ### std：派生ハンドラ
 

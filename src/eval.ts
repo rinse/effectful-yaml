@@ -139,22 +139,6 @@ const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
     }
     return Array.from({ length: n }, (_, i) => i);
   },
-  'std.upper': (s) => requireString(s, '$std.upper argument').toUpperCase(),
-  'std.lower': (s) => requireString(s, '$std.lower argument').toLowerCase(),
-  'std.resolve': (arg) => {
-    if (!isValueMap(arg)) {
-      throw new EffectfulYamlError(
-        `$std.resolve requires a mapping {base, path}, got: ${describe(arg)}`,
-      );
-    }
-    const base = requireString(arg['base'], '$std.resolve base');
-    const path = requireString(arg['path'], '$std.resolve path');
-    try {
-      return new URL(path, base).href;
-    } catch {
-      throw new EffectfulYamlError(`$std.resolve cannot resolve '${path}' against '${base}'`);
-    }
-  },
 };
 
 /**

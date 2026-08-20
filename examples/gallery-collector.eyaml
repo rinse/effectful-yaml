@@ -12,6 +12,8 @@
 #   page.images: セレクタ。一致した画像の URL のリスト。
 #   page.exists: セレクタ。一致の有無。
 #   page.match : 正規表現。ページソースへの一致のリスト。
+#   str.upper  : 文字列。大文字化した文字列を返す。
+#   url.resolve: {base, path}。base を基準に path を絶対 URL にして返す。
 #   page.* の対象ページは、labels の値が組み立てたパスをホストが取得したものである。
 
 agent:
@@ -44,7 +46,7 @@ sites:
                 row:
                   $std.each: ${gallery.Rows}
             - $std.where: ${row.Protected == false}
-            - $std.resolve:
+            - $url.resolve:
                 base: https://www.1pondo.tv/dyn/dla/images/
                 path: ${row.Img}
 
@@ -179,7 +181,7 @@ sites:
           label: {$std.param: label}
           num: {$std.param: id}
           word:
-            $std.upper: ${label}
+            $str.upper: ${label}
           res:
             $http.json:
               url: https://api.video.dmm.co.jp/graphql

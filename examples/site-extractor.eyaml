@@ -11,6 +11,7 @@
 #   site.sel: {selector, node}  最初の一致のテキスト。無ければ失敗を通知する
 #     （OperationFailure。呼び出し位置の std.fail になり、$std.opt で扱える）。
 #   site.all: {selector, node}  一致したノードのリスト。
+#   url.resolve: {base, path}。base を基準に path を絶対 URL にして返す。
 
 version: 8
 sites:
@@ -81,7 +82,7 @@ sites:
                     row:
                       $std.each: ${doc.Rows}
                 - $std.where: ${row.Protected == false}
-                - $std.resolve:
+                - $url.resolve:
                     base: https://www.1pondo.tv/dyn/dla/images/
                     path: ${row.Img}
 

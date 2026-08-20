@@ -235,24 +235,25 @@ $do:
     expected: 42,
   },
   {
-    name: '演算の部分適用（基準 URL を固定した絶対化関数を選択の各分岐に適用する）',
+    name: '演算の部分適用（表を固定した照会関数をキーの各分岐に適用する）',
     yaml: `
 $std.list:
   $do:
   - $let:
-      resolve:
-        $fn: [base, path]
+      codes: {ja: 81, us: 1}
+      look:
+        $fn: [m, k]
         $body:
-          $std.resolve:
-            base: \${base}
-            path: \${path}
+          $std.lookup:
+            in: \${m}
+            key: \${k}
   - $let:
-      abs:
-        $.resolve: https://example.com/articles/index.html
-      link: {$std.each: [../images/cover.png, style.css]}
-  - $.abs: \${link}
+      dial:
+        $.look: \${codes}
+      c: {$std.each: [ja, us]}
+  - $.dial: \${c}
 `,
-    expected: ['https://example.com/images/cover.png', 'https://example.com/articles/style.css'],
+    expected: [81, 1],
   },
 ];
 
@@ -367,7 +368,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 
 // -----------------------------------------------------------------------------
 // docs/reference/ 用例：カーネル 6（do / let / if / fn / handle / collect）と
-// std 17（std.each ほか）の「例」節にある実行可能な用例。
+// std 14（std.each ほか）の「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------
@@ -432,22 +433,23 @@ $do:
     expected: 42,
   },
   {
-    name: 'fn.md の例（引数名の列の部分適用で基準 URL を固定した絶対化関数を作る）',
+    name: 'fn.md の例（引数名の列の部分適用で表を固定した照会関数を作る）',
     yaml: `
 $do:
 - $let:
-    resolve:
-      $fn: [base, path]
+    codes: {ja: 81, us: 1}
+    look:
+      $fn: [m, k]
       $body:
-        $std.resolve:
-          base: \${base}
-          path: \${path}
+        $std.lookup:
+          in: \${m}
+          key: \${k}
 - $let:
-    abs:
-      $.resolve: https://example.com/articles/index.html
-- $.abs: ../images/cover.png
+    dial:
+      $.look: \${codes}
+- $.dial: ja
 `,
-    expected: 'https://example.com/images/cover.png',
+    expected: 81,
   },
   {
     name: 'handle.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
@@ -615,16 +617,6 @@ $do:
     expectedLogs: ['computing'],
   },
   {
-    name: 'std.lower.md の例',
-    yaml: `{$std.lower: HELLO}`,
-    expected: 'hello',
-  },
-  {
-    name: 'std.upper.md の例',
-    yaml: `{$std.upper: hello}`,
-    expected: 'HELLO',
-  },
-  {
     name: 'std.mapping.md の例（svc- マッピングの生成）',
     yaml: `
 $std.mapping:
@@ -722,24 +714,6 @@ $in:
       - - \${v}
 `,
     expected: [1, 2, 4, 8, 16],
-  },
-  {
-    name: 'std.resolve.md の例（相対参照の解決）',
-    yaml: `$std.resolve: {base: https://example.com/a/b/, path: ../c}`,
-    expected: 'https://example.com/a/c',
-  },
-  {
-    name: 'std.resolve.md の例（相対リンクをページの URL を基準に絶対化する）',
-    yaml: `
-$do:
-- $let:
-    page: https://example.com/articles/index.html
-    link: ../images/cover.png
-- $std.resolve:
-    base: \${page}
-    path: \${link}
-`,
-    expected: 'https://example.com/images/cover.png',
   },
   {
     name: 'std.lookup.md の例（計算したキーで料金表を引く）',

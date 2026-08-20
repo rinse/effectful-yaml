@@ -90,25 +90,26 @@ $do:
 ```
 
 引数名の列は部分適用の経路を開く。
-基準 URL を固定した絶対化関数を作る。
+表を固定した照会関数を作る。
 
 ```yaml
 $do:
 - $let:
-    resolve:
-      $fn: [base, path]
+    codes: {ja: 81, us: 1}
+    look:
+      $fn: [m, k]
       $body:
-        $std.resolve:
-          base: ${base}
-          path: ${path}
+        $std.lookup:
+          in: ${m}
+          key: ${k}
 - $let:
-    abs:
-      $.resolve: https://example.com/articles/index.html
-- $.abs: ../images/cover.png
+    dial:
+      $.look: ${codes}
+- $.dial: ja
 ```
 
 ```yaml
-https://example.com/images/cover.png
+81
 ```
 
 ## 関連

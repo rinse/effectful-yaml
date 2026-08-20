@@ -1194,29 +1194,9 @@ describe('第一階の標準演算', () => {
     }
   });
 
-  it('$std.upper / $std.lower', async () => {
-    await expect(run('{$std.upper: abc}')).resolves.toBe('ABC');
-    await expect(run('{$std.lower: ABC}')).resolves.toBe('abc');
-    await expect(run('{$std.upper: 1}')).rejects.toThrow(EffectfulYamlError);
-  });
-
-  it('$std.resolve は base を基準に path を絶対 URL にする', async () => {
-    await expect(
-      run(`{$std.resolve: {base: 'https://example.com/a/b/c', path: '../d'}}`),
-    ).resolves.toBe('https://example.com/a/d');
-    await expect(
-      run(`{$std.resolve: {base: 'https://example.com/a/', path: 'https://other.example/x'}}`),
-    ).resolves.toBe('https://other.example/x');
-    await expect(run(`{$std.resolve: {base: 'not a url', path: 'x'}}`)).rejects.toThrow(
-      /cannot resolve/,
-    );
-    await expect(run(`{$std.resolve: 'https://example.com'}`)).rejects.toThrow(
-      /requires a mapping \{base, path\}/,
-    );
-  });
-
   it('第一階の演算は作用ではあるが選択ではないので、境界は単値のまま', async () => {
-    await expect(run('a: {$std.upper: x}')).resolves.toEqual({ a: 'X' });
+    // リストは std.range 自身の値であり、境界が分岐を集めた結果ではない。
+    await expect(run('a: {$std.range: 3}')).resolves.toEqual({ a: [0, 1, 2] });
   });
 
   it('通常の演算パイプラインに乗る：節で捕捉でき、$resume で継続もできる', async () => {
@@ -1234,11 +1214,12 @@ $with:
   });
 
   it('ハンドラで差し替えられる（演算である以上、意味は最も近いハンドラが選ぶ）', async () => {
+    // std の演算に限らず、任意の登録演算の名前で差し替えられることを示す。
     await expect(
       run(`
-$handle: {$std.upper: abc}
+$handle: {$str.upper: abc}
 $with:
-  std.upper:
+  str.upper:
     $fn: s
     $body: shouted-\${s}
 `),
