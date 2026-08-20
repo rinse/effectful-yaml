@@ -28,4 +28,3 @@ hello
 ## 関連
 
 - [std.upper](std.upper.md)
-- [$op](op.md)、[$pipe](pipe.md)

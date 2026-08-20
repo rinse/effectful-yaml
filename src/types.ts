@@ -4,7 +4,7 @@
  */
 import { empty, get, insert, type PMap } from './pmap.js';
 
-/** 評価結果の値。YAML のデータ値に、言語内部の関数値（Closure / OpRef）を加えたもの。 */
+/** 評価結果の値。YAML のデータ値に、言語内部の関数値（Closure）を加えたもの。 */
 export type Value =
   | null
   | boolean
@@ -12,8 +12,7 @@ export type Value =
   | string
   | Value[]
   | { [key: string]: Value }
-  | Closure
-  | OpRef;
+  | Closure;
 
 /**
  * $fn が作る閉包。YAML データからは決して作れない値なので、
@@ -30,13 +29,7 @@ export class Closure {
   ) {}
 }
 
-/** $op が作る、演算への参照（イータ展開）。 */
-export class OpRef {
-  constructor(readonly name: string) {}
-}
-
 export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
-export const isOpRef = (v: unknown): v is OpRef => v instanceof OpRef;
 
 /**
  * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、$handle の節の本体でだけ
@@ -181,13 +174,4 @@ export const STD_OPS: ReadonlySet<string> = new Set([
   'std.lower',
   'std.resolve',
   'std.lookup',
-]);
-
-/** std の派生ハンドラ。演算ではなく形なので、$op では参照できず捕捉もできない。 */
-export const DERIVED_HANDLERS: ReadonlySet<string> = new Set([
-  'std.list',
-  'std.mapping',
-  'std.first',
-  'std.state',
-  'std.opt',
 ]);

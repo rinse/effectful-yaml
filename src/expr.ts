@@ -6,7 +6,7 @@
  * 作用を起こしうるのはパスの部分性だけで、それも MissingPathError を投げるにとどめ、
  * std.fail への翻訳は評価器（eval.ts の compose）が行う。
  */
-import { EffectfulYamlError, isClosure, isOpRef, lookupEnv, type Env, type Value } from './types.js';
+import { EffectfulYamlError, isClosure, lookupEnv, type Env, type Value } from './types.js';
 
 /**
  * データ起因の部分性：存在しないキーと添字。
@@ -273,7 +273,7 @@ function parse(source: string): Node {
 // ---------------------------------------------------------------------------
 
 function isPlainObject(v: Value): v is { [key: string]: Value } {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v) && !isOpRef(v);
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
 }
 
 function deepEqual(a: Value, b: Value): boolean {

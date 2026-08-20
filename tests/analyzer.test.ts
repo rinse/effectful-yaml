@@ -1,6 +1,6 @@
 /**
  * 静的な作用推論が高階呼び出しをどこまで追えるか。
- * 仕様: docs/grammar.md「作用の推論」「関数」、docs/reference/pipe.md。
+ * 仕様: docs/grammar.md「作用の推論」「関数」、docs/reference/fn.md。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ const run = (src: string, options?: EvaluateOptions): Promise<Value> =>
   evaluate(parse(src), options);
 
 describe('追跡できる呼び出し', () => {
-  it('パス参照の段の関数を呼ぶ（純粋なら境界は単値のまま）', async () => {
+  it('マッピングをたどるパスの先の関数を呼ぶ（純粋なら境界は単値のまま）', async () => {
     await expect(
       run(`
 $do:
@@ -20,14 +20,14 @@ $do:
       double:
         $fn: x
         $body: \${x * 2}
-- $pipe: 20
-  $through:
-  - \${helpers.double}
+- {$.helpers.double: 20}
 `),
     ).resolves.toBe(40);
   });
 
-  it('リストの添字をたどるパス参照も追える', async () => {
+  it('添字をたどるパス参照も、$let で名前に束縛すれば呼べて追える', async () => {
+    // 添字は $.名前 の経路では書けないので、いったん $let で名前を付けてから呼ぶ
+    // （docs/grammar.md「呼び出しと名前空間」）。
     // 2 段目の本体の $std.each は、添字のパス参照を追えたときだけ境界の形に効く
     // （追えなければ境界は単値と推論され、分岐 2 本で実行時エラーになる）。
     await expect(
@@ -42,16 +42,17 @@ $do:
         $std.each:
         - \${x}
         - \${x + 1}
-- $pipe: 20
-  $through:
-  - \${steps[0]}
-  - \${steps[1]}
+- $let:
+    first: \${steps[0]}
+    second: \${steps[1]}
+- $.second:
+    $.first: 20
 `),
     ).resolves.toEqual([40, 41]);
   });
 
-  it('引数のマッピングの中の関数を段に置くと、その本体の選択が境界の形に効く', async () => {
-    // ${arg.step} は呼び出し側から渡された関数に解決される（引数伝播）。
+  it('引数のマッピングの中の関数を呼ぶと、その本体の選択が境界の形に効く', async () => {
+    // $.arg.step は呼び出し側から渡された関数に解決される（引数伝播）。
     // その本体に $std.each があるので境界は静的にリスト形になり、実行時エラーにならない。
     await expect(
       run(`
@@ -59,10 +60,7 @@ $do:
 - $let:
     apply:
       $fn: arg
-      $body:
-        $pipe: \${arg.init}
-        $through:
-        - \${arg.step}
+      $body: {$.arg.step: '\${arg.init}'}
 - $.apply:
     init: 10
     step:
@@ -83,10 +81,7 @@ $do:
 - $let:
     apply:
       $fn: arg
-      $body:
-        $pipe: \${arg.init}
-        $through:
-        - \${arg.step}
+      $body: {$.arg.step: '\${arg.init}'}
 - $.apply:
     init: 10
     step:
@@ -107,13 +102,12 @@ $do:
 - $let:
     f:
       $std.each:
-      - {$op: vault.read}
+      - $fn: x
+        $body: {$vault.read: '\${x}'}
       - $fn: x
         $body: plain-\${x}
 - $std.log: before
-- $pipe: db/pw
-  $through:
-  - \${f}
+- {$.f: db/pw}
 `;
     await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
       /unregistered operation: \$vault\.read/,
@@ -145,9 +139,7 @@ $do:
           $if: \${flag}
           $then: {$std.each: [a, b]}
           $else: single
-- $pipe: {$std.param: branch}
-  $through:
-  - \${helpers.choose}
+- $.helpers.choose: {$std.param: branch}
 `,
         { params: { branch: false } },
       ),
@@ -188,9 +180,7 @@ $do:
         $fn: x
         $body: {$std.each: [1, 2]}
       $else: 0
-- $pipe: 0
-  $through:
-  - \${chosen}
+- {$.chosen: 0}
 `;
     await expect(run(doc, { params: { fancy: true } })).rejects.toThrow(
       /expected 1 result, got 2/,
@@ -211,10 +201,7 @@ $do:
         $fn: x
         $body: {$std.each: [1, 2]}
       $else: 0
-- $std.list:
-    $pipe: 0
-    $through:
-    - \${chosen}
+- $std.list: {$.chosen: 0}
 `,
         { params: { fancy: true } },
       ),
@@ -229,10 +216,7 @@ $do:
 - $let:
     selfapp:
       $fn: g
-      $body:
-        $pipe: 1
-        $through:
-        - \${g}
+      $body: {$.g: 1}
 - $.selfapp: \${selfapp}
 `),
     ).rejects.toThrow(/is not a function|expected 1 result/);
@@ -240,40 +224,15 @@ $do:
 });
 
 describe('事前検証（作用シグネチャ）', () => {
-  it('パス経由で呼ぶ関数の中の登録演算も、評価前に要求される', async () => {
-    const logs: Value[] = [];
-    const doc = `
-$do:
-- $let:
-    helpers:
-      read: {$op: vault.read}
-- $std.log: before
-- $pipe: db/password
-  $through:
-  - \${helpers.read}
-`;
-    await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
-      /unregistered operation: \$vault\.read/,
-    );
-    // 評価そのものが始まっていないこと（事前検証で拒否された）。
-    expect(logs).toEqual([]);
-
-    await expect(
-      run(doc, {
-        ops: { 'vault.read': (k) => `secret(${String(k)})` },
-        onLog: (v) => logs.push(v),
-      }),
-    ).resolves.toBe('secret(db/password)');
-    expect(logs).toEqual(['before']);
-  });
-
   it('マッピング経由のパス呼び出し（$.helpers.read）で呼ぶ関数の中の登録演算も、評価前に要求される', async () => {
     const logs: Value[] = [];
     const doc = `
 $do:
 - $let:
     helpers:
-      read: {$op: vault.read}
+      read:
+        $fn: key
+        $body: {$vault.read: '\${key}'}
 - $std.log: before
 - {$.helpers.read: db/password}
 `;
@@ -318,7 +277,7 @@ $do:
 - $let:
     b: {$.outer: {op: {$fn: y, $body: '\${y}'}}}
 - $let:
-    a: {$.outer: {op: {$op: vault.unregistered}}}
+    a: {$.outer: {op: {$fn: y, $body: {$vault.unregistered: '\${y}'}}}}
 `;
     await expect(run(doc, { onLog: (v) => logs.push(v) })).rejects.toThrow(
       /unregistered operation: \$vault\.unregistered/,
@@ -410,8 +369,8 @@ $do:
     ).rejects.toThrow('unregistered operation: $nope.op');
   });
 
-  it('$pipe の段の結果が次の段の引数へ流れる（高階の段の選択も境界の形に効く）', async () => {
-    // 1 段目の結果（閉包）が 2 段目の引数として追跡され、2 段目の本体の完成の呼び出しが
+  it('呼び出しの結果が外側の呼び出しの引数へ流れる（高階の引数の選択も境界の形に効く）', async () => {
+    // 内側の呼び出しの結果（閉包）が外側の引数として追跡され、外側の本体の完成の呼び出しが
     // $std.each を算入する。追跡が切れると境界は単値と推論され、実行時エラーになる。
     await expect(
       run(`
@@ -426,10 +385,8 @@ $do:
     complete:
       $fn: g
       $body: {$.g: 99}
-- $pipe: 1
-  $through:
-  - ${'$'}{mk}
-  - ${'$'}{complete}
+- $.complete:
+    $.mk: 1
 `),
     ).resolves.toEqual([1, 99]);
   });

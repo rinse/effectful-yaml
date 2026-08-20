@@ -7,7 +7,7 @@
  */
 import { CHOICE_OPS, EffectfulYamlError, FAIL_OPS, STATE_OPS } from './types.js';
 
-/** 予約キー（$ を除く）。仕様の 17 個がすべてであり、演算はここに現れない。 */
+/** 予約キー（$ を除く）。仕様の 14 個がすべてであり、演算はここに現れない。 */
 export const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'do',
   'let',
@@ -16,9 +16,6 @@ export const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'else',
   'fn',
   'body',
-  'op',
-  'pipe',
-  'through',
   'handle',
   'with',
   'resume',
@@ -33,7 +30,6 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
   'then',
   'else',
   'body',
-  'through',
   'with',
   'into',
   'in',
@@ -48,7 +44,6 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
-  pipe: new Set(['through']),
   handle: new Set(['with']),
   collect: new Set(['with', 'into']),
   'std.state': new Set(['in']),
@@ -97,7 +92,7 @@ export type DollarKeyKind =
  * また `$let` の束縛名自体にはドットを使えない（束縛と制御の節）ので、
  * 名前の中のドットは常に「束縛名の終わり・キーアクセスの始まり」の区切りとして読める。
  * それ以外（空区画・記号・添字）は従来どおりエラーにする。添字アクセスは対象外で、
- * 必要なら `$pipe` に式として渡す。
+ * 必要なら `$let` で名前を付けてから呼ぶ。
  * ドットを含む名前は登録演算。それ以外は予約キーでなければエラー。
  */
 export function classifyDollarKey(nameAfterDollar: string): DollarKeyKind {

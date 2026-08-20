@@ -497,7 +497,7 @@ $std.first:
   });
 });
 
-describe('$fn / $op / $pipe', () => {
+describe('$fn', () => {
   it('$fn を $. で呼ぶ', async () => {
     await expect(
       run(`
@@ -511,13 +511,15 @@ $do:
     ).resolves.toBe(42);
   });
 
-  it('$op で登録演算に短い名前を付ける', async () => {
+  it('引数を素通しする $fn で登録演算に短い名前を付ける', async () => {
     await expect(
       run(
         `
 $do:
 - $let:
-    read: {$op: vault.secrets.read}
+    read:
+      $fn: key
+      $body: {$vault.secrets.read: '\${key}'}
 - {$.read: db/password}
 `,
         { ops: { 'vault.secrets.read': (k) => `secret(${String(k)})` } },
@@ -525,7 +527,7 @@ $do:
     ).resolves.toBe('secret(db/password)');
   });
 
-  it('$pipe は Kleisli 合成', async () => {
+  it('呼び出しの入れ子が合成になる', async () => {
     await expect(
       run(`
 $do:
@@ -536,16 +538,10 @@ $do:
     succ:
       $fn: x
       $body: \${x + 1}
-- $pipe: 20
-  $through:
-  - \${double}
-  - \${succ}
+- $.succ:
+    $.double: 20
 `),
     ).resolves.toBe(41);
-  });
-
-  it('空の $through は先頭の値をそのまま返す', async () => {
-    await expect(run('{$pipe: 7}')).resolves.toBe(7);
   });
 
   it('呼び出しの引数は合成なので、引数の選択が呼び出しごと分岐する', async () => {
@@ -692,21 +688,6 @@ $do:
 - {$.a.b.c: 41}
 `),
     ).resolves.toBe(42);
-  });
-
-  it('$op で作った演算参照をマッピング経由で呼ぶ', async () => {
-    await expect(
-      run(
-        `
-$do:
-- $let:
-    helpers:
-      read: {$op: vault.secrets.read}
-- {$.helpers.read: db/password}
-`,
-        { ops: { 'vault.secrets.read': (k) => `secret(${String(k)})` } },
-      ),
-    ).resolves.toBe('secret(db/password)');
   });
 
   it('先頭区画の束縛が無ければ undefined reference', async () => {
@@ -926,10 +907,7 @@ $do:
 - $let:
     apply:
       $fn: a
-      $body:
-        $pipe: 1
-        $through:
-        - \${a.f}
+      $body: {$.a.f: 1}
     arg:
       $if: {$std.param: with_choice}
       $then:
@@ -971,7 +949,7 @@ $with:
   });
 });
 
-describe('fold（$std.state + $std.list + $pipe による畳み込み）', () => {
+describe('fold（$std.state + $std.list による畳み込み）', () => {
   it('6 になる', async () => {
     await expect(
       run(`
@@ -991,11 +969,9 @@ $do:
                     $std.each: \${arg.list}
                   a: {$std.get: acc}
                   b:
-                    $pipe:
+                    $.arg.step:
                       acc: \${a}
                       x: \${x}
-                    $through:
-                    - \${arg.step}
               - $std.set:
                   acc: \${b}
           - {$std.get: acc}
@@ -1018,31 +994,6 @@ describe('作用の推論の計算量', () => {
       body = { $do: [{ $let: { f: { $fn: 'x', $body: body } } }, { '$.f': i }] };
     }
     await expect(evaluate(body)).resolves.toBe(0);
-  });
-});
-
-describe('$op の導出形', () => {
-  it('{$op: 名前} は η 展開 {$fn: x, $body: {$名前: ${x}}} と等価である', async () => {
-    const ops = { 'vault.read': (k: unknown) => `secret(${String(k)})` };
-    const opref = `
-$do:
-- $let:
-    read: {$op: vault.read}
-- {$.read: db/password}
-`;
-    const eta = `
-$do:
-- $let:
-    read:
-      $fn: x
-      $body: {$vault.read: '\${x}'}
-- {$.read: db/password}
-`;
-    await expect(run(opref, { ops })).resolves.toBe('secret(db/password)');
-    await expect(run(eta, { ops })).resolves.toBe('secret(db/password)');
-    // 作用の扱いも同じ：どちらも未登録なら評価前に拒否される。
-    await expect(run(opref)).rejects.toThrow(/unregistered operation/);
-    await expect(run(eta)).rejects.toThrow(/unregistered operation/);
   });
 });
 
@@ -1631,32 +1582,6 @@ $do:
     ).resolves.toBe(2);
   });
 
-  it('{$op: std.lookup} で関数値にして $.名前 呼び出しや $pipe の段で使え、無いキーは捕捉できる失敗になる', async () => {
-    await expect(
-      run(`
-$do:
-- $let:
-    lookup: {$op: std.lookup}
-    pair: {in: {a: 1, b: 2}, key: b}
-- {$.lookup: '\${pair}'}
-`),
-    ).resolves.toBe(2);
-
-    await expect(
-      run(`
-$do:
-- $let:
-    lookup: {$op: std.lookup}
-    pair: {in: {a: 1}, key: x}
-- $std.opt:
-    $pipe: \${pair}
-    $through:
-    - \${lookup}
-  $default: none
-`),
-    ).resolves.toBe('none');
-  });
-
   it('境界の形に影響しない：単値の文書は選択なしにそのまま単値になり、ops を登録しなくても評価できる', async () => {
     await expect(
       run(`
@@ -1808,6 +1733,12 @@ describe('予約キーと名前空間（草案 0.4）', () => {
     }
   });
 
+  it('削除した $op $pipe $through も「予約されていない $ キー」のエラーになる', async () => {
+    for (const name of ['op', 'pipe', 'through']) {
+      await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
+    }
+  });
+
   it('$in と $default は std の演算の補助キーとしてだけ有効', async () => {
     await expect(run('{$in: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
     await expect(run('{$default: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
@@ -1828,12 +1759,6 @@ describe('予約キーと名前空間（草案 0.4）', () => {
     await expect(run('x: 1', { ops: { 'std.myop': () => null } })).rejects.toThrow(
       /host cannot register an operation in the std namespace/,
     );
-  });
-
-  it('$op はドット入りの演算名だけを参照でき、派生ハンドラは参照できない', async () => {
-    await expect(run('{$op: each}')).rejects.toThrow(/namespaced operation name/);
-    await expect(run('{$op: std.list}')).rejects.toThrow(/cannot reference the derived handler/);
-    await expect(run('{$op: std.state}')).rejects.toThrow(/cannot reference the derived handler/);
   });
 
   it('$handle の節名はドット入りの演算名か return でなければならない', async () => {

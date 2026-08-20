@@ -27,17 +27,14 @@ import {
   bind,
   CHOICE_OPS,
   Closure,
-  DERIVED_HANDLERS,
   EffectfulYamlError,
   emptyEnv,
   extendEnv,
   FAIL_OPS,
   force,
   isClosure,
-  isOpRef,
   lookupEnv,
   OperationFailure,
-  OpRef,
   perform,
   pure,
   resumeOf,
@@ -67,7 +64,7 @@ const isNodeMap = (n: unknown): n is NodeMap =>
   typeof n === 'object' && n !== null && !Array.isArray(n);
 
 const isValueMap = (v: Value): v is ValueMap =>
-  typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v) && !isOpRef(v);
+  typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
 
 function union(...sets: readonly Iterable<string>[]): Set<string> {
   const out = new Set<string>();
@@ -103,7 +100,6 @@ function requireBoolean(v: Value, what: string): boolean {
 function describe(v: Value): string {
   if (typeof v === 'string') return v;
   if (isClosure(v)) return '<function>';
-  if (isOpRef(v)) return '<operation>';
   return JSON.stringify(v) ?? String(v);
 }
 
@@ -122,19 +118,6 @@ function fnParamsOf(raw: unknown): readonly string[] {
   throw new EffectfulYamlError(
     `$fn parameter must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
   );
-}
-
-/**
- * $op が参照できる名前か。演算はドット入りの名前に限り、std の派生ハンドラは形なので参照できない。
- * 解析と評価の両方から呼ぶ（解析だけが通ると「未登録の演算」という無関係な文言で拒まれる）。
- */
-function assertOpRefName(name: string): void {
-  if (!name.includes('.')) {
-    throw new EffectfulYamlError(`$op requires a namespaced operation name, got: $${name}`);
-  }
-  if (DERIVED_HANDLERS.has(name)) {
-    throw new EffectfulYamlError(`$op cannot reference the derived handler $${name}`);
-  }
 }
 
 /** 構造を回る形（$std.each の分岐、$collect の対象）。マッピングは {key, value} に分解する。 */
@@ -383,7 +366,7 @@ type SEnv = PMap<Track | undefined>;
 
 /**
  * 静的に追跡できた値（行の木）。undefined は追跡不能。
- * - closure / opref: 呼べる値。呼んだときの作用は call() が本体から求める。
+ * - closure: 呼べる値。呼んだときの作用は call() が本体から求める。
  * - struct: マッピングとリストのリテラル。キーは名前、リストは添字の 10 進表記。
  * - alt: 分岐しうる値（`$if` の両分岐、リテラルのリストからの `$each`）の過大近似。
  */
@@ -398,7 +381,6 @@ type Track =
       /** 定義位置の追跡環境（レキシカル）。木は不変なので参照ひとつで捕まえられる。 */
       readonly senv: SEnv;
     }
-  | { readonly kind: 'opref'; readonly name: string }
   | { readonly kind: 'struct'; readonly fields: ReadonlyMap<string, Track> }
   | { readonly kind: 'alt'; readonly alts: readonly Track[] };
 
@@ -436,7 +418,6 @@ function field(t: Track | undefined, seg: string): Track | undefined {
 function hasFunction(t: Track): boolean {
   switch (t.kind) {
     case 'closure':
-    case 'opref':
       return true;
     case 'struct':
       return [...t.fields.values()].some(hasFunction);
@@ -550,8 +531,6 @@ class Analyzer {
 
   private canonKey(t: Track): string {
     switch (t.kind) {
-      case 'opref':
-        return JSON.stringify(['o', t.name]);
       case 'struct':
         // ponytail: 鍵はフィールド数に比例した文字列。巨大なリテラルのリストを
         // 束縛して呼び出しに渡すと 1 回だけ長い鍵を組む。困ったら深さで打ち切る。
@@ -712,26 +691,11 @@ class Analyzer {
         );
       case 'fn':
         // 値を作るだけで作用は起こさない。本体の作用は呼び出しを追跡できる側
-        // （$let の束縛、$pipe の段、$handle の節）が call() で数える。
+        // （$let の束縛、$handle の節）が call() で数える。
         // ここで本体を走査してはならない。定義のたびに二重走査になり、
         // 入れ子の深さに対して指数的になる。
         fnParamsOf(arg); // 形の検査だけ行う（出現主義なので、実行されない位置でも検査する）
         return new Set();
-      case 'op':
-        if (typeof arg === 'string') assertOpRefName(arg);
-        return new Set();
-      case 'pipe': {
-        const stages = Array.isArray(aux('through')) ? (aux('through') as unknown[]) : [];
-        const rows: Iterable<string>[] = [this.effects(arg, senv)];
-        // 段の結果の追跡木を次の段の引数へ流す。追えなくなった段から先は追跡不能。
-        let argument = this.track(arg, senv);
-        for (const stage of stages) {
-          const r = this.call(this.track(stage, senv), argument);
-          rows.push(this.effects(stage, senv), r.row ?? []);
-          argument = r.out;
-        }
-        return union(...rows);
-      }
       case 'collect':
         // $collect 自身は作用を持たない。対象の作用と、追跡できる関数本体の作用の合併。
         // ponytail: 関数へ渡す引数の追跡木は undefined（$handle の節と同じ天井）。
@@ -826,10 +790,6 @@ class Analyzer {
           body: node[shape.aux.get('body')!],
           senv,
         };
-      case 'op': {
-        const name = node[shape.mainRaw];
-        return typeof name === 'string' ? { kind: 'opref', name } : undefined;
-      }
       case 'if':
         return altOf([
           this.track(node[shape.aux.get('then')!], senv),
@@ -849,14 +809,6 @@ class Analyzer {
   private call(t: Track | undefined, argument: Track | undefined): CallResult {
     if (t === undefined) return UNTRACKED_CALL;
     switch (t.kind) {
-      case 'opref':
-        // 演算の結果の値は追跡しない（既定の意味も捕捉時の意味も値は自由）。
-        // ホスト登録の演算は失敗を通知できるので、std.fail も加える。
-        if (t.name === 'std.lookup') return { row: new Set(FAIL_OPS), out: undefined };
-        return {
-          row: t.name.startsWith('std.') ? new Set([t.name]) : new Set([t.name, 'std.fail']),
-          out: undefined,
-        };
       case 'struct':
         // マッピングやリストは呼べない。呼べば実行時のエラーだが、推論は行を作らない。
         return UNTRACKED_CALL;
@@ -1178,18 +1130,9 @@ class Evaluator {
     }
   }
 
-  /** 関数値（閉包 / 演算参照）の適用。引数も本体も合成である。 */
+  /** 関数値（閉包）の適用。引数も本体も合成である。 */
   private apply(f: Value, arg: Value, what: string): Comp {
     if (isClosure(f)) return this.enter(f, extendEnv(f.env, f.params[0]!, arg));
-    if (isOpRef(f)) {
-      // $op 経由でも $std.param の未渡しは呼び出し位置で std.fail になる（番兵を漏らさない）。
-      if (f.name === 'std.param') {
-        return this.param(requireString(arg, '$std.param name'), undefined, false, emptyEnv);
-      }
-      // $op 経由でも $std.lookup は展開の意味で照会する（perform すると未登録演算になってしまう）。
-      if (f.name === 'std.lookup') return lookupComp(arg);
-      return perform(f.name, arg);
-    }
     throw new EffectfulYamlError(`${what} is not a function: ${describe(f)}`);
   }
 
@@ -1226,24 +1169,6 @@ class Evaluator {
         );
       case 'fn':
         return pure(new Closure(fnParamsOf(arg), aux('body'), env));
-      case 'op': {
-        const name = requireString(arg, '$op operation name');
-        assertOpRefName(name);
-        return pure(new OpRef(name));
-      }
-      case 'pipe': {
-        const through = aux('through');
-        const stages = through === undefined || through === null ? [] : through;
-        if (!Array.isArray(stages)) throw new EffectfulYamlError('$through requires a list');
-        let comp = this.node(arg, env);
-        for (const stage of stages) {
-          const prev = comp;
-          comp = bind(prev, (v) =>
-            bind(this.node(stage, env), (f) => this.apply(f, v, '$pipe stage')),
-          );
-        }
-        return comp;
-      }
       case 'collect':
         return this.collect(arg, aux('with'), intoOf(aux('into')), env);
       case 'handle':
@@ -1408,7 +1333,7 @@ function toMapping(entries: readonly Value[]): Value {
 
 /** 閉包が文書の値に残ることはエラー。 */
 function assertNoFunctionValue(v: Value): void {
-  if (isClosure(v) || isOpRef(v)) {
+  if (isClosure(v)) {
     throw new EffectfulYamlError('a function value cannot escape into the document value');
   }
   if (Array.isArray(v)) {

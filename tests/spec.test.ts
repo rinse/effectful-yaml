@@ -169,7 +169,7 @@ $in:
     expected: [1, 2, 4, 8, 16],
   },
   {
-    name: '関数と合成（$pipe）',
+    name: '関数と合成（呼び出しの入れ子）',
     yaml: `
 $do:
 - $let:
@@ -179,10 +179,8 @@ $do:
     succ:
       $fn: x
       $body: \${x + 1}
-- $pipe: 20
-  $through:
-  - \${double}
-  - \${succ}
+- $.succ:
+    $.double: 20
 `,
     expected: 41,
   },
@@ -277,13 +275,15 @@ describe('grammar.md 用例（値の一致）', () => {
 });
 
 describe('grammar.md 用例（そのほかの記述）', () => {
-  it('$op の慣用：長い名前の演算に短いローカル名を付ける', async () => {
+  it('長い名前の演算には、引数を素通しする $fn を $let で短い名前に束縛する', async () => {
     const ops = { 'vault.secrets.read': (arg: Value) => `secret:${String(arg)}` };
     const viaLocalName = await evaluateYaml(
       `
 $do:
 - $let:
-    read: {$op: vault.secrets.read}
+    read:
+      $fn: key
+      $body: {$vault.secrets.read: '\${key}'}
 - {$.read: db/password}
 `,
       { ops },
@@ -366,7 +366,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 });
 
 // -----------------------------------------------------------------------------
-// docs/reference/ 用例：カーネル 8（do / let / if / fn / op / pipe / handle / collect）と
+// docs/reference/ 用例：カーネル 6（do / let / if / fn / handle / collect）と
 // std 17（std.each ほか）の「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
@@ -448,36 +448,6 @@ $do:
 - $.abs: ../images/cover.png
 `,
     expected: 'https://example.com/images/cover.png',
-  },
-  {
-    name: 'op.md の例（$op で演算を関数値にして $pipe の段に置く）',
-    yaml: `
-$do:
-- $let:
-    upper: {$op: std.upper}
-- $pipe: hello
-  $through:
-  - \${upper}
-`,
-    expected: 'HELLO',
-  },
-  {
-    name: 'pipe.md の例（$pipe による関数の合成）',
-    yaml: `
-$do:
-- $let:
-    double:
-      $fn: x
-      $body: \${x * 2}
-    succ:
-      $fn: x
-      $body: \${x + 1}
-- $pipe: 20
-  $through:
-  - \${double}
-  - \${succ}
-`,
-    expected: 41,
   },
   {
     name: 'handle.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
