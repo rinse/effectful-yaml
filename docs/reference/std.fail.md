@@ -29,7 +29,7 @@ $std.fail: 式
 - `std.get` で未初期化のセルを読んだとき。
 
 これらは、束縛名そのものが未定義であることや型の不一致のような**文書の形の誤り**とは区別される。
-文書の形の誤りは捕捉できないエラーのままだが、データ起因の部分性は `std.fail` に統一されているので、`$handle` や `$std.opt`、`$std.prune` で一律に回復できる。
+文書の形の誤りは捕捉できないエラーのままだが、データ起因の部分性は `std.fail` に統一されているので、`$handle` や `$std.opt` で一律に回復できる。
 
 ## 例
 
@@ -49,5 +49,5 @@ $do:
 
 - [std.first](std.first.md)（失敗によるバックトラック探索）
 - [$handle](handle.md)（失敗からの回復）
-- [std.opt](std.opt.md)、[std.prune](std.prune.md)（失敗の翻訳に特化したハンドラ）
+- [std.opt](std.opt.md)（失敗の翻訳に特化したハンドラ）
 - [std.where](std.where.md)（失敗と打ち切りの違い）

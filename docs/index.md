@@ -76,9 +76,8 @@ effectful-yaml のドキュメントの索引である。
 | `$std.mapping` | `std.each` `std.where` | [std.mapping.md](reference/std.mapping.md) | 全分岐をマッピングに集める |
 | `$std.first` | `std.each` `std.where` `std.fail` | [std.first.md](reference/std.first.md) | 最初に成功した分岐の値 |
 | `$std.state` `$in` | `std.get` `std.set` | [std.state.md](reference/std.state.md) | 状態のスコープ |
-| `$std.opt` | `std.fail` | [std.opt.md](reference/std.opt.md) | 失敗を null に翻訳する |
-| `$std.prune` | `std.fail` | [std.prune.md](reference/std.prune.md) | 失敗を分岐の打ち切りに翻訳する |
+| `$std.opt` | `std.fail` | [std.opt.md](reference/std.opt.md) | 失敗を既定値（省略時 null）に翻訳する |
 
 派生ハンドラの意味論はすべて `$handle` と `$collect` への展開で定まる。
-`std.list.md`、`std.state.md`、`std.opt.md`、`std.prune.md` はその展開をそのまま掲載する。
+`std.list.md`、`std.state.md`、`std.opt.md` はその展開をそのまま掲載する。
 `std.mapping.md` は `std.list.md` との展開の違いを文章で説明し、`std.first.md` は展開の概形を示す。

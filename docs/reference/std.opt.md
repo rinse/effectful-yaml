@@ -24,6 +24,7 @@ $default: 既定値の式
 - `$default` は本体が失敗したときだけ評価され、成功時は評価されず、その中の作用も起きない（`$if` の選ばれない分岐、`$std.param` の `$default` と同じ遅延位置である）。
 - 作用の推論は出現主義なので、`$default` の中の演算は評価されない場合でも作用集合に数える。
 - 選択は処理しない。`$std.list` などの選択のハンドラと組み合わせて、失敗しうる要素を既定値で埋めたまま選択に残す用途に使う。
+- `$default` は値を返す式に限らず、作用を起こす式でもよい。`$default: {$std.where: false}` は失敗を包囲する選択の分岐の打ち切りに変える定型である。
 
 ## 展開
 
@@ -64,7 +65,7 @@ $std.list:
 ```
 
 2 行目には `code` が無いので、パスアクセス `${row.code}` が `std.fail` を起こし、`$std.opt` がそれを `null` に翻訳する。
-行そのものを削りたいときは [std.prune](std.prune.md) を使う。
+行そのものを削りたいときは、`$default` に `{$std.where: false}` を置く（最後の例）。
 
 `$default` を添えると、null 以外の既定値でパスアクセスの欠落を埋められる。
 フロー形式 `{...}` の中に裸の `${...}` は置けない（YAML 自体の制約）ので、`${...}` を含むときはブロック形式で書く。
@@ -84,9 +85,35 @@ pre: ''
 
 `spec` に `pre` が無いので、パスアクセス `${spec.pre}` が `std.fail` を起こし、`$std.opt` がそれを空文字列に翻訳する。
 
+`$default` に `{$std.where: false}` を置くと、失敗した分岐を包囲する選択から黙って外せる。
+展開では `$default` の式が `std.fail` の節の本体になるので、その `std.where` はこの `$std.opt` 自身ではなく外側で処理され（[$handle](handle.md) の規則）、包囲する選択の分岐ごと打ち切られる。
+出現主義により、この形の出現は作用集合に選択を加える。
+
+```yaml
+$std.list:
+  $do:
+  - $let:
+      row:
+        $std.each:
+        - {date: d1, code: c1}
+        - {date: d2}
+        - {date: d3, code: c3}
+  - date: ${row.date}
+    code:
+      $std.opt: ${row.code}
+      $default: {$std.where: false}
+```
+
+```yaml
+- {date: d1, code: c1}
+- {date: d3, code: c3}
+```
+
+2 行目の分岐は、`code` の欠落を持つ行ごと結果から消える。
+
 ## 関連
 
 - [std.fail](std.fail.md)
 - [std.param](std.param.md)（`$default` の先行例。同じ遅延位置と出現主義に従う）
-- [std.prune](std.prune.md)（失敗を既定値でなく打ち切りに変える）
+- [std.where](std.where.md)（`$default: {$std.where: false}` の定型で分岐の打ち切りに使う）
 - [$handle](handle.md)

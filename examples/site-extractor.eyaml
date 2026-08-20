@@ -9,7 +9,7 @@
 #
 # ホスト登録の演算:
 #   site.sel: {selector, node}  最初の一致のテキスト。無ければ失敗を通知する
-#     （OperationFailure。呼び出し位置の std.fail になり、$std.opt / $std.prune で扱える）。
+#     （OperationFailure。呼び出し位置の std.fail になり、$std.opt で扱える）。
 #   site.all: {selector, node}  一致したノードのリスト。
 
 version: 8
@@ -43,8 +43,9 @@ sites:
                         $site.all:
                           selector: .genshin_table_table > table tr
                           node: ${root}
-                # ヘッダ行や特典画像だけの行は code を持たないので、$std.prune が枝ごと落とす。
-                - $std.prune:
+                # ヘッダ行や特典画像だけの行は code を持たないので、失敗を打ち切りに
+                # 変える $default が行ごと落とす。
+                - $std.opt:
                     date:
                       $std.opt:
                         $.date: ${row}
@@ -53,6 +54,7 @@ sites:
                     description:
                       $std.opt:
                         $.desc: ${row}
+                  $default: {$std.where: false}
 
   # gallery-collector の 1pondo のギャラリー取得の移植（JSON レスポンス）。
   # JSON はパラメータ doc の素の値なので、選択はすべてパスアクセスと選択の作用で書ける。

@@ -1327,14 +1327,15 @@ $do:
     ).resolves.toEqual({ present: 1, missing: null });
   });
 
-  it('$std.prune は失敗を包囲する選択の打ち切りに変える', async () => {
+  it('打ち切りの定型（$default: {$std.where: false}）は失敗を包囲する選択の打ち切りに変える', async () => {
     await expect(
       run(`
 $std.list:
   $do:
   - $let:
       row: {$std.each: [{a: 1}, {}, {a: 3}]}
-  - $std.prune: \${row.a}
+  - $std.opt: \${row.a}
+    $default: {$std.where: false}
 `),
     ).resolves.toEqual([1, 3]);
   });
@@ -1382,7 +1383,7 @@ $std.first:
   });
 });
 
-describe('$std.first / $std.opt / $std.prune', () => {
+describe('$std.first / $std.opt', () => {
   it('$std.first は最初の成功より後の分岐を評価しない（作用も起こさない）', async () => {
     const logs: Value[] = [];
     await expect(
@@ -1419,7 +1420,7 @@ $with:
     expect(sugar).toBe(null);
   });
 
-  it('$std.prune の節の本体の where は、ハンドラの外側で処理される', async () => {
+  it('打ち切りの定型の $default が起こす where は、ハンドラの外側で処理される', async () => {
     // 展開: $handle の std.fail 節が {$std.where: false} を起こす。節の本体の作用は
     // このハンドラでは処理されないので、包囲する $std.list の分岐ごと打ち切られる。
     const body = `
@@ -1428,7 +1429,7 @@ $with:
         row: {$std.each: [{a: 1}, {}]}
     - \${row.a}
 `;
-    const sugar = await run(`$std.list:\n  $std.prune:${body}`);
+    const sugar = await run(`$std.list:\n  $std.opt:${body}  $default: {$std.where: false}\n`);
     const expanded = await run(`
 $std.list:
   $handle:${body}
@@ -1516,8 +1517,8 @@ $do:
     await expect(run('{$std.opt: {$std.param: nope}, $default: 5}')).resolves.toBe(5);
   });
 
-  it('$std.opt と $default を取らない主キーの組み合わせは形の誤りになる', async () => {
-    await expect(run('{$std.prune: 1, $default: 2}')).rejects.toThrow(/does not accept \$default/);
+  it('$default を取らない主キーとの組み合わせは形の誤りになる', async () => {
+    await expect(run('{$std.list: 1, $default: 2}')).rejects.toThrow(/does not accept \$default/);
   });
 
   it('本体が成功しても、$default の中の演算は作用集合に数える（出現主義。$std.param の $default と同じ）', async () => {
@@ -1581,7 +1582,7 @@ $do:
     ).resolves.toBe('fallback');
   });
 
-  it('$std.list の中の $std.prune と合成すると、無いキーの分岐だけが落ちる', async () => {
+  it('$std.list の中で打ち切りの定型と合成すると、無いキーの分岐だけが落ちる', async () => {
     await expect(
       run(`
 $std.list:
@@ -1592,10 +1593,11 @@ $std.list:
         - {t: {a: 1}, k: a}
         - {t: {a: 1}, k: x}
         - {t: {a: 1}, k: a}
-  - $std.prune:
+  - $std.opt:
       $std.lookup:
         in: \${row.t}
         key: \${row.k}
+    $default: {$std.where: false}
 `),
     ).resolves.toEqual([1, 1]);
   });
@@ -1906,7 +1908,7 @@ describe('ホスト演算の失敗通知', () => {
     ).resolves.toBe(null);
   });
 
-  it('$std.prune が失敗した分岐だけを落とす', async () => {
+  it('打ち切りの定型が失敗した分岐だけを落とす', async () => {
     await expect(
       run(
         `
@@ -1914,8 +1916,9 @@ $std.list:
   $do:
   - $let:
       v: {$std.each: [a, b, c]}
-  - $std.prune:
+  - $std.opt:
       $site.sel: \${v}
+    $default: {$std.where: false}
 `,
         {
           ops: {

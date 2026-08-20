@@ -130,7 +130,7 @@ $std.mapping:
     expectedKeyOrder: ['svc-web', 'svc-db'],
   },
   {
-    name: '欠落するデータの剪定（$std.prune）',
+    name: '欠落するデータの除外（打ち切りの定型）',
     yaml: `
 $std.list:
   $do:
@@ -142,7 +142,8 @@ $std.list:
         - {date: d3, code: c3}
   - date: \${row.date}
     code:
-      $std.prune: \${row.code}
+      $std.opt: \${row.code}
+      $default: {$std.where: false}
 `,
     expected: [
       { date: 'd1', code: 'c1' },
@@ -292,7 +293,7 @@ $do:
     expect(viaLocalName).toBe('secret:db/password');
   });
 
-  it('失敗を null で埋めたいときは $std.prune を $std.opt に替える', async () => {
+  it('失敗を null で埋めたいときは $default を省く', async () => {
     await expect(
       evaluateYaml(`
 $std.list:
@@ -366,7 +367,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 
 // -----------------------------------------------------------------------------
 // docs/reference/ 用例：カーネル 8（do / let / if / fn / op / pipe / handle / collect）と
-// std 18（std.each ほか）の「例」節にある実行可能な用例。
+// std 17（std.each ほか）の「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------
@@ -709,7 +710,7 @@ port: {$std.param: db_port, $default: 5432}
     expected: { host: 'example.com', port: 5432 },
   },
   {
-    name: 'std.prune.md の例（欠落するデータの剪定）',
+    name: 'std.opt.md の例（打ち切りの定型で行ごと削る）',
     yaml: `
 $std.list:
   $do:
@@ -721,7 +722,8 @@ $std.list:
         - {date: d3, code: c3}
   - date: \${row.date}
     code:
-      $std.prune: \${row.code}
+      $std.opt: \${row.code}
+      $default: {$std.where: false}
 `,
     expected: [
       { date: 'd1', code: 'c1' },

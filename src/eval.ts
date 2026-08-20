@@ -309,15 +309,6 @@ function collectFirst(comp: Comp): Comp {
 }
 
 /**
- * $std.prune: 失敗を包囲する選択の打ち切りに変える。
- * 節の本体が起こす std.where はこのハンドラ自身では処理されず外側へ抜けるので、
- * 包囲する選択の分岐ごと打ち切られる（$handle の規則）。
- */
-const PRUNE_CLAUSES: ReadonlyMap<string, Clause> = new Map([
-  ['std.fail', () => perform('std.where', false)],
-]);
-
-/**
  * 状態を処理する（$std.state、および境界の既定の `$std.state: {}`）。
  * 記憶を再帰の引数として持ち回るので、外側のハンドラが複数回 resume すると
  * 各再開はその演算の時点の記憶から分岐する（= ハンドラは自分より内側だけを見る）。
@@ -667,9 +658,6 @@ class Analyzer {
           without(this.effects(arg, senv), FAIL_OPS),
           shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
         );
-      case 'std.prune':
-        // 節の本体の {$std.where: false} はこのハンドラの外で処理されるので、加わる。
-        return union(without(this.effects(arg, senv), FAIL_OPS), ['std.where']);
       case 'std.lookup':
         // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
         return union(this.effects(arg, senv), FAIL_OPS);
@@ -1162,8 +1150,6 @@ class Evaluator {
           this.node(arg, env),
           new Map([['std.fail', () => this.node(aux('default'), env)]]),
         );
-      case 'std.prune':
-        return handleOps(this.node(arg, env), PRUNE_CLAUSES);
       case 'std.state':
         return bind(this.node(arg, env), (cells) => {
           if (!isValueMap(cells)) {

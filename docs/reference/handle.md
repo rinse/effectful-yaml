@@ -111,7 +111,7 @@ $with:
 
 ## std の派生ハンドラとの関係
 
-`$std.list`、`$std.mapping`、`$std.first`、`$std.state`、`$std.opt`、`$std.prune` はいずれも `$handle`（`$std.first` はさらに内部の私的な状態も）で書ける形の言語組み込みの省略である。
+`$std.list`、`$std.mapping`、`$std.first`、`$std.state`、`$std.opt` はいずれも `$handle`（`$std.first` はさらに内部の私的な状態も）で書ける形の言語組み込みの省略である。
 利用者が独自の選択の集約や、独自の状態の持ち回りを書きたいときは、`$handle` を直接使う。
 組み込みの展開は各ページに掲載してあるので、自作するときの雛形として読める。
 

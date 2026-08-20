@@ -216,7 +216,6 @@ export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
 /**
  * 作用集合（演算名の集合）に対する std の派生ハンドラの部分処理。
  * 「宣言した作用だけを取り除く」の宣言側の一覧。$handle は $with の節名で動的に決まるため含まない。
- * $std.prune は取り除くほかに節の本体の std.where を加えるので、加える側は eval.ts が持つ。
  */
 export const HANDLER_REMOVES: Readonly<Record<string, ReadonlySet<string>>> = {
   'std.list': CHOICE_OPS,
@@ -224,5 +223,4 @@ export const HANDLER_REMOVES: Readonly<Record<string, ReadonlySet<string>>> = {
   'std.first': new Set([...CHOICE_OPS, ...FAIL_OPS]),
   'std.state': STATE_OPS,
   'std.opt': FAIL_OPS,
-  'std.prune': FAIL_OPS,
 };

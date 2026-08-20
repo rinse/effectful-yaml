@@ -1,6 +1,6 @@
 /**
  * 検証テスト：docs/grammar.md（草案 0.4）が定める std の派生ハンドラ
- * （$std.list / $std.mapping / $std.first / $std.state / $std.opt / $std.prune）の
+ * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
  * 「$handle と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
  * 結果と比較する。
  *
@@ -330,7 +330,7 @@ $do:
 });
 
 // -----------------------------------------------------------------------------
-// 1c. $std.opt / $std.prune の展開（docs/reference/std.opt.md, std.prune.md）
+// 1c. $std.opt の展開（docs/reference/std.opt.md）
 // -----------------------------------------------------------------------------
 
 function optExpanded(body: string): string {
@@ -343,7 +343,8 @@ $with:
 `;
 }
 
-function pruneExpanded(body: string): string {
+// 打ち切りの定型 {$std.opt: 式, $default: {$std.where: false}} の展開。
+function cutExpanded(body: string): string {
   return `
 $handle:${block(body, 2)}
 $with:
@@ -353,8 +354,8 @@ $with:
 `;
 }
 
-describe('$std.opt / $std.prune の展開との等価性', () => {
-  it('欠落するデータの剪定（grammar.md 用例）が $std.prune の展開と一致する', async () => {
+describe('$std.opt の展開との等価性', () => {
+  it('欠落するデータの除外（grammar.md 用例）が打ち切りの定型の展開と一致する', async () => {
     const builtin = await run(`
 $std.list:
   $do:
@@ -366,7 +367,8 @@ $std.list:
         - {date: d3, code: c3}
   - date: \${row.date}
     code:
-      $std.prune: \${row.code}
+      $std.opt: \${row.code}
+      $default: {$std.where: false}
 `);
     const expanded = await run(`
 $std.list:
@@ -392,15 +394,16 @@ $std.list:
     ]);
   });
 
-  it('$std.first の中で使った $std.prune も、外側の選択のハンドラまで打ち切りが届く', async () => {
-    // row が {} の分岐は std.prune が std.where:false に翻訳し、$handle 自身ではなく
+  it('$std.first の中で使った打ち切りの定型も、外側の選択のハンドラまで打ち切りが届く', async () => {
+    // row が {} の分岐は $default が std.where:false に翻訳し、$std.opt 自身ではなく
     // 外側（ここでは $std.first）で処理されるので、その分岐が消えて次の候補に進む。
     const builtin = await run(`
 $std.first:
   $do:
   - $let:
       row: {$std.each: [{}, {code: c3}]}
-  - $std.prune: \${row.code}
+  - $std.opt: \${row.code}
+    $default: {$std.where: false}
 `);
     const expanded = await run(`
 $std.first:
@@ -417,14 +420,14 @@ $std.first:
     expect(builtin).toBe('c3');
   });
 
-  it('失敗しない本体では $std.opt / $std.prune は素通しになる', async () => {
+  it('失敗しない本体では $std.opt は素通しになる', async () => {
     expect(await run('{$std.opt: 5}')).toBe(5);
     expect(await run(optExpanded('5'))).toBe(5);
-    // $std.prune は展開の節の本体が std.where を含むため、出現だけで作用集合に選択が
+    // 打ち切りの定型は $default が std.where を含むため、出現だけで作用集合に選択が
     // 加わる（grammar.md）。境界の直下で裸に使うと境界がリスト形になるので、
     // 選択のハンドラ（ここでは $std.list）の内側で素通しを確かめる。
-    expect(await run('{$std.list: {$std.prune: 5}}')).toEqual([5]);
-    expect(await run(`$std.list:${block(pruneExpanded('5'), 2)}`)).toEqual([5]);
+    expect(await run('{$std.list: {$std.opt: 5, $default: {$std.where: false}}}')).toEqual([5]);
+    expect(await run(`$std.list:${block(cutExpanded('5'), 2)}`)).toEqual([5]);
   });
 });
 

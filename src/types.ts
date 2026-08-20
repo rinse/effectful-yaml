@@ -190,5 +190,4 @@ export const DERIVED_HANDLERS: ReadonlySet<string> = new Set([
   'std.first',
   'std.state',
   'std.opt',
-  'std.prune',
 ]);
