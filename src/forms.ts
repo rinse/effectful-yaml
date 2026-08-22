@@ -1,6 +1,6 @@
 /**
  * `$` キーの分類と、マッピングノードの形の判定。
- * 仕様: docs/grammar.md（草案 0.4）呼び出しと名前空間 / 各フォームの節。
+ * 仕様: docs/grammar.md（草案 0.5）呼び出しと名前空間 / 各フォームの節。
  *
  * effect-infer（eval-core に同居）と evaluator の双方が、同じマッピングを
  * 同じ形として認識しなければならないため、その判定をここに集約する。
@@ -38,10 +38,13 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
- * `$in` と `$default` は std の演算とハンドラ（`$std.state` と `$std.param` と `$std.opt`）が
+ * `$in` は `$let` のほかに `$std.state` が、`$default` は `$std.param` と `$std.opt` が
  * 使うので、予約キーだけでなく演算の名前でも引ける表にする。
+ * `$let` の `$in` が必須でないのは、`$do` の文の位置でだけ省略できるからである
+ * （位置はここでは分からないので、単独の `$in` なし `$let` は評価器がエラーにする）。
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
+  let: new Set(['in']),
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
   handle: new Set(['with']),
@@ -143,8 +146,9 @@ function displayName(k: DollarKeyKind): string {
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
  * - $ 式でないキーが一つでもあれば、$ キーの有無に関わらず plain（混在はエラー）。
  * - $ キーは主キーちょうど一つと、その主キーが許す補助キーだけを許す。
- * - 補助キーを許すのは予約キーのほか、`$in` を取る `$std.state` と `$default` を取る
- *   `$std.param` と `$std.opt` だけ。レキシカル呼び出しは補助キーを取らない。
+ * - 補助キーを許すのは予約キー（`$in` を取る `$let` を含む）のほか、`$in` を取る
+ *   `$std.state` と `$default` を取る `$std.param` と `$std.opt` だけ。
+ *   レキシカル呼び出しは補助キーを取らない。
  */
 export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   const dollarKeys = rawKeys.filter(isDollarFormKey);

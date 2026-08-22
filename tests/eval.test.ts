@@ -1706,7 +1706,7 @@ $with:
   });
 });
 
-describe('予約キーと名前空間（草案 0.4）', () => {
+describe('予約キーと名前空間（草案 0.5）', () => {
   it('旧記法のドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
     const old = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state'];
     for (const name of old) {
@@ -1896,5 +1896,98 @@ $std.first:
         },
       ),
     ).resolves.toBe('y');
+  });
+});
+
+describe('$let（$in）', () => {
+  it('$let は右辺を文書順に束縛して $in の本体を評価する', async () => {
+    await expect(
+      run(`
+$let:
+  x: 2
+  y: \${x + 1}
+$in: \${x * y}
+`),
+    ).resolves.toBe(6);
+  });
+
+  it('入れ子の $let の再束縛は外側の束縛を隠す', async () => {
+    await expect(
+      run(`
+$let:
+  x: 1
+$in:
+  $let:
+    x: 2
+  $in: \${x}
+`),
+    ).resolves.toBe(2);
+  });
+
+  it('右辺の選択は包囲する逐次の全体を分岐させ、境界がリストに集める', async () => {
+    await expect(
+      run(`
+$let:
+  x: {$std.each: [1, 2]}
+$in: \${x * 10}
+`),
+    ).resolves.toEqual([10, 20]);
+  });
+
+  it('捨て名 _ への束縛で値を捨てて作用だけを残せる', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+$let:
+  _: {$std.log: hi}
+$in: ok
+`,
+        { onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toBe('ok');
+    expect(logs).toEqual(['hi']);
+  });
+
+  it('$let で束縛した関数の本体の作用は $in の本体の呼び出しでも算入される', async () => {
+    await expect(
+      run(`
+$let:
+  pick:
+    $fn: xs
+    $body:
+      $std.each: \${xs}
+$in:
+  $.pick: [a, b]
+`),
+    ).resolves.toEqual(['a', 'b']);
+  });
+
+  it('$in を伴う $let は $do の文としては完結した式であり、束縛を残りの文へ伸ばさない', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    x: 1
+  $in: \${x}
+- \${x}
+`),
+    ).rejects.toThrow(/undefined reference/);
+  });
+
+  it('$in の無い $let を $do の外に置くとエラー', async () => {
+    await expect(run('{$let: {x: 1}}')).rejects.toThrow(
+      /\$let without \$in is only allowed as a statement of \$do/,
+    );
+  });
+
+  it('束縛がマッピングでなければエラー', async () => {
+    await expect(run('{$let: [1], $in: null}')).rejects.toThrow(
+      /\$let requires a mapping of bindings/,
+    );
+  });
+
+  it('束縛名にドットは使えない', async () => {
+    await expect(run('{$let: {a.b: 1}, $in: null}')).rejects.toThrow(/must not contain a dot/);
   });
 });

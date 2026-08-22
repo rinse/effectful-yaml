@@ -2,13 +2,13 @@
 # exn.throw は呼び出しの場所で名指しするだけの抽象的な演算で、それ自体は意味を持たない。
 # 「エラー終了」という意味は、$handle の節が標準の失敗への翻訳として与える。
 # 長い名前には、引数を素通しする $fn を $let で束縛して短いローカル名を付ける。
-$do:
-- $let:
-    throw:
-      $fn: msg
-      $body:
-        $exn.throw: ${msg}
-- $handle:
+$let:
+  throw:
+    $fn: msg
+    $body:
+      $exn.throw: ${msg}
+$in:
+  $handle:
     $do:
     - $std.log: start
     - {$.throw: error message}

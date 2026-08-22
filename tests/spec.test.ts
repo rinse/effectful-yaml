@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.4）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.5）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -41,27 +41,27 @@ $with:
     expected: [1, 1, 2, 2, 3, 3],
   },
   {
-    name: '選択の基本形（18 要素版：末尾が $std.each）',
+    name: '選択の基本形（18 要素版：$in の本体が $std.each）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-- $std.each:
+$let:
+  x: {$std.each: [a, b, c]}
+  y: {$std.each: [x, y, z]}
+$in:
+  $std.each:
   - \${x}
   - \${y}
 `,
     expected: ['a', 'x', 'a', 'y', 'a', 'z', 'b', 'x', 'b', 'y', 'b', 'z', 'c', 'x', 'c', 'y', 'c', 'z'],
   },
   {
-    name: '選択の基本形（9 ペア版：末尾が literal なリスト）',
+    name: '選択の基本形（9 ペア版：$in の本体が literal なリスト）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-- - \${x}
-  - \${y}
+$let:
+  x: {$std.each: [a, b, c]}
+  y: {$std.each: [x, y, z]}
+$in:
+- \${x}
+- \${y}
 `,
     expected: [
       ['a', 'x'], ['a', 'y'], ['a', 'z'],
@@ -120,10 +120,10 @@ $do:
     name: 'マッピングの生成と変換',
     yaml: `
 $std.mapping:
-  $do:
-  - $let:
-      e: {$std.each: {web: 80, db: 5432}}
-  - key: svc-\${e.key}
+  $let:
+    e: {$std.each: {web: 80, db: 5432}}
+  $in:
+    key: svc-\${e.key}
     value: \${e.value}
 `,
     expected: { 'svc-web': 80, 'svc-db': 5432 },
@@ -133,14 +133,14 @@ $std.mapping:
     name: '欠落するデータの除外（打ち切りの定型）',
     yaml: `
 $std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-        - {date: d3, code: c3}
-  - date: \${row.date}
+  $let:
+    row:
+      $std.each:
+      - {date: d1, code: c1}
+      - {date: d2}
+      - {date: d3, code: c3}
+  $in:
+    date: \${row.date}
     code:
       $std.opt: \${row.code}
       $default: {$std.where: false}
@@ -159,27 +159,28 @@ $in:
   $with:
     $fn: _
     $body:
-      $do:
-      - $let:
-          v: {$std.get: acc}
-      - $std.set:
-          acc: \${v * 2}
-      - - \${v}
+      $let:
+        v: {$std.get: acc}
+        _:
+          $std.set:
+            acc: \${v * 2}
+      $in:
+      - \${v}
 `,
     expected: [1, 2, 4, 8, 16],
   },
   {
     name: '関数と合成（呼び出しの入れ子）',
     yaml: `
-$do:
-- $let:
-    double:
-      $fn: x
-      $body: \${x * 2}
-    succ:
-      $fn: x
-      $body: \${x + 1}
-- $.succ:
+$let:
+  double:
+    $fn: x
+    $body: \${x * 2}
+  succ:
+    $fn: x
+    $body: \${x + 1}
+$in:
+  $.succ:
     $.double: 20
 `,
     expected: 41,
@@ -189,10 +190,10 @@ $do:
     yaml: `
 port:
   $handle:
-    $do:
-    - $let:
-        p: {$std.param: port, $default: 0}
-    - $if: \${p <= 0 || p > 65535}
+    $let:
+      p: {$std.param: port, $default: 0}
+    $in:
+      $if: \${p <= 0 || p > 65535}
       $then:
         $std.fail: invalid port \${p}
       $else: \${p}
@@ -223,14 +224,14 @@ log_level:
   {
     name: '$fn の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
     yaml: `
-$do:
-- $let:
-    add:
-      $fn: [a, b]
-      $body: \${a + b}
-    succ:
-      $.add: 1
-- $.succ: 41
+$let:
+  add:
+    $fn: [a, b]
+    $body: \${a + b}
+  succ:
+    $.add: 1
+$in:
+  $.succ: 41
 `,
     expected: 42,
   },
@@ -238,20 +239,19 @@ $do:
     name: '演算の部分適用（表を固定した照会関数をキーの各分岐に適用する）',
     yaml: `
 $std.list:
-  $do:
-  - $let:
-      codes: {ja: 81, us: 1}
-      look:
-        $fn: [m, k]
-        $body:
-          $std.lookup:
-            in: \${m}
-            key: \${k}
-  - $let:
-      dial:
-        $.look: \${codes}
-      c: {$std.each: [ja, us]}
-  - $.dial: \${c}
+  $let:
+    codes: {ja: 81, us: 1}
+    look:
+      $fn: [m, k]
+      $body:
+        $std.lookup:
+          in: \${m}
+          key: \${k}
+    dial:
+      $.look: \${codes}
+    c: {$std.each: [ja, us]}
+  $in:
+    $.dial: \${c}
 `,
     expected: [81, 1],
   },
@@ -298,13 +298,13 @@ $do:
     await expect(
       evaluateYaml(`
 $std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-  - date: \${row.date}
+  $let:
+    row:
+      $std.each:
+      - {date: d1, code: c1}
+      - {date: d2}
+  $in:
+    date: \${row.date}
     code:
       $std.opt: \${row.code}
 `),
@@ -314,7 +314,7 @@ $std.list:
     ]);
   });
 
-  it('Haskell との対応：束縛を持たない $do の文の並びは f >> g >> h である', async () => {
+  it('theory.md の対応：束縛を持たない $do の文の並びは f >> g >> h である', async () => {
     await expect(evaluateYaml('{$do: [f, g, h]}')).resolves.toBe('h');
   });
 });
@@ -385,13 +385,12 @@ $do:
     expectedLogs: ['starting'],
   },
   {
-    name: 'let.md の例（後の束縛から先の束縛を参照する）',
+    name: 'let.md の例（後の束縛から先の束縛を参照し、$in の本体を評価する）',
     yaml: `
-$do:
-- $let:
-    x: 2
-    y: \${x + 1}
-- \${x * y}
+$let:
+  x: 2
+  y: \${x + 1}
+$in: \${x * y}
 `,
     expected: 6,
   },

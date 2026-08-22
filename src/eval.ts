@@ -1,6 +1,6 @@
 /**
  * 静的な作用推論と評価器。
- * 仕様: docs/grammar.md（草案 0.4）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar.md（草案 0.5）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
  * 二つのことを一体で行う。
  * 1. Analyzer: 文書を実行せずに各ノードの作用集合を求める。
@@ -661,10 +661,18 @@ class Analyzer {
         return out;
       }
       case 'let': {
-        // $do の外の $let は評価器がエラーにする。推論では右辺の合流だけ見る
-        // （文の並びではないので、伸びた senv は捨てて呼び出し元へ漏らさない）。
+        // 右辺を文書順に合流させ、束縛を伸ばした senv で $in の本体を見る
+        // （逐次のカーネル構文）。$in の無い単独の $let は評価器がエラーにするが、
+        // 推論は出現主義なので右辺の作用だけ数えて通す。
         const out = new Set<string>();
-        this.statement(node, senv, out);
+        let cur = senv;
+        if (isNodeMap(arg)) {
+          for (const [name, rhs] of Object.entries(arg)) {
+            for (const x of this.effects(rhs, cur)) out.add(x);
+            cur = insert(cur, name, this.track(rhs, cur));
+          }
+        }
+        if (shape.aux.has('in')) for (const x of this.effects(aux('in'), cur)) out.add(x);
         return out;
       }
       case 'if':
@@ -716,7 +724,8 @@ class Analyzer {
       return senv;
     }
     const shape = analyzeMapping(Object.keys(stmt));
-    if (shape.kind !== 'reserved' || shape.main !== 'let') {
+    // $in を伴う $let は完結した式であり、束縛を残りの文へ伸ばさない。
+    if (shape.kind !== 'reserved' || shape.main !== 'let' || shape.aux.has('in')) {
       for (const x of this.effects(stmt, senv)) out.add(x);
       return senv;
     }
@@ -1145,8 +1154,14 @@ class Evaluator {
         }
         return this.statements(arg, 0, env);
       }
-      case 'let':
-        throw new EffectfulYamlError('$let is only allowed as a statement of $do');
+      case 'let': {
+        // 逐次のカーネル構文。右辺を文書順に評価して束縛し、$in の本体を評価する。
+        if (!shape.aux.has('in')) {
+          throw new EffectfulYamlError('$let without $in is only allowed as a statement of $do');
+        }
+        if (!isNodeMap(arg)) throw new EffectfulYamlError('$let requires a mapping of bindings');
+        return this.letBind(Object.entries(arg), 0, env, (inner) => this.node(aux('in'), inner));
+      }
       case 'if':
         return bind(this.node(arg, env), (cond) =>
           this.node(requireBoolean(cond, '$if condition') ? aux('then') : aux('else'), env),
@@ -1269,11 +1284,14 @@ class Evaluator {
   }
 }
 
-/** $do の文が $let なら、その束縛の並びを返す。 */
+/**
+ * $do の文が `$in` を省いた $let なら、その束縛の並びを返す。
+ * `$in` を伴う $let は完結した式なので、束縛文ではなく通常の文として扱う。
+ */
 function letBindingsOf(stmt: unknown): (readonly [string, unknown])[] | undefined {
   if (!isNodeMap(stmt)) return undefined;
   const shape = analyzeMapping(Object.keys(stmt));
-  if (shape.kind !== 'reserved' || shape.main !== 'let') return undefined;
+  if (shape.kind !== 'reserved' || shape.main !== 'let' || shape.aux.has('in')) return undefined;
   const bindings = stmt[shape.mainRaw];
   if (!isNodeMap(bindings)) throw new EffectfulYamlError('$let requires a mapping of bindings');
   return Object.entries(bindings);

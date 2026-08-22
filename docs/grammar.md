@@ -798,7 +798,9 @@ $in:
     $body:
       $let:
         v: {$std.get: acc}
-        _: {$std.set: {acc: ${v * 2}}}
+        _:
+          $std.set:
+            acc: ${v * 2}
       $in:
       - ${v}
 ```
