@@ -86,7 +86,7 @@ pre: ''
 `spec` に `pre` が無いので、パスアクセス `${spec.pre}` が `std.fail` を起こし、`$std.opt` がそれを空文字列に翻訳する。
 
 `$default` に `{$std.where: false}` を置くと、失敗した分岐を包囲する選択から黙って外せる。
-展開では `$default` の式が `std.fail` の節の本体になるので、その `std.where` はこの `$std.opt` 自身ではなく外側で処理され（[$handle](handle.md) の規則）、包囲する選択の分岐ごと打ち切られる。
+展開では `$default` の式が `std.fail` の節の本体になるので、その打ち切り（`$std.where` の展開が起こす `std.each`）はこの `$std.opt` 自身ではなく外側で処理され（[$handle](handle.md) の規則）、包囲する選択の分岐ごと打ち切られる。
 出現主義により、この形の出現は作用集合に選択を加える。
 
 ```yaml

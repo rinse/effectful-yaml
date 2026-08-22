@@ -157,6 +157,43 @@ $do:
       [2, 3],
     ]);
   });
+
+  it('境界に単独で置くと、展開の std.each が選択として数えられてリスト形になる', async () => {
+    await expect(run('{$std.where: true}')).resolves.toEqual([null]);
+    await expect(run('{$std.where: false}')).resolves.toEqual([]);
+  });
+
+  it('打ち切りは展開のとおり std.each の節が捕捉する', async () => {
+    await expect(
+      run(`
+$handle:
+  $do:
+  - $std.where: false
+  - after
+$with:
+  std.each:
+    $fn: xs
+    $body: caught
+`),
+    ).resolves.toBe('caught');
+  });
+
+  it('std.where という節では捕捉できない（演算ではないため）', async () => {
+    // 節は死節になり、打ち切り（空の std.each）は外側の $std.list が処理する。
+    await expect(
+      run(`
+$std.list:
+  $handle:
+    $do:
+    - $std.where: false
+    - after
+  $with:
+    std.where:
+      $fn: _
+      $body: caught
+`),
+    ).resolves.toEqual([]);
+  });
 });
 
 describe('$std.param / $default', () => {
@@ -1001,7 +1038,7 @@ describe('作用の推論の計算量', () => {
 // 草案 0.4 で入った振る舞い
 // ---------------------------------------------------------------------------
 
-describe('$collect（唯一の原始演算）', () => {
+describe('$collect（畳み込みのカーネル構文）', () => {
   it('$with の結果リストを文書順に連結する（$into 省略時は list）', async () => {
     await expect(
       run(`
@@ -1630,9 +1667,10 @@ $do:
     ).resolves.toBe(42);
   });
 
-  it('$std.list は仕様の展開（std.each / std.where / return の節）と同じ値になる', async () => {
+  it('$std.list は仕様の展開（std.each / return の節）と同じ値になる', async () => {
     // 実装は等価な組み込みで最適化してよいが、観測できる振る舞いは展開と一致しなければならない。
-    // 本体は内包表記（選択と打ち切りの両方を含む）。
+    // 本体は内包表記（選択と打ち切りの両方を含む）。$std.where の打ち切りは
+    // 展開により空の $std.each として現れるので、std.each の節だけで処理できる。
     const body = `
   $do:
   - $let:
@@ -1653,13 +1691,6 @@ $with:
         $fn: x
         $body:
           $resume: \${x}
-  std.where:
-    $fn: b
-    $body:
-      $if: \${b}
-      $then:
-        $resume: null
-      $else: []
   return:
     $fn: x
     $body:

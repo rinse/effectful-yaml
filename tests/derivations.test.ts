@@ -260,13 +260,6 @@ $with:
             $fn: p
             $body:
             - \${p}
-  std.where:
-    $fn: b
-    $body:
-      $if: \${b}
-      $then:
-        $resume: null
-      $else: {}
   return:
     $fn: x
     $body:
@@ -454,13 +447,6 @@ $do:
                   $then: []
                   $else:
                     $resume: \${x}
-          std.where:
-            $fn: b
-            $body:
-              $if: \${b}
-              $then:
-                $resume: null
-              $else: []
           std.fail:
             $fn: _
             $body: []
@@ -558,6 +544,42 @@ $do:
 `;
     await expect(run(firstExpanded(body))).rejects.toThrow();
     await expect(run(`$std.first:${block(body, 2)}`)).rejects.toThrow();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// 1d2. $std.where の展開（grammar.md「打ち切りの導出形 $std.where」節）
+// -----------------------------------------------------------------------------
+
+describe('$std.where の展開との等価性', () => {
+  it('ガードが {$if: 条件, $then: null, $else: {$std.each: []}} と一致する', async () => {
+    const sugar = await run(`
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3, 4]}
+  - $std.where: \${x % 2 == 0}
+  - \${x}
+`);
+    const expanded = await run(`
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3, 4]}
+  - $if: \${x % 2 == 0}
+    $then: null
+    $else: {$std.each: []}
+  - \${x}
+`);
+    expect(expanded).toEqual(sugar);
+    expect(sugar).toEqual([2, 4]);
+  });
+
+  it('条件が真のときの値はどちらも null である', async () => {
+    expect(await run('{$std.list: {$std.where: true}}')).toEqual([null]);
+    expect(await run('{$std.list: {$if: true, $then: null, $else: {$std.each: []}}}')).toEqual([
+      null,
+    ]);
   });
 });
 

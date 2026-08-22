@@ -38,7 +38,7 @@ $with:
 
 | 作用 | 節名 |
 |---|---|
-| 選択 | `std.each` `std.where` |
+| 選択 | `std.each`（`$std.where` は演算ではなく、`std.each` への展開で処理される） |
 | パラメータ | `std.param` |
 | 状態 | `std.get` `std.set` |
 | ログ | `std.log` |

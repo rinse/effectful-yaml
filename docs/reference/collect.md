@@ -1,9 +1,9 @@
 # $collect
 
-`$collect` は言語がカーネルに置く唯一の原始演算である。
+`$collect` は畳み込みのカーネル構文である。
 構造を先頭から回りながら、要素ごとの結果を一つの構造に組み立てる。
 
-- 種別：原始演算（`$let` `$if` `$fn` `$handle` と並ぶカーネルの構文の一つ）
+- 種別：カーネル構文（`$let` `$if` `$fn` `$handle` と並ぶ）。演算ではなく、作用を起こさない
 - 補助キー：`$with` `$into`
 
 ## 形
@@ -33,7 +33,7 @@ $into: list または mapping   # 省略時 list
 - **連結**（flatten）：恒等関数（要素をそのまま返す）を `$with` に渡す。
 - **fold**：単体の `$collect` では書けないが、[std.state](std.state.md) と組み合わせるとアキュムレータを持ち回れる（[std.range](std.range.md) の unfold の例を参照）。
 
-言語が原始をただ一つに絞ったのはこの `$collect` であり、選択を集める [std.list](std.list.md) や [std.mapping](std.mapping.md)、状態を持ち回る [std.state](std.state.md) は、いずれも `$handle` とこの `$collect` への展開で定義される。
+カーネルの構文のうち反復を担うのはこの `$collect` だけであり、選択を集める [std.list](std.list.md) や [std.mapping](std.mapping.md)、状態を持ち回る [std.state](std.state.md) は、いずれも `$handle` とこの `$collect` への展開で定義される。
 
 ## 例
 

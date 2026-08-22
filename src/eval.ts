@@ -178,7 +178,7 @@ function handleOps(
     const c = force(c0);
     if (c.tag === 'pure') return ret(c.value);
     const clause = clauses.get(c.name);
-    // 節はその場で resume することがある（$log や $where）。そこで直に rec を呼ぶと
+    // 節はその場で resume することがある（std.log の節など）。そこで直に rec を呼ぶと
     // 演算の回数だけ入れ子になるので、bind の節を一枚かませて force のループへ返す。
     const next = (v: Value): Comp => bind(pure(null), () => rec(c.resume(v)));
     // raise された std.fail も同じ形で包み直す。rec を通すことで、raise された std.fail を
@@ -242,7 +242,6 @@ function collectChoice(comp: Comp): Comp {
           return go(0, null);
         },
       ],
-      ['std.where', (arg, k) => (requireBoolean(arg, '$std.where') ? k(null) : pure([]))],
     ]),
     (v) => pure([v]),
   );
@@ -268,7 +267,6 @@ function collectFirst(comp: Comp): Comp {
           return go(0);
         },
       ],
-      ['std.where', (arg, k) => (requireBoolean(arg, '$std.where') ? k(null) : pure([]))],
       ['std.fail', () => pure([])],
     ]),
     (v) => pure([v]),
@@ -621,6 +619,9 @@ class Analyzer {
           without(this.effects(arg, senv), FAIL_OPS),
           shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
         );
+      case 'std.where':
+        // 導出形。展開 {$if: 条件, $then: null, $else: {$std.each: []}} のとおり std.each を数える。
+        return union(this.effects(arg, senv), CHOICE_OPS);
       case 'std.lookup':
         // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
         return union(this.effects(arg, senv), FAIL_OPS);
@@ -1115,6 +1116,12 @@ class Evaluator {
             env,
           ),
         );
+      case 'std.where':
+        // 導出形 {$if: 条件, $then: null, $else: {$std.each: []}} と等価。
+        // std.where という演算は存在せず、打ち切りは空の std.each として選択のハンドラに届く。
+        return bind(this.node(arg, env), (b) =>
+          requireBoolean(b, '$std.where') ? pure(null) : perform('std.each', []),
+        );
       case 'std.lookup':
         return bind(this.node(arg, env), lookupComp);
       default:
@@ -1185,7 +1192,7 @@ class Evaluator {
   }
 
   /**
-   * 唯一の原始演算 $collect。構造を文書順に回り、要素ごとの結果（リスト）を一つに組み立てる。
+   * 畳み込みのカーネル構文 $collect。構造を文書順に回り、要素ごとの結果（リスト）を一つに組み立てる。
    * 対象も関数本体も合成なので、そこで起きた作用は周囲へ合流する。
    * $collect 自身は作用を起こさないので、ハンドラで捕捉されることはない。
    */

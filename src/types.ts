@@ -148,8 +148,8 @@ export class OperationFailure extends Error {
   }
 }
 
-/** 選択の作用に属する演算。境界にこれが残ると値はリストになる。 */
-export const CHOICE_OPS: ReadonlySet<string> = new Set(['std.each', 'std.where']);
+/** 選択の作用に属する演算は std.each ただ一つ（$std.where は std.each への展開で定まる導出形）。境界にこれが残ると値はリストになる。 */
+export const CHOICE_OPS: ReadonlySet<string> = new Set(['std.each']);
 
 /** 状態の作用に属する演算。 */
 export const STATE_OPS: ReadonlySet<string> = new Set(['std.get', 'std.set']);
@@ -158,12 +158,11 @@ export const STATE_OPS: ReadonlySet<string> = new Set(['std.get', 'std.set']);
 export const FAIL_OPS: ReadonlySet<string> = new Set(['std.fail']);
 
 /**
- * 標準演算。作用を起こす 7 つと、第一階の `std.range`、展開で意味が定まる `std.lookup`。
- * std の派生ハンドラ（$std.list など）は演算ではないので含まない。
+ * 標準演算。作用を起こす 6 つと、第一階の `std.range`、展開で意味が定まる `std.lookup`。
+ * std の派生ハンドラ（$std.list など）と導出形 `$std.where` は演算ではないので含まない。
  */
 export const STD_OPS: ReadonlySet<string> = new Set([
   'std.each',
-  'std.where',
   'std.param',
   'std.get',
   'std.set',
