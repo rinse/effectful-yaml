@@ -4,8 +4,8 @@
  */
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
-import { parse, stringify } from 'yaml';
-import { evaluateYaml, type Value } from './index.js';
+import { parse } from 'yaml';
+import { evaluateYaml, renderPreserving, type Value } from './index.js';
 
 export interface CliIo {
   stdin: AsyncIterable<Buffer | string>;
@@ -65,7 +65,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       params: parseParams(values.param ?? []),
       onLog: (v) => io.stderr(logLine(v) + '\n'),
     });
-    io.stdout(stringify(value));
+    io.stdout(renderPreserving(source, value));
     return 0;
   } catch (e) {
     io.stderr(`eff-yaml: ${e instanceof Error ? e.message : String(e)}\n`);

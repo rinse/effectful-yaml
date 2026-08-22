@@ -30,7 +30,8 @@ describe('eff-yaml CLI', () => {
       'server: {host: {$std.param: db_host}, port: {$std.param: db_port, $default: 5432}}',
     );
     expect(r.code).toBe(0);
-    expect(r.out).toBe('server:\n  host: example.com\n  port: 5432\n');
+    // 島は二つの $std.param だけなので、原文のフロー形式が保たれる。
+    expect(r.out).toBe('server: {host: "example.com", port: 5432}\n');
     expect(r.err).toBe('');
   });
 
