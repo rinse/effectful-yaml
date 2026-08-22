@@ -22,31 +22,31 @@ sites:
     parsers:
       codes:
         output:
-          $do:
-          - $let:
-              root: {$std.param: root}
-              # 部分適用でセレクタを固定し、列ごとの取り出し関数を作る。
-              sel:
-                $fn: [q, n]
-                $body:
-                  $site.sel:
-                    selector: ${q}
-                    node: ${n}
-              date: {$.sel: "th:first-child"}
-              code: {$.sel: "td:nth-child(2) div.w-clipboard-copy-ui"}
-              desc: {$.sel: "td:nth-child(3)"}
-          - codes:
+          $let:
+            root: {$std.param: root}
+            # 部分適用でセレクタを固定し、列ごとの取り出し関数を作る。
+            sel:
+              $fn: [q, n]
+              $body:
+                $site.sel:
+                  selector: ${q}
+                  node: ${n}
+            date: {$.sel: "th:first-child"}
+            code: {$.sel: "td:nth-child(2) div.w-clipboard-copy-ui"}
+            desc: {$.sel: "td:nth-child(3)"}
+          $in:
+            codes:
               $std.list:
-                $do:
-                - $let:
-                    row:
-                      $std.each:
-                        $site.all:
-                          selector: .genshin_table_table > table tr
-                          node: ${root}
-                # ヘッダ行や特典画像だけの行は code を持たないので、失敗を打ち切りに
-                # 変える $default が行ごと落とす。
-                - $std.opt:
+                $let:
+                  row:
+                    $std.each:
+                      $site.all:
+                        selector: .genshin_table_table > table tr
+                        node: ${root}
+                $in:
+                  # ヘッダ行や特典画像だけの行は code を持たないので、失敗を打ち切りに
+                  # 変える $default が行ごと落とす。
+                  $std.opt:
                     date:
                       $std.opt:
                         $.date: ${row}
@@ -65,17 +65,16 @@ sites:
       gallery:
         input: json
         when:
-          $do:
-          - $let:
-              doc: {$std.param: doc}
-              rows:
-                $std.opt: ${doc.Rows}
-          - ${rows != null}
+          $let:
+            doc: {$std.param: doc}
+            rows:
+              $std.opt: ${doc.Rows}
+          $in: ${rows != null}
         output:
-          $do:
-          - $let:
-              doc: {$std.param: doc}
-          - images:
+          $let:
+            doc: {$std.param: doc}
+          $in:
+            images:
               $std.list:
                 $do:
                 - $let:
@@ -108,16 +107,15 @@ sites:
       detail:
         input: json
         output:
-          $do:
-          - $let:
-              doc: {$std.param: doc}
-              c: ${doc.data.ppvContent}
-          - title: ${c.title}
+          $let:
+            doc: {$std.param: doc}
+            c: ${doc.data.ppvContent}
+          $in:
+            title: ${c.title}
             thumbnail: ${c.packageImage.largeUrl}
             gallery:
               $std.list:
-                $do:
-                - $let:
-                    img:
-                      $std.each: ${c.sampleImages}
-                - ${img.largeImageUrl}
+                $let:
+                  img:
+                    $std.each: ${c.sampleImages}
+                $in: ${img.largeImageUrl}
