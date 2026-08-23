@@ -2320,3 +2320,100 @@ $into: mapping
     expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
   });
 });
+
+describe('攻撃経路の防御（構造化入力を受け取るホスト向け）', () => {
+  const own = (v: Value, k: string): boolean =>
+    Object.prototype.hasOwnProperty.call(v as object, k);
+  const at = (v: Value, k: string): Value => (v as { [key: string]: Value })[k]!;
+
+  // --- キー：プロトタイプ汚染族 ---
+  it('constructor / prototype キーはただのデータで、プロトタイプを汚さない', async () => {
+    const r = await run(`
+$std.merge:
+- a: 1
+- constructor:
+    prototype:
+      polluted: yes
+`);
+    expect(Object.keys(r as object)).toEqual(['a', 'constructor']);
+    expect(own(r, 'constructor')).toBe(true);
+    // 実 constructor は隠れず、グローバルも汚れない（eval は .constructor.prototype を歩かない）
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+  });
+
+  // --- キー：継承メソッド名の読み出し族 ---
+  it('継承メソッド名を持たないキーとして読むと、関数を返さず missing key で失敗する', async () => {
+    // パスアクセス
+    await expect(run('$let:\n  m: {a: 1}\n$in: ${m.toString}')).rejects.toThrow(
+      /missing key 'toString'/,
+    );
+    // std.lookup
+    await expect(
+      run('$std.lookup:\n  in: {a: 1}\n  key: hasOwnProperty'),
+    ).rejects.toThrow(/missing key 'hasOwnProperty'/);
+  });
+
+  it('own の hasOwnProperty キーがあっても内部の重複検査は破られない', async () => {
+    await expect(
+      run(`
+$collect:
+- hasOwnProperty
+- hasOwnProperty
+$with:
+  $fn: k
+  $body:
+  - key: ${'${k}'}
+    value: 1
+$into: mapping
+`),
+    ).rejects.toThrow(/duplicate key in \$collect: hasOwnProperty/);
+  });
+
+  // --- キー：直列化・Promise 族（非呼び出しゆえ無害） ---
+  it('toJSON / then キーはデータとして素通りし、JSON 化や await を乗っ取らない', async () => {
+    const r = await run('toJSON: hijacked\nthen: t\na: 1');
+    expect(r).toEqual({ toJSON: 'hijacked', then: 't', a: 1 });
+    // toJSON が文字列なので JSON.stringify は乗っ取られない
+    expect(JSON.parse(JSON.stringify(r))).toEqual({ toJSON: 'hijacked', then: 't', a: 1 });
+    // then が文字列なので thenable にならず、await してもその値のまま
+    expect(await Promise.resolve(r)).toEqual({ toJSON: 'hijacked', then: 't', a: 1 });
+  });
+
+  // --- 値：関数値族（ユーザー言及の「関数でメソッドを書き換える」核心） ---
+  it('閉包はどの位置からも文書の値へ脱出できない', async () => {
+    const msg = /a function value cannot escape into the document value/;
+    // トップレベル
+    await expect(run('handler:\n  $fn: x\n  $body: ${x}')).rejects.toThrow(msg);
+    // __proto__ の下のメソッド名へ
+    await expect(
+      run(`
+$std.merge:
+- x: 1
+- "__proto__":
+    toString:
+      $fn: _
+      $body: pwned
+`),
+    ).rejects.toThrow(msg);
+    // リストの奥
+    await expect(
+      run('data:\n- ok\n- nested:\n    fn:\n      $fn: x\n      $body: ${x}'),
+    ).rejects.toThrow(msg);
+  });
+
+  it('ホストが param / op で注入した生の JS 関数も、値へ残れば拒まれる', async () => {
+    const msg = /a function value cannot escape into the document value/;
+    await expect(
+      run('out: {$std.param: p}', { params: { p: () => 'x' } }),
+    ).rejects.toThrow(msg);
+    // 一段深く隠しても再帰で捕まえる
+    await expect(
+      run('out: {$std.param: p}', { params: { p: { f: () => 1 } } }),
+    ).rejects.toThrow(msg);
+    // op の戻り値が関数でも同じ
+    await expect(
+      run('out: {$host.get: x}', { ops: { 'host.get': () => () => 'x' } }),
+    ).rejects.toThrow(msg);
+  });
+});

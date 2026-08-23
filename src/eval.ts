@@ -1477,9 +1477,9 @@ function toMapping(entries: readonly Value[]): Value {
   return out;
 }
 
-/** 閉包が文書の値に残ることはエラー。 */
+/** 関数値が文書の値に残ることはエラー。閉包に加え、ホストが param/op で注入した生の関数も拒む。 */
 function assertNoFunctionValue(v: Value): void {
-  if (isClosure(v)) {
+  if (isClosure(v) || typeof v === 'function') {
     throw new EffectfulYamlError('a function value cannot escape into the document value');
   }
   if (Array.isArray(v)) {
