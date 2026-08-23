@@ -1611,6 +1611,114 @@ $std.lookup:
   });
 });
 
+describe('$std.merge', () => {
+  it('値は後勝ち、キーの位置は初出（Object.keys の順）', async () => {
+    const result = await run(`
+$std.merge:
+- {b: 2, a: 1, keep: base}
+- {b: 9, c: 3}
+`);
+    expect(result).toEqual({ b: 9, a: 1, keep: 'base', c: 3 });
+    expect(Object.keys(result as object)).toEqual(['b', 'a', 'keep', 'c']);
+  });
+
+  it('空リストは空マッピング、要素 1 つはそのマッピングのまま', async () => {
+    await expect(run('{$std.merge: []}')).resolves.toEqual({});
+    await expect(run('{$std.merge: [{a: 1, b: 2}]}')).resolves.toEqual({ a: 1, b: 2 });
+  });
+
+  it('3 つ以上の重ねは後勝ちの連鎖になる', async () => {
+    await expect(
+      run(`
+$std.merge:
+- {a: 1}
+- {a: 2, b: 1}
+- {a: 3, c: 1}
+`),
+    ).resolves.toEqual({ a: 3, b: 1, c: 1 });
+  });
+
+  it('null は普通の値として上書きする', async () => {
+    await expect(run('{$std.merge: [{x: 1}, {x: null}]}')).resolves.toEqual({ x: null });
+  });
+
+  it('引数は式でよい（$let で束縛したリストを渡すデータ駆動）', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    xs:
+    - {a: 1}
+    - {a: 2, b: 3}
+- $std.merge: \${xs}
+`),
+    ).resolves.toEqual({ a: 2, b: 3 });
+  });
+
+  it('引数がリストでない・要素がマッピングでないのは形の誤りで、$std.opt でも捕捉できない', async () => {
+    await expect(run('{$std.merge: {a: 1}}')).rejects.toThrow(
+      /\$std\.merge requires a list of mappings/,
+    );
+    await expect(run('{$std.opt: {$std.merge: {a: 1}}}')).rejects.toThrow(
+      /\$std\.merge requires a list of mappings/,
+    );
+    await expect(run('{$std.merge: [1, 2]}')).rejects.toThrow(
+      /\$std\.merge element must be a mapping/,
+    );
+    await expect(run('{$std.opt: {$std.merge: [1, 2]}}')).rejects.toThrow(
+      /\$std\.merge element must be a mapping/,
+    );
+  });
+
+  it('引数の中に $std.each があると merge 全体が分岐する（境界の値が各分岐の merge 結果のリストになる）', async () => {
+    await expect(
+      run(`
+$std.merge:
+- $std.each:
+  - {x: 1}
+  - {x: 2}
+- {y: 3}
+`),
+    ).resolves.toEqual([
+      { x: 1, y: 3 },
+      { x: 2, y: 3 },
+    ]);
+  });
+
+  it('純粋な引数だけの $std.merge は境界で単値のまま（リスト化されない）', async () => {
+    await expect(run('a: {$std.merge: [{x: 1}, {y: 2}]}')).resolves.toEqual({
+      a: { x: 1, y: 2 },
+    });
+  });
+
+  it('$handle の std.merge 節は発火しない（組み込みの経路を通るため、節が値を返しても素通しになる）', async () => {
+    await expect(
+      run(`
+$handle:
+  $std.merge:
+  - {a: 1}
+  - {b: 2}
+$with:
+  std.merge:
+    $fn: _
+    $body: caught
+`),
+    ).resolves.toEqual({ a: 1, b: 2 });
+  });
+
+  it('引数の要素の値の中の $std.fail は伝播し、外の $std.opt で捕捉できる', async () => {
+    await expect(
+      run(`
+$std.opt:
+  $std.merge:
+  - {a: 1}
+  - b: {$std.fail: nope}
+$default: fallback
+`),
+    ).resolves.toBe('fallback');
+  });
+});
+
 describe('$resume（節の本体で作られた閉包から）', () => {
   it('節の本体の閉包からも、その節の起動に対応する継続を再開できる', async () => {
     await expect(

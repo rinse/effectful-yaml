@@ -807,3 +807,67 @@ $do:
     expect(a).toBe(42);
   });
 });
+
+// -----------------------------------------------------------------------------
+// 9. $std.merge の展開（grammar.md「マッピングのマージ $std.merge」節）
+//   値は後勝ち、キーの位置は初出。a 側は自分のキーをその位置のまま並べ、b に同じキーが
+//   在ればその値で差し替える。b 側は a に無いキーだけを後ろに足す。
+// -----------------------------------------------------------------------------
+
+describe('$std.merge の展開との等価性', () => {
+  it('後勝ち・初出の位置（grammar.md 用例）が展開と一致する（キー順まで）', async () => {
+    const expanded = await run(`
+$let:
+  a: {b: 2, a: 1, keep: base}
+  b: {b: 9, c: 3}
+$in:
+  $std.mapping:
+    $do:
+    - $let:
+        phase:
+          $std.each: [0, 1]
+        src:
+          $if: \${phase == 0}
+          $then: \${a}
+          $else: \${b}
+        e:
+          $std.each: \${src}
+        fresh:
+          $if: \${phase == 0}
+          $then: true
+          $else:
+            $std.opt:
+              $let:
+                _:
+                  $std.lookup:
+                    in: \${a}
+                    key: \${e.key}
+              $in: false
+            $default: true
+    - $std.where: \${fresh}
+    - key: \${e.key}
+      value:
+        $if: \${phase == 0}
+        $then:
+          $std.opt:
+            $std.lookup:
+              in: \${b}
+              key: \${e.key}
+          $default: \${e.value}
+        $else: \${e.value}
+`);
+    const builtin = await run(`
+$let:
+  a: {b: 2, a: 1, keep: base}
+  b: {b: 9, c: 3}
+$in:
+  $std.merge:
+  - \${a}
+  - \${b}
+`);
+    expect(builtin).toEqual(expanded);
+    expect(Object.keys(builtin as object)).toEqual(Object.keys(expanded as object));
+    expect(builtin).toEqual({ b: 9, a: 1, keep: 'base', c: 3 });
+    expect(Object.keys(builtin as object)).toEqual(['b', 'a', 'keep', 'c']);
+  });
+});

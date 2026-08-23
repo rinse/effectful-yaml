@@ -157,6 +157,24 @@ function lookupComp(arg: Value): Comp {
   return Object.prototype.hasOwnProperty.call(m, k) ? pure(m[k]!) : perform('std.fail', `missing key '${k}'`);
 }
 
+/**
+ * $std.merge の意味（展開と等価な直接のマージ）。値は後勝ち、キーの位置は初出。
+ * 引数がリストでない・要素がマッピングでないのは形の誤りなのでエラー。
+ */
+function mergeComp(arg: Value): Comp {
+  if (!Array.isArray(arg)) {
+    throw new EffectfulYamlError(`$std.merge requires a list of mappings, got: ${describe(arg)}`);
+  }
+  const out: Record<string, Value> = {};
+  for (const m of arg) {
+    if (!isValueMap(m)) {
+      throw new EffectfulYamlError(`$std.merge element must be a mapping, got: ${describe(m)}`);
+    }
+    for (const [k, v] of Object.entries(m)) out[k] = v;
+  }
+  return pure(out);
+}
+
 // ---------------------------------------------------------------------------
 // 汎用ハンドラ（部分処理）
 // ---------------------------------------------------------------------------
@@ -625,6 +643,9 @@ class Analyzer {
       case 'std.lookup':
         // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
         return union(this.effects(arg, senv), FAIL_OPS);
+      case 'std.merge':
+        // 展開（$std.mapping の重ね合わせ）が選択と欠落を処理し尽くすので、出現が数えるのは引数の作用だけ。
+        return this.effects(arg, senv);
       case 'std.state':
         // $in の無い $std.state は $do の文の位置でだけ意味を持ち（doEffects が扱う）、
         // 位置外は評価器がエラーにする。推論は出現主義なので、ここは初期値の作用だけ数えて通す
@@ -1169,6 +1190,8 @@ class Evaluator {
         );
       case 'std.lookup':
         return bind(this.node(arg, env), lookupComp);
+      case 'std.merge':
+        return bind(this.node(arg, env), mergeComp);
       default:
         // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
         return bind(this.node(arg, env), (v) => perform(shape.name, v));
