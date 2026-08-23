@@ -142,6 +142,11 @@ fun main()
 `val x = ask()` では、純粋な束縛（let）と作用のある計算の逐次（bind）の区別が構文から消えている。
 effectful-yaml の `$let` が bind 相当を兼ねるのは、この設計の踏襲である。
 
+ハンドラ側の対応には注意が要る。
+用例の `with` はハンドラの構文ではなく、その行の関数へブロックの残りをクロージャとして渡す Koka の汎用の糖衣である。
+節に付く語は `handler`（節の並びから一級のハンドラ値を作る構成子）であり、それを計算に適用する二項形が `handle(action){ 節 }`、すなわち計算が先で節が後である。
+effectful-yaml の `{$handle: 本体, $with: 節}` が対応するのはこの二項形であり、役割の割り当て（handle が計算、with が節）は文献の handling 式 `handle M with H`（Plotkin–Pretnar）や Eff・Unison の構文とも一致する。
+
 理論の系譜で言えば、Moggi のモナドの後、Plotkin と Power が「演算がモナドを生成する」という代数的作用の見方を与え、Plotkin と Pretnar がその演算を処理するハンドラを与えた。
 Koka や Eff はこの線上にあり、effectful-yaml も同じ地点に立つ。
 λc がモナド `T` を一つ抽象的に固定するのに対し、この系譜では、プログラムに出現する演算の集合が解釈を索引する。
@@ -159,7 +164,7 @@ effectful-yaml の作用シグネチャは Koka の作用行に相当し、演�
 | 捨て名 `_` への束縛 | `let _ = e in ...` | `>>` | 値を捨てる文 |
 | `$fn` と呼び出し | Kleisli 射 `A → T B` | `a -> m b` | 関数 |
 | 演算 | 代数的作用の演算 | — | 演算（`ctl`） |
-| `$handle` | — | — | `handler` |
+| `$handle`（`$with`） | — | — | `handle(action){ 節 }` |
 | 作用シグネチャ | `T` の生成元の集合 | モナドの選択 | 作用行 |
 | 既定ハンドラの系列 | モナドスタック | reader / state / list / except | 既定のハンドラ |
 
