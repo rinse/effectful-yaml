@@ -1,0 +1,14 @@
+$let:
+  i0: {$std.each: {$std.range: 15}}
+  i: ${i0 + 1}
+$in:
+  $if: ${i % 15 == 0}
+  $then: fizzbuzz
+  $else:
+    $if: ${i % 3 == 0}
+    $then: fizz
+    $else:
+      $if: ${i % 5 == 0}
+      $then: buzz
+      $else: "${i}"
+

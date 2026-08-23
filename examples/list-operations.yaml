@@ -1,0 +1,30 @@
+# リストに対する map
+map:
+  $std.list:
+    $let:
+      x: {$std.each: [1, 2, 3]}
+    $in: ${x + 1}
+
+# リストに対する filter
+filter:
+  $std.list:
+    $do:
+    - $let:
+        x: {$std.each: {$std.range: 9}}
+    - $std.where: ${(x+1) % 2 == 0}
+    - ${x}
+
+# リストに対する flatMap
+flatMap:
+  $std.list:
+    $let:
+      x: {$std.each: [1, 2, 3]}
+      y: {$std.each: ["${x}", "${x}"]}
+    $in: ${y}
+
+firstItem:
+  # std.list を std.first に置き換えると、最初の要素のみを返す
+  $std.first:
+    $let:
+      x: {$std.each: [1, 2, 3]}
+    $in: ${x}

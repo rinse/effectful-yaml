@@ -1,0 +1,25 @@
+# オブジェクトの value に対する map
+mapValues:
+  $std.mapping:
+    $let:
+      a: {$std.each: {x: hello, y: world}}
+    $in:
+      key: ${a.key}
+      value: "${a.value}, world"
+
+# オブジェクトの key に対する map
+mapKeys:
+  $std.mapping:
+    $let:
+      a: {$std.each: {x: hello, y: world}}
+    $in:
+      key: "${a.key}1"
+      value: ${a.value}
+
+lookingUp:
+  $let:
+    obj: { x: 10, y: 100 }
+  $in:
+    $std.lookup:
+      key: x
+      in: ${obj}

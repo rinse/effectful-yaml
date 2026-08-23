@@ -1,0 +1,35 @@
+# 自分で定義した作用をハンドルする
+handling-user-defined-effects:
+  $handle:
+    key1: Hello!
+    key2:
+      # eff.throw 作用の利用
+      $eff.throw: Error!
+    key3: World!
+  $with:
+    # eff.throw 作用の定義
+    # eff は名前空間
+    eff.throw:
+      $fn: msg
+      $body:
+        # 例外処理を行う (ログを出して代替の値で続行 or エラー落ちさせる)
+        $do:
+          - $std.log: "[WARN] ${msg}"
+          - $resume: Beautiful
+        # $std.fail: ${msg} # $do の代わりに置くと、メッセージを出して失敗させる
+
+# 標準演算 std.each をハンドルする
+handling-system-defined-effects:
+  $handle:
+    key1: Hello!
+    key2: {$std.each: [1, 2, 3]}
+    key3: World!
+  $with:
+    std.each:
+      $fn: xs
+      $body:
+        $std.list:
+          $let:
+            x: {$std.each: "${xs}"}
+          $in:
+            $resume: ${x * 2}

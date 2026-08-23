@@ -1,0 +1,19 @@
+without-default:
+  # std.fail をハンドルする。デフォルト値は null
+  $std.opt:
+    $do:
+    - $std.log: "[DEBUG] Hello, without default!"
+    - $std.fail: Oh no!
+
+with-default:
+  $std.opt:
+    $do:
+    - $std.log: "[DEBUG] Hello, with default!"
+    - $std.fail: Oh no!
+  $default: Good to go!
+
+# $std.opt がないと、文書全体がエラーで落ちる
+# error:
+#   $do:
+#   - $std.log: "[DEBUG] Hello, error!"
+#   - $std.fail: Oh no!
