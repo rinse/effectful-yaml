@@ -64,6 +64,12 @@ effectful-yaml のドキュメントの索引である。
 |---|---|---|
 | `std.lookup` | [std.lookup.md](reference/std.lookup.md) | マッピングを計算したキーで引く（意味は選択による照合への展開で定まる） |
 
+### std：マッピングのマージ
+
+| 演算 | ページ | 概要 |
+|---|---|---|
+| `std.merge` | [std.merge.md](reference/std.merge.md) | 複数のマッピングを一つに重ねる浅いマージ（意味は展開で定まる） |
+
 ### std：第一階の演算（作用を起こさない）
 
 | 演算 | ページ | 概要 |
