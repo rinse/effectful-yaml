@@ -626,6 +626,9 @@ class Analyzer {
         // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
         return union(this.effects(arg, senv), FAIL_OPS);
       case 'std.state':
+        // $in の無い $std.state は $do の文の位置でだけ意味を持ち（doEffects が扱う）、
+        // 位置外は評価器がエラーにする。推論は出現主義なので、ここは初期値の作用だけ数えて通す
+        // （aux('in') が undefined なら本体の作用は空集合）。
         return union(this.effects(arg, senv), without(this.effects(aux('in'), senv), STATE_OPS));
       case 'std.param':
         // $default は遅延位置だが、作用の推論は出現主義なので中の演算も数える。
@@ -653,14 +656,8 @@ class Analyzer {
       return raw === undefined ? undefined : node[raw];
     };
     switch (shape.main) {
-      case 'do': {
-        const stmts = Array.isArray(arg) ? arg : [];
-        const out = new Set<string>();
-        // 束縛は文から文へ伸びるが、外側の senv は不変なので $do を出れば元のまま。
-        let inner = senv;
-        for (const stmt of stmts) inner = this.statement(stmt, inner, out);
-        return out;
-      }
+      case 'do':
+        return this.doEffects(Array.isArray(arg) ? arg : [], senv);
       case 'let': {
         // 右辺を文書順に合流させ、束縛を伸ばした senv で $in の本体を見る
         // （逐次のカーネル構文）。$in の無い単独の $let は評価器がエラーにするが、
@@ -698,15 +695,12 @@ class Analyzer {
           this.effects(aux('with'), senv),
           this.call(this.track(aux('with'), senv), undefined).row ?? [],
         );
-      case 'handle': {
-        const clauses = isNodeMap(aux('with')) ? (aux('with') as NodeMap) : {};
-        const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return'));
-        return union(
-          without(this.effects(arg, senv), removed),
-          // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
-          ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined).row ?? []),
-        );
-      }
+      case 'handle':
+        return this.handled(this.effects(arg, senv), aux('with'), senv);
+      case 'with':
+        // 単独の $with は $do の文の位置でだけ意味を持つ（位置外は評価器がエラーにする）。
+        // 推論は出現主義なので、節の本体の作用だけ数えて通す（何も取り除かない）。
+        return this.handled(new Set(), arg, senv);
       case 'resume':
         // 継続の作用は $handle の本体側で既に数えている。ここは引数だけ。
         return this.effects(arg, senv);
@@ -716,28 +710,81 @@ class Analyzer {
   }
 
   /**
-   * $do の文一つ分。作用は out へ足し、$let なら束縛を足した senv を返す
-   * （左から右へのレキシカルな追跡。同じ $let の中でも後の右辺は前の束縛を見る）。
+   * $with の節が本体の作用集合に及ぼす効果。宣言した演算（return 以外の節名）を取り除き、
+   * 節の本体の作用を足す。$handle と $do の $with 文で共通。
    */
-  private statement(stmt: unknown, senv: SEnv, out: Set<string>): SEnv {
-    if (!isNodeMap(stmt)) {
-      for (const x of this.effects(stmt, senv)) out.add(x);
-      return senv;
-    }
-    const shape = analyzeMapping(Object.keys(stmt));
-    // $in を伴う $let は完結した式であり、束縛を残りの文へ伸ばさない。
-    if (shape.kind !== 'reserved' || shape.main !== 'let' || shape.aux.has('in')) {
-      for (const x of this.effects(stmt, senv)) out.add(x);
-      return senv;
-    }
-    const bindings = stmt[shape.mainRaw];
-    if (!isNodeMap(bindings)) return senv;
+  private handled(body: Set<string>, withNode: unknown, senv: SEnv): Set<string> {
+    const clauses = isNodeMap(withNode) ? withNode : {};
+    const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return'));
+    return union(
+      without(body, removed),
+      // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
+      ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined).row ?? []),
+    );
+  }
+
+  /**
+   * $do の文の並びの作用。文形（$let / $in なしの $std.state / 単独の $with）は
+   * 残りの文を本体に取るので、その作用集合が定まるまで除去を適用できない。
+   * そこで二度なめる。前向きに束縛を伸ばしながら「自前の作用」と除去の仕方を記録し、
+   * 後ろから畳んで残りの集合へ適用する（再帰で書くと文の数だけスタックを積む）。
+   * 束縛は文から文へ伸びる（同じ $let の中でも後の右辺は前の束縛を見る）が、
+   * 外側の senv は不変なので $do を出れば元のままである。
+   */
+  private doEffects(stmts: readonly unknown[], senv: SEnv): Set<string> {
+    type Step =
+      /** 残りの作用に自前の作用を足すだけの文（文形でない文と $let 文）。 */
+      | { readonly kind: 'plain'; readonly own: Set<string> }
+      /** 残りから状態の演算を除き、初期値の作用を足す。 */
+      | { readonly kind: 'state'; readonly own: Set<string> }
+      /** 残りから節名を除き、節の本体の作用を足す（節は文の位置の追跡環境で見る）。 */
+      | { readonly kind: 'with'; readonly clauses: unknown; readonly senv: SEnv };
+
+    const steps: Step[] = [];
     let cur = senv;
-    for (const [name, rhs] of Object.entries(bindings)) {
-      for (const x of this.effects(rhs, cur)) out.add(x);
-      cur = insert(cur, name, this.track(rhs, cur));
+    // 除去を行うのは $std.state 文と $with 文だけなので、その手前までの文の作用は
+    // 一つに畳んでから積む（文の数だけ Set を抱えない）。
+    let pending = new Set<string>();
+    const flush = (): void => {
+      if (pending.size > 0) steps.push({ kind: 'plain', own: pending });
+      pending = new Set();
+    };
+    for (const stmt of stmts) {
+      const form = statementFormOf(stmt);
+      if (form === undefined) {
+        for (const x of this.effects(stmt, cur)) pending.add(x);
+        continue;
+      }
+      switch (form.kind) {
+        case 'let':
+          if (isNodeMap(form.bindings)) {
+            for (const [name, rhs] of Object.entries(form.bindings)) {
+              for (const x of this.effects(rhs, cur)) pending.add(x);
+              cur = insert(cur, name, this.track(rhs, cur));
+            }
+          }
+          break;
+        case 'state':
+          // 初期値の作用はハンドラの外側（＝この文の位置）に現れる。
+          flush();
+          steps.push({ kind: 'state', own: this.effects(form.init, cur) });
+          break;
+        case 'with':
+          flush();
+          steps.push({ kind: 'with', clauses: form.clauses, senv: cur });
+          break;
+      }
     }
-    return cur;
+    flush();
+
+    let out = new Set<string>();
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i]!;
+      if (step.kind === 'with') out = this.handled(out, step.clauses, step.senv);
+      else if (step.kind === 'state') out = union(step.own, without(out, STATE_OPS));
+      else out = union(step.own, out);
+    }
+    return out;
   }
 
   /**
@@ -1097,16 +1144,14 @@ class Evaluator {
           new Map([['std.fail', () => this.node(aux('default'), env)]]),
         );
       case 'std.state':
-        return bind(this.node(arg, env), (cells) => {
-          if (!isValueMap(cells)) {
-            throw new EffectfulYamlError(
-              `$std.state requires a mapping of cells, got: ${describe(cells)}`,
-            );
-          }
-          let init: PMap<Value> = empty;
-          for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
-          return handleState(this.node(aux('in'), env), init);
-        });
+        if (!shape.aux.has('in')) {
+          throw new EffectfulYamlError(
+            '$std.state without $in is only allowed as a statement of $do',
+          );
+        }
+        return bind(this.node(arg, env), (cells) =>
+          handleState(this.node(aux('in'), env), cellsOf(cells)),
+        );
       case 'std.param':
         return bind(this.node(arg, env), (name) =>
           this.param(
@@ -1179,6 +1224,8 @@ class Evaluator {
         return this.collect(arg, aux('with'), intoOf(aux('into')), env);
       case 'handle':
         return this.handle(arg, aux('with'), env);
+      case 'with':
+        throw new EffectfulYamlError('$with without $handle is only allowed as a statement of $do');
       case 'resume': {
         const k = resumeOf(env);
         if (k === undefined) {
@@ -1224,19 +1271,33 @@ class Evaluator {
     );
   }
 
-  /** $do の文の並び。$let だけは残りの文へ束縛を伸ばす。 */
+  /**
+   * $do の文の並び。文形（$let / $in なしの $std.state / 単独の $with）は残りの文を本体に取る
+   * ので、展開のとおり「残りの文の計算」を作ってから包む。先の文ほど外側のハンドラになり、
+   * 束縛・初期値・節はその文の位置の環境で評価される。
+   */
   private statements(stmts: readonly unknown[], i: number, env: Env): Comp {
     if (i >= stmts.length) return pure(null);
-    const last = i + 1 >= stmts.length;
     const stmt = stmts[i];
-    const bindings = letBindingsOf(stmt);
-    if (bindings !== undefined) {
-      return this.letBind(bindings, 0, env, (next) =>
-        last ? pure(null) : this.statements(stmts, i + 1, next),
-      );
+    const rest = (): Comp => this.statements(stmts, i + 1, env);
+    const form = statementFormOf(stmt);
+    if (form !== undefined) {
+      switch (form.kind) {
+        case 'let':
+          return this.letBind(letEntriesOf(form.bindings), 0, env, (next) =>
+            this.statements(stmts, i + 1, next),
+          );
+        case 'state':
+          // 初期値の作用はこのハンドラの外側へ合流する（完結形の case 'std.state' と同じ）。
+          return bind(this.node(form.init, env), (cells) => handleState(rest(), cellsOf(cells)));
+        case 'with': {
+          const { clauses, ret } = this.clausesOf(form.clauses, env);
+          return handleOps(rest(), clauses, ret);
+        }
+      }
     }
     const comp = this.node(stmt, env);
-    return last ? comp : bind(comp, () => this.statements(stmts, i + 1, env));
+    return i + 1 >= stmts.length ? comp : bind(comp, () => rest());
   }
 
   private letBind(
@@ -1257,6 +1318,19 @@ class Evaluator {
   }
 
   private handle(body: unknown, withNode: unknown, env: Env): Comp {
+    const { clauses, ret } = this.clausesOf(withNode, env);
+    // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。
+    return handleOps(this.node(body, env), clauses, ret);
+  }
+
+  /**
+   * $with のノードから部分処理の節表と return を組む（$handle と $do の $with 文で共通）。
+   * 節は $with の位置の環境で閉包になる。
+   */
+  private clausesOf(
+    withNode: unknown,
+    env: Env,
+  ): { clauses: ReadonlyMap<string, Clause>; ret: (v: Value) => Comp } {
     if (!isNodeMap(withNode)) throw new EffectfulYamlError('$with requires a mapping of clauses');
     const clauses = new Map<string, Clause>();
     let ret: (v: Value) => Comp = pure;
@@ -1278,8 +1352,7 @@ class Evaluator {
         return this.enter(closure, inner);
       });
     }
-    // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。
-    return handleOps(this.node(body, env), clauses, ret);
+    return { clauses, ret };
   }
 
   private closureOf(node: unknown, env: Env, name: string): Closure {
@@ -1292,16 +1365,45 @@ class Evaluator {
 }
 
 /**
- * $do の文が `$in` を省いた $let なら、その束縛の並びを返す。
- * `$in` を伴う $let は完結した式なので、束縛文ではなく通常の文として扱う。
+ * $do の「文形」。残りの文を本体に取る形であり、展開はそれぞれ
+ *   {$let: 束縛, $in: {$do: 残り}} / {$std.state: 初期値, $in: {$do: 残り}} /
+ *   {$handle: {$do: 残り}, $with: 節}
+ * である。文形でない文（値を捨てるだけの文）は undefined。
+ * `$in` を伴う $let と $std.state は完結した式なので文形ではない。
+ * 解析（Analyzer.doEffects）と評価（Evaluator.statements）が同じ分類を使う。
  */
-function letBindingsOf(stmt: unknown): (readonly [string, unknown])[] | undefined {
+type StatementForm =
+  | { readonly kind: 'let'; readonly bindings: unknown }
+  | { readonly kind: 'state'; readonly init: unknown }
+  | { readonly kind: 'with'; readonly clauses: unknown };
+
+function statementFormOf(stmt: unknown): StatementForm | undefined {
   if (!isNodeMap(stmt)) return undefined;
   const shape = analyzeMapping(Object.keys(stmt));
-  if (shape.kind !== 'reserved' || shape.main !== 'let' || shape.aux.has('in')) return undefined;
-  const bindings = stmt[shape.mainRaw];
+  if (shape.kind === 'op') {
+    if (shape.name !== 'std.state' || shape.aux.has('in')) return undefined;
+    return { kind: 'state', init: stmt[shape.raw] };
+  }
+  if (shape.kind !== 'reserved') return undefined;
+  if (shape.main === 'with') return { kind: 'with', clauses: stmt[shape.mainRaw] };
+  if (shape.main !== 'let' || shape.aux.has('in')) return undefined;
+  return { kind: 'let', bindings: stmt[shape.mainRaw] };
+}
+
+/** 束縛のマッピングを文書順の並びにする。形の誤りはエラー（評価器だけが呼ぶ）。 */
+function letEntriesOf(bindings: unknown): (readonly [string, unknown])[] {
   if (!isNodeMap(bindings)) throw new EffectfulYamlError('$let requires a mapping of bindings');
   return Object.entries(bindings);
+}
+
+/** $std.state の初期値からセルの記憶を作る（完結形と文形で共通）。 */
+function cellsOf(cells: Value): PMap<Value> {
+  if (!isValueMap(cells)) {
+    throw new EffectfulYamlError(`$std.state requires a mapping of cells, got: ${describe(cells)}`);
+  }
+  let init: PMap<Value> = empty;
+  for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
+  return init;
 }
 
 /** $into の値。書かれていなければ list。式ではなくキーワードなので生のノードを見る。 */

@@ -40,8 +40,8 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
  * `$in` は `$let` のほかに `$std.state` が、`$default` は `$std.param` と `$std.opt` が
  * 使うので、予約キーだけでなく演算の名前でも引ける表にする。
- * `$let` の `$in` が必須でないのは、`$do` の文の位置でだけ省略できるからである
- * （位置はここでは分からないので、単独の `$in` なし `$let` は評価器がエラーにする）。
+ * `$let` と `$std.state` の `$in` が必須でないのは、`$do` の文の位置でだけ省略できるからである
+ * （位置はここでは分からないので、位置外の `$in` なしは評価器がエラーにする）。
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   let: new Set(['in']),
@@ -54,13 +54,15 @@ const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   'std.opt': new Set(['default']),
 };
 
-/** 主キーのうち、必須の補助キー（省略するとエラー）。 */
+/**
+ * 主キーのうち、必須の補助キー（省略するとエラー）。
+ * `$let` と `$std.state` の `$in` はここに無い（文の位置では省略が正しい形である）。
+ */
 export const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
   handle: new Set(['with']),
   collect: new Set(['with']),
-  'std.state': new Set(['in']),
 };
 
 /** `IDENT(\.IDENT)*`。レキシカル呼び出し `$.名前` の名前部分（先頭の `.` を除いた残り）。 */
@@ -174,6 +176,12 @@ export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   );
 
   if (mainCandidates.length === 0) {
+    // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。ほかのキーを伴えば
+    // 従来どおり孤児である。文の位置かどうかはここでは分からないので、位置外は評価器がエラーにする。
+    const only = auxCandidates[0];
+    if (auxCandidates.length === 1 && only!.c.kind === 'reserved' && only!.c.main === 'with') {
+      return { kind: 'reserved', main: 'with', mainRaw: only!.raw, aux: new Map() };
+    }
     const orphan = auxCandidates.map(({ raw }) => raw).join(', ');
     throw new EffectfulYamlError(`auxiliary $ key without a main key: ${orphan}`);
   }

@@ -735,3 +735,75 @@ $default: fallback
     expect(builtin).toBe('fallback');
   });
 });
+
+// -----------------------------------------------------------------------------
+// 8. $do の文形の展開（grammar.md「$do の展開規則」）
+//   {$do: [{$std.state: 初期値}, 残り...]} ≡ {$std.state: 初期値, $in: {$do: [残り...]}}
+//   {$do: [{$with: 節}, 残り...]}          ≡ {$handle: {$do: [残り...]}, $with: 節}
+// -----------------------------------------------------------------------------
+
+describe('$do の文形の展開との等価性', () => {
+  it('$with 文は残りの文を包む $handle と一致する（値もログの順序も）', async () => {
+    const statement = `
+$do:
+- $with:
+    std.fail:
+      $fn: m
+      $body:
+        $do:
+        - $std.log: 'caught: \${m}'
+        - recovered
+- $std.log: before
+- {$std.fail: boom}
+`;
+    const expanded = `
+$handle:
+  $do:
+  - $std.log: before
+  - {$std.fail: boom}
+$with:
+  std.fail:
+    $fn: m
+    $body:
+      $do:
+      - $std.log: 'caught: \${m}'
+      - recovered
+`;
+    const logsA: Value[] = [];
+    const logsB: Value[] = [];
+    const a = await run(statement, { onLog: (v) => logsA.push(v) });
+    const b = await run(expanded, { onLog: (v) => logsB.push(v) });
+    expect(a).toEqual(b);
+    expect(a).toBe('recovered');
+    expect(logsA).toEqual(logsB);
+    expect(logsA).toEqual(['before', 'caught: boom']);
+  });
+
+  it('$std.state 文は残りの文を本体に取る完結形と一致する（初期値は文の位置で評価される）', async () => {
+    const statement = `
+$do:
+- $let:
+    base: 41
+- $std.state:
+    n: \${base}
+- $let:
+    v: {$std.get: n}
+- \${v + 1}
+`;
+    const expanded = `
+$do:
+- $let:
+    base: 41
+- $std.state:
+    n: \${base}
+  $in:
+    $do:
+    - $let:
+        v: {$std.get: n}
+    - \${v + 1}
+`;
+    const a = await run(statement);
+    expect(a).toEqual(await run(expanded));
+    expect(a).toBe(42);
+  });
+});

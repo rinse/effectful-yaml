@@ -255,6 +255,28 @@ $std.list:
 `,
     expected: [81, 1],
   },
+  {
+    name: '$do の $with 文（残りの文にハンドラを被せる）',
+    yaml: `
+$do:
+- $with:
+    std.fail: {$fn: _, $body: 0}
+- $std.lookup: {in: {}, key: missing}
+`,
+    expected: 0,
+  },
+  {
+    name: '$do の $std.state 文（残りの文に記憶を通す）',
+    yaml: `
+$do:
+- $std.state: {n: 0}
+- $std.set: {n: 41}
+- $let:
+    n: {$std.get: n}
+- \${n + 1}
+`,
+    expected: 42,
+  },
 ];
 
 describe('grammar.md 用例（値の一致）', () => {
@@ -842,6 +864,23 @@ log_level:
     - \${v}
 `,
     expected: { log_level: 'info' },
+  },
+  {
+    name: 'std.state.md の例（$std.state 文で選択に記憶を貫流させる）',
+    yaml: `
+$do:
+- $std.state: {i: 0}
+- $std.list:
+    $do:
+    - $let:
+        x: {$std.each: [a, b, c]}
+    - $let:
+        i: {$std.get: i}
+    - $std.set:
+        i: \${i + 1}
+    - \${i}-\${x}
+`,
+    expected: ['0-a', '1-b', '2-c'],
   },
 ];
 

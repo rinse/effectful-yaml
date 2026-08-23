@@ -288,6 +288,97 @@ $do:
   });
 });
 
+describe('$do の文形の作用（$with 文 / $std.state 文）', () => {
+  // 標準の作用（std.fail / std.get / std.set / 選択）は境界の既定ハンドラが処理するので、
+  // 「消えたこと」は事前検証からは見えない。除去を観測できる経路は
+  //   a. 登録の要らない演算になる（節に挙げた登録演算は事前検証を通る）
+  //   b. 境界の値の形が単値のままになる（選択を除いたとき）
+  // の二つなので、ここではその二つで確かめる。
+
+  it('$with 文の節に挙げた登録演算は、後続の文に現れても事前検証を通る', async () => {
+    // 除去が効かなければ vault.read が作用集合に残り、ops 未登録として評価前に拒まれる。
+    await expect(
+      run(`
+$do:
+- $with:
+    vault.read: {$fn: k, $body: stub}
+- {$vault.read: db/password}
+`),
+    ).resolves.toBe('stub');
+  });
+
+  it('$with 文の節が選択を処理すれば、境界は単値のままになる', async () => {
+    // 除去が効かなければ境界はリスト形と推論され、値が ['first'] に包まれる。
+    await expect(
+      run(`
+$do:
+- $with:
+    std.each: {$fn: xs, $body: first}
+- {$std.each: [a, b]}
+`),
+    ).resolves.toBe('first');
+  });
+
+  it('文形の文があっても、残りの文の作用は数え落とされない', async () => {
+    // 文形は残りの文を本体に取るので、解析は残りへ降りなければならない。
+    // 降り損なうと未登録の演算を見逃す。降り損ないは「エラーにならない」向きには倒れず、
+    // 実行時に同じ文言で落ちるので、評価が始まっていないこと（ログが流れないこと）で見分ける。
+    for (const form of ['$std.state: {n: 0}', '$with: {other.op: {$fn: m, $body: x}}']) {
+      const logs: Value[] = [];
+      await expect(
+        run(
+          `
+$do:
+- ${form}
+- $std.log: before
+- {$vault.read: db/password}
+`,
+          { onLog: (v) => logs.push(v) },
+        ),
+      ).rejects.toThrow(/unregistered operation: \$vault\.read/);
+      expect(logs).toEqual([]);
+    }
+  });
+
+  it('文形が足す作用（節の本体と $std.state の初期値）も数える', async () => {
+    // ログの文を先に置く。$std.state の初期値は後続の文より先に評価されるので、
+    // 文形を先頭に置くと数え落としても評価開始前に落ちてしまい、事前検証と区別できない。
+    for (const form of [
+      '$std.state: {n: {$vault.read: seed}}',
+      '$with: {other.op: {$fn: m, $body: {$vault.read: seed}}}',
+    ]) {
+      const logs: Value[] = [];
+      await expect(
+        run(
+          `
+$do:
+- $std.log: before
+- ${form}
+- done
+`,
+          { onLog: (v) => logs.push(v) },
+        ),
+      ).rejects.toThrow(/unregistered operation: \$vault\.read/);
+      expect(logs).toEqual([]);
+    }
+  });
+
+  it('文の位置の外の $in なし $std.state も、初期値の作用は数える（寛容に通す）', async () => {
+    const doc = `
+$do:
+- $let:
+    x: {$std.state: {n: {$vault.read: seed}}}
+- \${x}
+`;
+    // 事前検証が初期値まで降りていること（評価はまだ始まっていない）。
+    await expect(run(doc)).rejects.toThrow(/unregistered operation: \$vault\.read/);
+    // 演算を登録すれば、解析は通って評価器の位置のエラーに至る。
+    await expect(run(doc, { ops: { 'vault.read': () => 0 } })).rejects.toThrow(
+      /\$std\.state without \$in is only allowed as a statement of \$do/,
+    );
+  });
+});
+
 describe('作用の推論の計算量', () => {
   it('1 段に呼び出しが複数あっても、引数伝播で走査が爆発しない', async () => {
     // 引数伝播は呼び出し位置ごとに本体を解析し直すので、メモが無いと 2^深さ に爆発する。

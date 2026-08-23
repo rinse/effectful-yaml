@@ -1760,8 +1760,13 @@ describe('予約キーと名前空間（草案 0.5）', () => {
     );
   });
 
-  it('$std.state は $in を要求する', async () => {
-    await expect(run('{$std.state: {}}')).rejects.toThrow(/\$std\.state requires \$in/);
+  it('$in を省いた $std.state と単独の $with は $do の文の位置でだけ書ける', async () => {
+    await expect(run('{$std.state: {}}')).rejects.toThrow(
+      /\$std\.state without \$in is only allowed as a statement of \$do/,
+    );
+    await expect(run('{$with: {std.fail: {$fn: m, $body: x}}}')).rejects.toThrow(
+      /\$with without \$handle is only allowed as a statement of \$do/,
+    );
   });
 
   it('ホストは std. 名前空間に演算を登録できない', async () => {
@@ -2021,4 +2026,114 @@ $do:
   it('束縛名にドットは使えない', async () => {
     await expect(run('{$let: {a.b: 1}, $in: null}')).rejects.toThrow(/must not contain a dot/);
   });
+});
+
+describe('$do の文形（$with 文 / $std.state 文）', () => {
+  it('先の $with 文ほど外側のハンドラになる（近い方が勝つ）', async () => {
+    await expect(
+      run(`
+$do:
+- $with:
+    std.fail: {$fn: _, $body: outer}
+- $with:
+    std.fail: {$fn: _, $body: inner}
+- {$std.fail: boom}
+`),
+    ).resolves.toBe('inner');
+  });
+
+  it('節の本体が起こす作用は自分では捕まらず、外側の $with 文が処理する', async () => {
+    await expect(
+      run(`
+$do:
+- $with:
+    std.fail: {$fn: _, $body: outer}
+- $with:
+    std.fail:
+      $fn: _
+      $body:
+        $std.lookup: {in: {}, key: missing}
+- {$std.fail: boom}
+`),
+    ).resolves.toBe('outer');
+  });
+
+  it('節は文の位置の環境で閉じるので、先行する $let 文の束縛が見える', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    d: fallback
+- $with:
+    std.fail:
+      $fn: _
+      $body: \${d}
+- {$std.fail: boom}
+`),
+    ).resolves.toBe('fallback');
+  });
+
+  it('$resume する節を $with 文で仕掛けると、後続の文の演算を横取りできる', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+$do:
+- $with:
+    std.log:
+      $fn: m
+      $body: {$resume: null}
+- $std.log: hello
+- done
+`,
+        { onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toBe('done');
+    expect(logs).toEqual([]);
+  });
+
+  it('末尾に置いた文形の値は null（$with 文は return 節を通る）', async () => {
+    await expect(run('{$do: [{$with: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
+    await expect(run('{$do: [{$std.state: {n: 0}}]}')).resolves.toBe(null);
+    await expect(
+      run(`
+$do:
+- $with:
+    return: {$fn: v, $body: wrapped}
+`),
+    ).resolves.toBe('wrapped');
+  });
+
+  it('$std.state 文は残りの文に記憶を通す（$in を伴う完結形は残りの文に及ばない）', async () => {
+    await expect(
+      run(`
+$do:
+- $std.state: {n: 5}
+  $in: {$std.get: n}
+- done
+`),
+    ).resolves.toBe('done');
+    await expect(
+      run(`
+$do:
+- $std.state: {n: 5}
+  $in: {$std.get: n}
+- {$std.get: n}
+`),
+    ).rejects.toThrow(/uninitialized cell: n/);
+  });
+
+  it('文の位置の外では従来どおりエラー', async () => {
+    await expect(
+      run('{$do: [{$let: {x: {$with: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
+    ).rejects.toThrow(/\$with without \$handle is only allowed as a statement of \$do/);
+    await expect(run('{$do: [{$let: {x: {$std.state: {n: 0}}}}, 1]}')).rejects.toThrow(
+      /\$std\.state without \$in is only allowed as a statement of \$do/,
+    );
+    // $with にほかのキーが同居する形は、主キーの無い孤児のまま。
+    await expect(run('{$with: {std.fail: {$fn: _, $body: 0}}, $in: 1}')).rejects.toThrow(
+      /auxiliary \$ key without a main key: \$with, \$in/,
+    );
+  });
+
 });
