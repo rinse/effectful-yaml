@@ -2245,3 +2245,78 @@ $do:
   });
 
 });
+
+describe('__proto__ キーの防御', () => {
+  const ownProto = (v: Value): boolean => Object.prototype.hasOwnProperty.call(v as object, '__proto__');
+  const at = (v: Value, k: string): Value => (v as { [key: string]: Value })[k]!;
+
+  it('値だけの文書の __proto__ キーは自身のプロパティとして残る（identity）', async () => {
+    const r = await run('"__proto__": {x: 1}\na: 2');
+    expect(Object.keys(r as object)).toEqual(['__proto__', 'a']);
+    expect(ownProto(r)).toBe(true);
+    expect(at(r, '__proto__')).toEqual({ x: 1 });
+    // プロトタイプは差し替わらず、継承経由でデータが漏れない
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+    expect((r as { x?: Value }).x).toBeUndefined();
+  });
+
+  it('$std.mapping の計算したキーが __proto__ でもエントリになる', async () => {
+    const r = await run(`
+$std.mapping:
+  $let:
+    k:
+      $std.each: [__proto__]
+  $in:
+    key: ${'${k}'}
+    value: {x: 1}
+`);
+    expect(Object.keys(r as object)).toEqual(['__proto__']);
+    expect(ownProto(r)).toBe(true);
+    expect(at(r, '__proto__')).toEqual({ x: 1 });
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+  });
+
+  it('$std.merge は __proto__ を普通のキーとして重ねる', async () => {
+    const r = await run(`
+$std.merge:
+- a: 1
+- "__proto__": {x: 1}
+`);
+    expect(Object.keys(r as object)).toEqual(['a', '__proto__']);
+    expect(ownProto(r)).toBe(true);
+    expect(at(r, '__proto__')).toEqual({ x: 1 });
+    expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+  });
+
+  it('$collect の into: mapping でも __proto__ はエントリになり、重複も検出される', async () => {
+    const r = await run(`
+$collect:
+- __proto__
+$with:
+  $fn: k
+  $body:
+  - key: ${'${k}'}
+    value: {x: 1}
+$into: mapping
+`);
+    expect(ownProto(r)).toBe(true);
+    await expect(
+      run(`
+$collect:
+- __proto__
+- __proto__
+$with:
+  $fn: k
+  $body:
+  - key: ${'${k}'}
+    value: {x: 1}
+$into: mapping
+`),
+    ).rejects.toThrow(/duplicate key in \$collect: __proto__/);
+  });
+
+  it('グローバルの Object.prototype は汚染されない', async () => {
+    await run('"__proto__": {polluted: yes}');
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
+  });
+});

@@ -170,7 +170,7 @@ function mergeComp(arg: Value): Comp {
     if (!isValueMap(m)) {
       throw new EffectfulYamlError(`$std.merge element must be a mapping, got: ${describe(m)}`);
     }
-    for (const [k, v] of Object.entries(m)) out[k] = v;
+    for (const [k, v] of Object.entries(m)) setOwn(out, k, v);
   }
   return pure(out);
 }
@@ -235,12 +235,24 @@ function flattenChunks(chunks: Cons<readonly Value[]> | null): Value[] {
 }
 
 /**
+ * マッピングへの書き込み。キーが __proto__ のとき素の代入はプロトタイプを差し替えて
+ * キーを失わせるので、常に自身のプロパティとして定義する（{...acc, [k]: v} と同じ挙動）。
+ */
+function setOwn(out: ValueMap, key: string, v: Value): void {
+  if (key === '__proto__') {
+    Object.defineProperty(out, key, { value: v, enumerable: true, writable: true, configurable: true });
+  } else {
+    out[key] = v;
+  }
+}
+
+/**
  * キーと値の対の cons をマッピングへ実体化する。文書順に前方代入するので、
  * 重複キーは元の `{...acc, [k]: v}` と同じく「最初の出現位置に、最後の値」になる。
  */
 function materializeMap(entries: Cons<readonly [string, Value]> | null): ValueMap {
   const out: ValueMap = {};
-  for (const [key, v] of toDocumentOrder(entries)) out[key] = v;
+  for (const [key, v] of toDocumentOrder(entries)) setOwn(out, key, v);
   return out;
 }
 
@@ -1460,7 +1472,7 @@ function toMapping(entries: readonly Value[]): Value {
     if (Object.prototype.hasOwnProperty.call(out, key)) {
       throw new EffectfulYamlError(`duplicate key in $collect: ${key}`);
     }
-    out[key] = b['value']!;
+    setOwn(out, key, b['value']!);
   }
   return out;
 }
