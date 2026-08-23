@@ -147,6 +147,47 @@ $do:
 
 貫流が ListT (State s) に、分岐点で分かれる形が StateT s [] に対応する。
 
+## 文形
+
+`$std.state` を `$in` を省いて書くと、`$do` の文として置ける。
+
+```yaml
+$std.state: 初期値
+```
+
+展開は次のとおりである。
+
+```
+{$do: [{$std.state: 初期値}, 残り...]} ≡ {$std.state: 初期値, $in: {$do: [残り...]}}
+```
+
+文の位置以外に単独で置いた `$in` なしの `$std.state` はエラーである。
+
+「貫流」と「分岐点で分かれる」の区別は、この文の置き場所でも表現できる。
+`$std.state` 文を `$std.list` を包む外側の `$do` に置けば貫流になり、`$std.list` の引数である内側の `$do` の先頭（選択より前）に置けば分岐点で分かれる。
+
+```yaml
+$do:
+- $std.state: {i: 0}
+- $std.list:
+    $do:
+    - $let:
+        x: {$std.each: [a, b, c]}
+    - $let:
+        i: {$std.get: i}
+    - $std.set:
+        i: ${i + 1}
+    - ${i}-${x}
+```
+
+```yaml
+- 0-a
+- 1-b
+- 2-c
+```
+
+外側の `$do` に置いた `$std.state` 文が `$std.list` を包み、状態が分岐から分岐へ持ち越される。
+
 ## 連番の採番
 
 貫流を使った例である。
@@ -181,3 +222,5 @@ $do:
 - [std.get](std.get.md)、[std.set](std.set.md)
 - [std.list](std.list.md)
 - [$handle](handle.md)、[$collect](collect.md)
+- [$do](do.md)（`$in` を省いた文形が展開する先、本体を欠いた二項形の一覧）
+- [$let](let.md)（同じく `$in` を省いて `$do` の文に置ける二項形）
