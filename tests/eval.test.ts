@@ -1845,7 +1845,7 @@ $with:
   });
 });
 
-describe('予約キーと名前空間（草案 0.5）', () => {
+describe('予約キーと名前空間（草案 0.6）', () => {
   it('旧記法のドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
     const old = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state'];
     for (const name of old) {

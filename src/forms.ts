@@ -1,6 +1,6 @@
 /**
  * `$` キーの分類と、マッピングノードの形の判定。
- * 仕様: docs/grammar.md（草案 0.5）呼び出しと名前空間 / 各フォームの節。
+ * 仕様: docs/grammar.md（草案 0.6）呼び出しと名前空間 / 各フォームの節。
  *
  * effect-infer（eval-core に同居）と evaluator の双方が、同じマッピングを
  * 同じ形として認識しなければならないため、その判定をここに集約する。
@@ -218,6 +218,52 @@ export function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   if (mainKind.kind === 'lexical') return { kind: 'lexical', name: mainKind.name, raw: mainRaw };
   if (mainKind.kind === 'op') return { kind: 'op', name: mainKind.name, raw: mainRaw, aux };
   return { kind: 'reserved', main: mainKind.main, mainRaw, aux };
+}
+
+/**
+ * $fn のパラメータ。文字列一つ、または相異なる名前の 1 個以上の列（カリー化の導出形）。
+ * 形の誤りはデータの変動ではないのでエラーにする。型検査・解析・評価のすべてが呼ぶ。
+ */
+export function fnParamsOf(raw: unknown): readonly string[] {
+  if (typeof raw === 'string') return [raw];
+  if (Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')) {
+    if (new Set(raw).size !== raw.length) {
+      throw new EffectfulYamlError(`duplicate $fn parameter name: ${raw.join(', ')}`);
+    }
+    return raw as string[];
+  }
+  throw new EffectfulYamlError(
+    `$fn parameter must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * $do の「文形」。残りの文を本体に取る形であり、展開はそれぞれ
+ *   {$let: 束縛, $in: {$do: 残り}} / {$std.state: 初期値, $in: {$do: 残り}} /
+ *   {$handle: {$do: 残り}, $with: 節}
+ * である。文形でない文（値を捨てるだけの文）は undefined。
+ * `$in` を伴う $let と $std.state は完結した式なので文形ではない。
+ * 型検査（typecheck.ts）と解析（Analyzer.doEffects）と評価（Evaluator.statements）が同じ分類を使う。
+ */
+export type StatementForm =
+  | { readonly kind: 'let'; readonly bindings: unknown }
+  | { readonly kind: 'state'; readonly init: unknown }
+  | { readonly kind: 'with'; readonly clauses: unknown };
+
+const isNodeMapLike = (n: unknown): n is Record<string, unknown> =>
+  typeof n === 'object' && n !== null && !Array.isArray(n);
+
+export function statementFormOf(stmt: unknown): StatementForm | undefined {
+  if (!isNodeMapLike(stmt)) return undefined;
+  const shape = analyzeMapping(Object.keys(stmt));
+  if (shape.kind === 'op') {
+    if (shape.name !== 'std.state' || shape.aux.has('in')) return undefined;
+    return { kind: 'state', init: stmt[shape.raw] };
+  }
+  if (shape.kind !== 'reserved') return undefined;
+  if (shape.main === 'with') return { kind: 'with', clauses: stmt[shape.mainRaw] };
+  if (shape.main !== 'let' || shape.aux.has('in')) return undefined;
+  return { kind: 'let', bindings: stmt[shape.mainRaw] };
 }
 
 /**

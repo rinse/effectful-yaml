@@ -1,6 +1,6 @@
 /**
  * 静的な作用推論と評価器。
- * 仕様: docs/grammar.md（草案 0.5）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar.md（草案 0.6）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
  * 二つのことを一体で行う。
  * 1. Analyzer: 文書を実行せずに各ノードの作用集合を求める。
@@ -21,7 +21,15 @@
  *   - node:     合成位置（`$` 式の内側）。子も一律に合成。
  */
 import { hasPathRef, interpolate, MissingPathError, refPathOf } from './expr.js';
-import { analyzeMapping, HANDLER_REMOVES, unescapeDollar, type MappingShape } from './forms.js';
+import {
+  analyzeMapping,
+  fnParamsOf,
+  HANDLER_REMOVES,
+  statementFormOf,
+  unescapeDollar,
+  type MappingShape,
+} from './forms.js';
+import { typecheck } from './typecheck.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 import {
   atPath,
@@ -133,23 +141,6 @@ function describe(v: Value): string {
   if (typeof v === 'string') return v;
   if (isClosure(v)) return '<function>';
   return JSON.stringify(v) ?? String(v);
-}
-
-/**
- * $fn のパラメータ。文字列一つ、または相異なる名前の 1 個以上の列（カリー化の導出形）。
- * 形の誤りはデータの変動ではないのでエラーにする。解析と評価の両方から呼ぶ。
- */
-function fnParamsOf(raw: unknown): readonly string[] {
-  if (typeof raw === 'string') return [raw];
-  if (Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')) {
-    if (new Set(raw).size !== raw.length) {
-      throw new EffectfulYamlError(`duplicate $fn parameter name: ${raw.join(', ')}`);
-    }
-    return raw as string[];
-  }
-  throw new EffectfulYamlError(
-    `$fn parameter must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
-  );
 }
 
 /** 構造を回る形（$std.each の分岐、$collect の対象）。マッピングは {key, value} に分解する。 */
@@ -1457,32 +1448,6 @@ class Evaluator {
   }
 }
 
-/**
- * $do の「文形」。残りの文を本体に取る形であり、展開はそれぞれ
- *   {$let: 束縛, $in: {$do: 残り}} / {$std.state: 初期値, $in: {$do: 残り}} /
- *   {$handle: {$do: 残り}, $with: 節}
- * である。文形でない文（値を捨てるだけの文）は undefined。
- * `$in` を伴う $let と $std.state は完結した式なので文形ではない。
- * 解析（Analyzer.doEffects）と評価（Evaluator.statements）が同じ分類を使う。
- */
-type StatementForm =
-  | { readonly kind: 'let'; readonly bindings: unknown }
-  | { readonly kind: 'state'; readonly init: unknown }
-  | { readonly kind: 'with'; readonly clauses: unknown };
-
-function statementFormOf(stmt: unknown): StatementForm | undefined {
-  if (!isNodeMap(stmt)) return undefined;
-  const shape = analyzeMapping(Object.keys(stmt));
-  if (shape.kind === 'op') {
-    if (shape.name !== 'std.state' || shape.aux.has('in')) return undefined;
-    return { kind: 'state', init: stmt[shape.raw] };
-  }
-  if (shape.kind !== 'reserved') return undefined;
-  if (shape.main === 'with') return { kind: 'with', clauses: stmt[shape.mainRaw] };
-  if (shape.main !== 'let' || shape.aux.has('in')) return undefined;
-  return { kind: 'let', bindings: stmt[shape.mainRaw] };
-}
-
 /** 束縛のマッピングを文書順の並びにする。形の誤りはエラー（評価器だけが呼ぶ）。 */
 function letEntriesOf(bindings: unknown): (readonly [string, unknown])[] {
   if (!isNodeMap(bindings)) throw new EffectfulYamlError('$let requires a mapping of bindings');
@@ -1547,6 +1512,14 @@ function assertNoFunctionValue(v: Value): void {
   if (isValueMap(v)) for (const x of Object.values(v)) assertNoFunctionValue(x);
 }
 
+/** 値の中に関数値（閉包・生関数）が含まれるか。ホスト演算へ渡る直前の引数の検査に使う。 */
+function containsFunctionValue(v: Value): boolean {
+  if (isClosure(v) || typeof v === 'function') return true;
+  if (Array.isArray(v)) return v.some(containsFunctionValue);
+  if (isValueMap(v)) return Object.values(v).some(containsFunctionValue);
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // トップレベルのドライバ
 // ---------------------------------------------------------------------------
@@ -1567,9 +1540,18 @@ async function drive(
     if (c.name === 'std.fail') {
       throw attachPath(new EffectfulYamlError(`failure: ${describe(c.arg)}`), c.path);
     }
-    const host = ops[c.name] ?? BUILTIN_OPS[c.name];
+    const fromHost = ops[c.name];
+    const host = fromHost ?? BUILTIN_OPS[c.name];
     if (host === undefined) {
       throw attachPath(new EffectfulYamlError(`unregistered operation: $${c.name}`), c.path);
+    }
+    // 閉包はホストへ渡れない（grammar.md ホスト登録の演算）。評価前の流れ検査と二重の砦で、
+    // こちらは追跡に依存しない正確な検査である。第一階の標準演算（std.range）は対象外。
+    if (fromHost !== undefined && containsFunctionValue(c.arg)) {
+      throw attachPath(
+        new EffectfulYamlError(`a function value cannot be passed to a host operation: $${c.name}`),
+        c.path,
+      );
     }
     let out: Value;
     try {
@@ -1596,6 +1578,10 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
       throw new EffectfulYamlError(`host cannot register an operation in the std namespace: $${name}`);
     }
   }
+
+  // 関数値の流れの検査（grammar.md「関数値の流れと停止性」）。自己適用を含みうる文書と、
+  // ホスト演算の引数に閉包が流れうる文書を、評価を始める前に拒否する。
+  typecheck(doc);
 
   const analyzer = new Analyzer();
 

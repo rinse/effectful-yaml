@@ -208,8 +208,9 @@ $do:
     ).resolves.toEqual([1, 2]);
   });
 
-  it('自己適用は追跡不能に倒す（解析が止まる）', async () => {
-    // 引数として自分自身を渡す形。解析が循環するので追跡を諦める（誤った行を作らない）。
+  it('自己適用は関数値の流れの検査が評価前に拒否する', async () => {
+    // 引数として自分自身を渡す形。作用の推論は循環で追跡を諦める（誤った行を作らない）が、
+    // 停止性は流れの検査（typecheck.ts）が担い、評価前に静的エラーになる。
     await expect(
       run(`
 $do:
@@ -219,7 +220,7 @@ $do:
       $body: {$.g: 1}
 - $.selfapp: \${selfapp}
 `),
-    ).rejects.toThrow(/is not a function|expected 1 result/);
+    ).rejects.toThrow(/self-application detected: .*\$do\[0\]\.\$let\.selfapp/);
   });
 });
 

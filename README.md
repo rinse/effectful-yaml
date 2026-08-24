@@ -7,6 +7,6 @@ YAML の文法内で独自の記法を定め、それを評価して新しい YA
 ## ドキュメント
 
 - [ドキュメント索引](docs/index.md)
-- [言語仕様（草案 0.5）](docs/grammar.md)
+- [言語仕様（草案 0.6）](docs/grammar.md)
 - [処理系の利用](docs/usage.md)
 - [CLI（eff-yaml）](docs/cli.md)
