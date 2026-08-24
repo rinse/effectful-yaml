@@ -2404,17 +2404,113 @@ $std.merge:
 
   it('ホストが param / op で注入した生の JS 関数も、値へ残れば拒まれる', async () => {
     const msg = /a function value cannot escape into the document value/;
-    // 型上は Value に関数を渡せないが、悪意あるホストの実装を想定して実行時の防御を検査する。
+    // Value は関数を含まないので、型を欺いて注入するホストを再現するにはキャストが要る。
+    const raw = <T>(v: unknown): T => v as T;
     await expect(
-      run('out: {$std.param: p}', { params: { p: (() => 'x') as unknown as Value } }),
+      run('out: {$std.param: p}', { params: { p: raw<Value>(() => 'x') } }),
     ).rejects.toThrow(msg);
     // 一段深く隠しても再帰で捕まえる
     await expect(
-      run('out: {$std.param: p}', { params: { p: { f: () => 1 } as unknown as Value } }),
+      run('out: {$std.param: p}', { params: { p: raw<Value>({ f: () => 1 }) } }),
     ).rejects.toThrow(msg);
     // op の戻り値が関数でも同じ
     await expect(
-      run('out: {$host.get: x}', { ops: { 'host.get': (() => () => 'x') as unknown as (arg: Value) => Value } }),
+      run('out: {$host.get: x}', { ops: { 'host.get': raw<() => Value>(() => () => 'x') } }),
     ).rejects.toThrow(msg);
+  });
+});
+
+describe('失敗位置（メッセージ末尾の (at パス)）', () => {
+  it('データの中の `$` 式で失敗すると、その値の位置が付く', async () => {
+    await expect(run('server:\n  hosts: [a, b, {$std.range: x}]')).rejects.toThrow(
+      '$std.range requires a natural number, got: x (at server.hosts[2])',
+    );
+  });
+
+  it('位置はキーを `.` で、添字を `[i]` で連ねる', async () => {
+    await expect(run('x:\n  y:\n  - p\n  - q: {z: [{$if: 1, $then: a, $else: b}]}')).rejects.toThrow(
+      '(at x.y[1].q.z[0])',
+    );
+  });
+
+  it('文書の形の誤りに位置が付く（未定義参照・キー走査・型の不一致）', async () => {
+    await expect(run('server:\n  conf: {$.a.self: 1}')).rejects.toThrow(
+      'undefined reference: a (at server.conf)',
+    );
+    await expect(run('server:\n  x:\n    $let: {a: 1}\n    $in: {$.a.self: 2}')).rejects.toThrow(
+      "cannot access key '.self' of a non-mapping value (at server.x)",
+    );
+    await expect(run('a:\n  b: {$std.merge: {x: 1}}')).rejects.toThrow(
+      '$std.merge requires a list of mappings, got: {"x":1} (at a.b)',
+    );
+  });
+
+  it('捕まらずに境界へ達した失敗作用にも位置が付く', async () => {
+    await expect(run('a:\n  b: {$std.fail: boom}')).rejects.toThrow('failure: boom (at a.b)');
+    // 失敗作用の経路でも path プロパティに入る（throw の経路と同じ扱い）
+    await expect(run('a:\n  b: {$std.fail: boom}')).rejects.toThrow(
+      expect.objectContaining({ path: 'a.b' }),
+    );
+    await expect(run('a:\n  b: {$std.param: nope}')).rejects.toThrow(
+      'failure: parameter not provided: nope (at a.b)',
+    );
+    await expect(run('a:\n  b: {$std.get: nope}')).rejects.toThrow(
+      'failure: uninitialized cell: nope (at a.b)',
+    );
+    await expect(run('a:\n  b: {$std.lookup: {in: {p: 1}, key: q}}')).rejects.toThrow(
+      "failure: missing key 'q' (at a.b)",
+    );
+    await expect(run('a:\n  b:\n    $let: {x: {p: 1}}\n    $in: ${x.q}')).rejects.toThrow(
+      "failure: missing key 'q' (at a.b)",
+    );
+  });
+
+  it('ハンドラに捕まった失敗は値に翻訳されるので、位置は残らない', async () => {
+    await expect(run('a:\n  b: {$std.opt: {$std.fail: boom}, $default: ok}')).resolves.toEqual({
+      a: { b: 'ok' },
+    });
+    await expect(
+      run(`
+a:
+  b:
+    $handle: {$std.fail: boom}
+    $with: {std.fail: {$fn: m, $body: "caught \${m}"}}
+`),
+    ).resolves.toEqual({ a: { b: 'caught boom' } });
+  });
+
+  it('ルート（位置が空）ではメッセージを変えない', async () => {
+    const p = run('{$std.fail: boom}');
+    await expect(p).rejects.toThrow('failure: boom');
+    await expect(p).rejects.toThrow(
+      expect.objectContaining({ message: 'failure: boom', path: undefined }),
+    );
+  });
+
+  it('位置は EffectfulYamlError の path にも入る', async () => {
+    await expect(run('server:\n  hosts: [a, b, {$std.range: x}]')).rejects.toThrow(
+      expect.objectContaining({ path: 'server.hosts[2]' }),
+    );
+  });
+
+  it('位置は二重に付かない（内側が勝つ）', async () => {
+    const e = await run('a:\n  b:\n  - {$std.list: [{$std.range: x}]}').then(
+      () => new Error('rejected されなかった'),
+      (x: Error) => x,
+    );
+    expect(e.message.match(/\(at /g)).toHaveLength(1);
+    expect(e.message).toContain('(at a.b[0])');
+  });
+
+  // ponytail: 位置が伸びるのはデータを降りるときだけで、`$` 式の内側では凍る。
+  // なので `$do` を根に置いた文書は位置を持たない（`$do[1]` のような `$` のキーを
+  // 含む位置まで組むなら operation / reserved にも位置を通すことになる）。
+  it('`$` 式の内側は位置が凍るので、根が `$do` の文書には位置が付かない', async () => {
+    await expect(run('$do:\n- a\n- {$std.range: x}')).rejects.toThrow(
+      '$std.range requires a natural number, got: x',
+    );
+    await expect(run('$do:\n- a\n- {$std.range: x}')).rejects.toThrow(
+      expect.objectContaining({ path: undefined }),
+    );
   });
 });

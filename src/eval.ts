@@ -24,6 +24,8 @@ import { hasPathRef, interpolate, MissingPathError, refPathOf } from './expr.js'
 import { analyzeMapping, HANDLER_REMOVES, unescapeDollar, type MappingShape } from './forms.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 import {
+  atPath,
+  attachPath,
   bind,
   CHOICE_OPS,
   Closure,
@@ -59,6 +61,36 @@ const DEFAULT_OPS: ReadonlySet<string> = new Set([
 
 type NodeMap = Record<string, unknown>;
 type ValueMap = { [key: string]: Value };
+
+// ---------------------------------------------------------------------------
+// 失敗位置
+//
+// 位置は「入力文書の中のデータの位置」であり、キーを `.` で、リストの添字を `[2]` で連ねる
+// （キーの `.` はエスケープしない）。データを降りるときだけ伸び、`$` 式の内側では凍る。
+// したがって報告される位置は、失敗を含む最も外側の `$` 式の位置になる。
+//
+// Comp は遅延して組み立てられ、bind の継続はドライバのスタックで走るので、
+// 呼び出しを try/catch で囲んでも継続の中で起きたエラーは捕まらない（位置ともずれる）。
+// そこで位置は二つの経路で運ぶ。
+//   - Env.path: 評価器の中で投げられるエラー用。継続はこれをレキシカルに捕まえる。
+//   - op の path: 境界を抜けてドライバに届く失敗とホスト演算のエラー用。
+// ---------------------------------------------------------------------------
+
+/** 位置をキー一つぶん降りる。添字は `${path}[${i}]` でよいので専用の関数は要らない。 */
+const keyPath = (path: string, key: string): string => (path === '' ? key : `${path}.${key}`);
+
+/** f の中で投げられたエラーに失敗位置を添える。位置を捕まえた関数の中でだけ意味を持つ。 */
+function at<T>(path: string, f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    throw attachPath(e, path);
+  }
+}
+
+/** 継続の中で投げられたエラーにも失敗位置が乗る bind。 */
+const bindAt = (path: string, c: Comp, f: (v: Value) => Comp): Comp =>
+  bind(c, (v) => at(path, () => f(v)));
 
 const isNodeMap = (n: unknown): n is NodeMap =>
   typeof n === 'object' && n !== null && !Array.isArray(n);
@@ -145,7 +177,7 @@ const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
  * $std.lookup の意味（展開と等価な O(1) の照会）。無いキーは呼び出し位置の std.fail。
  * in がマッピングでない・key が文字列でないのは形の誤りなのでエラー。
  */
-function lookupComp(arg: Value): Comp {
+function lookupComp(arg: Value, path: string): Comp {
   if (!isValueMap(arg)) {
     throw new EffectfulYamlError(`$std.lookup requires a mapping {in, key}, got: ${describe(arg)}`);
   }
@@ -154,7 +186,9 @@ function lookupComp(arg: Value): Comp {
   if (m === undefined || !isValueMap(m)) {
     throw new EffectfulYamlError(`$std.lookup 'in' must be a mapping, got: ${describe(m ?? null)}`);
   }
-  return Object.prototype.hasOwnProperty.call(m, k) ? pure(m[k]!) : perform('std.fail', `missing key '${k}'`);
+  return Object.prototype.hasOwnProperty.call(m, k)
+    ? pure(m[k]!)
+    : perform('std.fail', `missing key '${k}'`, path);
 }
 
 /**
@@ -203,7 +237,7 @@ function handleOps(
     // このハンドラ自身の節（たとえば $std.opt の std.fail 節）が捕捉できる。
     const nextRaise = (v: Value): Comp => bind(pure(null), () => rec(c.raise(v)));
     if (clause !== undefined) return clause(c.arg, next);
-    return { tag: 'op', name: c.name, arg: c.arg, resume: next, raise: nextRaise };
+    return { tag: 'op', name: c.name, arg: c.arg, resume: next, raise: nextRaise, path: c.path };
   };
   return rec(comp);
 }
@@ -334,6 +368,8 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
             // このノードは手組みの std.fail であり、ドライバが raise を呼ぶことはないので、
             // resume と同じ包み方で型を満たすだけでよい。
             raise: (x) => rec(m.raise(x), here),
+            // 失敗位置は読み出しを起こした $std.get の位置である。
+            path: m.path,
           };
         }
         c = force(c.resume(v));
@@ -357,6 +393,7 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
         arg: m.arg,
         resume: (v) => rec(m.resume(v), here),
         raise: (v) => rec(m.raise(v), here),
+        path: m.path,
       };
     }
   };
@@ -987,7 +1024,7 @@ class Evaluator {
     if (typeof node === 'object' && node !== null && this.analyzer.listBoundaries.has(node)) {
       return drained;
     }
-    return bind(drained, (results) => pure(this.single(asList(results), node)));
+    return bindAt(env.path, drained, (results) => pure(this.single(asList(results), node)));
   }
 
   private single(results: readonly Value[], node: unknown): Value {
@@ -1049,8 +1086,8 @@ class Evaluator {
    * ハンドラ全体の値が `$default` の値になり、渡されていれば `$default` は評価されない。
    */
   private param(name: string, defaultNode: unknown, hasDefault: boolean, env: Env): Comp {
-    const read = bind(perform('std.param', name), (v) =>
-      v === ABSENT ? perform('std.fail', `parameter not provided: ${name}`) : pure(v),
+    const read = bind(perform('std.param', name, env.path), (v) =>
+      v === ABSENT ? perform('std.fail', `parameter not provided: ${name}`, env.path) : pure(v),
     );
     if (!hasDefault) return read;
     return handleOps(
@@ -1062,30 +1099,41 @@ class Evaluator {
   /**
    * データ位置。`$` 式に出会ったらそこが最も外側の `$` 式＝境界である。
    * here が真のときはこのノード自身が境界。
+   * 失敗位置が伸びるのはここだけである（子のデータ位置ごとに Env の path を差し替える）。
    */
   private data(node: unknown, env: Env, here = false): Comp {
-    const composed = this.compose(node, env, (n) => this.data(n, env));
-    if (composed !== undefined) return composed;
-    return here ? this.dollar(node as NodeMap, env) : this.boundary(node, env);
+    return at(env.path, () => {
+      const composed = this.compose(node, env, (n, path) => this.data(n, atPath(env, path)));
+      if (composed !== undefined) return composed;
+      return here ? this.dollar(node as NodeMap, env) : this.boundary(node, env);
+    });
   }
 
-  /** 合成位置の評価（`$` 式の内側）。子も一律に合成。 */
+  /** 合成位置の評価（`$` 式の内側）。子も一律に合成。失敗位置は `$` 式の位置のまま凍る。 */
   node(node: unknown, env: Env): Comp {
-    return this.compose(node, env, (n) => this.node(n, env)) ?? this.dollar(node as NodeMap, env);
+    return at(
+      env.path,
+      () => this.compose(node, env, (n) => this.node(n, env)) ?? this.dollar(node as NodeMap, env),
+    );
   }
 
   /**
    * データ構成（スカラー・リスト・プレーンマッピング）を rec で組み立てる。`$` 式なら undefined。
    * データ構成は作用を起こさないが、遮りもしない（bind でつなぐだけ）。
+   * rec には子の失敗位置も渡す（データ位置の rec だけが使い、合成位置の rec は捨てる）。
    */
-  private compose(node: unknown, env: Env, rec: (n: unknown) => Comp): Comp | undefined {
+  private compose(
+    node: unknown,
+    env: Env,
+    rec: (n: unknown, path: string) => Comp,
+  ): Comp | undefined {
     if (typeof node === 'string') {
       // 欠落したキーと添字は失敗作用（捕捉できる）。束縛の未定義や非コンテナの走査、
       // 型の不一致は文書の形の誤りなので、そのままエラーとして投げ抜ける。
       try {
         return pure(interpolate(node, env));
       } catch (e) {
-        if (e instanceof MissingPathError) return perform('std.fail', e.message);
+        if (e instanceof MissingPathError) return perform('std.fail', e.message, env.path);
         throw e;
       }
     }
@@ -1095,7 +1143,7 @@ class Evaluator {
       const go = (i: number, acc: Cons<Value> | null): Comp =>
         i >= node.length
           ? pure(toDocumentOrder(acc))
-          : bind(rec(node[i]), (v) => go(i + 1, { head: v, tail: acc }));
+          : bind(rec(node[i], `${env.path}[${i}]`), (v) => go(i + 1, { head: v, tail: acc }));
       return go(0, null);
     }
     if (!isNodeMap(node)) {
@@ -1107,7 +1155,7 @@ class Evaluator {
     const go = (i: number, acc: Cons<readonly [string, Value]> | null): Comp => {
       if (i >= entries.length) return pure(materializeMap(acc));
       const [rawKey, valueNode] = entries[i]!;
-      return bind(rec(valueNode), (v) =>
+      return bind(rec(valueNode, keyPath(env.path, rawKey)), (v) =>
         go(i + 1, { head: [unescapeDollar(rawKey), v], tail: acc }),
       );
     };
@@ -1135,7 +1183,9 @@ class Evaluator {
           cur = cur[seg]!;
         }
         const f = cur;
-        return bind(this.node(node[shape.raw], env), (arg) => this.apply(f, arg, shape.name));
+        return bindAt(env.path, this.node(node[shape.raw], env), (arg) =>
+          this.apply(f, arg, shape.name),
+        );
       }
       case 'op':
         return this.operation(shape, node, env);
@@ -1162,12 +1212,14 @@ class Evaluator {
       case 'std.list':
         return collectChoice(this.node(arg, env));
       case 'std.mapping':
-        return bind(collectChoice(this.node(arg, env)), (l) => pure(toMapping(asList(l))));
+        return bindAt(env.path, collectChoice(this.node(arg, env)), (l) =>
+          pure(toMapping(asList(l))),
+        );
       case 'std.first':
         return bind(collectFirst(this.node(arg, env)), (r) =>
           asList(r).length > 0
             ? pure(asList(r)[0]!)
-            : perform('std.fail', 'every branch of $std.first failed or was cut'),
+            : perform('std.fail', 'every branch of $std.first failed or was cut', env.path),
         );
       case 'std.opt':
         // $default の展開（std.fail の節が $default の式を返す）。$default が無ければ
@@ -1182,11 +1234,11 @@ class Evaluator {
             '$std.state without $in is only allowed as a statement of $do',
           );
         }
-        return bind(this.node(arg, env), (cells) =>
+        return bindAt(env.path, this.node(arg, env), (cells) =>
           handleState(this.node(aux('in'), env), cellsOf(cells)),
         );
       case 'std.param':
-        return bind(this.node(arg, env), (name) =>
+        return bindAt(env.path, this.node(arg, env), (name) =>
           this.param(
             requireString(name, '$std.param name'),
             aux('default'),
@@ -1197,16 +1249,16 @@ class Evaluator {
       case 'std.where':
         // 導出形 {$if: 条件, $then: null, $else: {$std.each: []}} と等価。
         // std.where という演算は存在せず、打ち切りは空の std.each として選択のハンドラに届く。
-        return bind(this.node(arg, env), (b) =>
-          requireBoolean(b, '$std.where') ? pure(null) : perform('std.each', []),
+        return bindAt(env.path, this.node(arg, env), (b) =>
+          requireBoolean(b, '$std.where') ? pure(null) : perform('std.each', [], env.path),
         );
       case 'std.lookup':
-        return bind(this.node(arg, env), lookupComp);
+        return bindAt(env.path, this.node(arg, env), (v) => lookupComp(v, env.path));
       case 'std.merge':
-        return bind(this.node(arg, env), mergeComp);
+        return bindAt(env.path, this.node(arg, env), mergeComp);
       default:
         // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
-        return bind(this.node(arg, env), (v) => perform(shape.name, v));
+        return bind(this.node(arg, env), (v) => perform(shape.name, v, env.path));
     }
   }
 
@@ -1250,7 +1302,7 @@ class Evaluator {
         return this.letBind(Object.entries(arg), 0, env, (inner) => this.node(aux('in'), inner));
       }
       case 'if':
-        return bind(this.node(arg, env), (cond) =>
+        return bindAt(env.path, this.node(arg, env), (cond) =>
           this.node(requireBoolean(cond, '$if condition') ? aux('then') : aux('else'), env),
         );
       case 'fn':
@@ -1284,15 +1336,15 @@ class Evaluator {
     into: 'list' | 'mapping',
     env: Env,
   ): Comp {
-    return bind(this.node(target, env), (structure) =>
-      bind(this.node(withNode, env), (f) => {
+    return bindAt(env.path, this.node(target, env), (structure) =>
+      bindAt(env.path, this.node(withNode, env), (f) => {
         const items = entriesOf(structure, '$collect');
         const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp => {
           if (i >= items.length) {
             const flat = flattenChunks(chunks);
             return pure(into === 'mapping' ? toMapping(flat) : flat);
           }
-          return bind(this.apply(f, items[i]!, '$collect $with'), (r) => {
+          return bindAt(env.path, this.apply(f, items[i]!, '$collect $with'), (r) => {
             if (!Array.isArray(r)) {
               throw new EffectfulYamlError(
                 `$collect requires the $with function to return a list, got: ${describe(r)}`,
@@ -1324,7 +1376,9 @@ class Evaluator {
           );
         case 'state':
           // 初期値の作用はこのハンドラの外側へ合流する（完結形の case 'std.state' と同じ）。
-          return bind(this.node(form.init, env), (cells) => handleState(rest(), cellsOf(cells)));
+          return bindAt(env.path, this.node(form.init, env), (cells) =>
+            handleState(rest(), cellsOf(cells)),
+          );
         case 'with': {
           const { clauses, ret } = this.clausesOf(form.clauses, env);
           return handleOps(rest(), clauses, ret);
@@ -1347,7 +1401,7 @@ class Evaluator {
       throw new EffectfulYamlError(`$let binding name must not contain a dot: ${name}`);
     }
     // 右辺は合成。ここの作用は束縛先ではなく後続の文へ合流する。
-    return bind(this.node(rhs, env), (v) =>
+    return bindAt(env.path, this.node(rhs, env), (v) =>
       this.letBind(entries, i + 1, extendEnv(env, name, v), k),
     );
   }
@@ -1383,7 +1437,11 @@ class Evaluator {
       clauses.set(name, (arg, resume) => {
         // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
         // 本体の中で作られた閉包も env ごと resume を捕まえるので、そこからも再開できる。
-        const inner: Env = { vars: insert(closure.env.vars, closure.params[0]!, arg), resume };
+        const inner: Env = {
+          vars: insert(closure.env.vars, closure.params[0]!, arg),
+          resume,
+          path: closure.env.path,
+        };
         return this.enter(closure, inner);
       });
     }
@@ -1504,9 +1562,15 @@ async function drive(
   let c = force(comp);
   for (;;) {
     if (c.tag === 'pure') return c.value;
-    if (c.name === 'std.fail') throw new EffectfulYamlError(`failure: ${describe(c.arg)}`);
+    // ここまで来た失敗は文書内のどのハンドラにも捕まらなかったものなので、
+    // 起こした位置を添えてよい（捕まった失敗は値に翻訳済みで、ここには現れない）。
+    if (c.name === 'std.fail') {
+      throw attachPath(new EffectfulYamlError(`failure: ${describe(c.arg)}`), c.path);
+    }
     const host = ops[c.name] ?? BUILTIN_OPS[c.name];
-    if (host === undefined) throw new EffectfulYamlError(`unregistered operation: $${c.name}`);
+    if (host === undefined) {
+      throw attachPath(new EffectfulYamlError(`unregistered operation: $${c.name}`), c.path);
+    }
     let out: Value;
     try {
       out = await host(c.arg);
@@ -1516,7 +1580,7 @@ async function drive(
         c = force(c.raise(e.value));
         continue;
       }
-      throw e;
+      throw attachPath(e, c.path);
     }
     c = force(c.resume(out));
   }

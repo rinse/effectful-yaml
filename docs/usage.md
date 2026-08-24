@@ -63,6 +63,9 @@ $do:
 - `$std.fail`：文書内のハンドラ（`$handle`、`$std.first`、`$std.opt` など）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
 - 関数値の脱出：閉包が文書の値に残るとエラーになる。
 
+メッセージの末尾には、失敗した値の文書内の位置が `(at server.hosts[2])` の形で付く（`EffectfulYamlError` の `path` にも入る）。
+位置はデータのキーと添字だけを連ねたもので、`$` 式の内側では伸びず、文書全体がその位置なら何も付かない。
+
 ```ts
 import { EffectfulYamlError, evaluateYaml } from './src/index.js';
 

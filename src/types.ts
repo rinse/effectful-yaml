@@ -41,14 +41,28 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 export interface Env {
   readonly vars: PMap<Value>;
   readonly resume?: (v: Value) => Comp;
+  /**
+   * 評価中の位置（入力文書の中でのデータの位置）。エラーに添える失敗位置の出どころである。
+   * データを降りるときだけ伸び、`$` 式の内側では凍る（`$` のキーは値の位置ではないので）。
+   * 空文字列は文書全体。閉包が捕まえるのは定義位置の path であり、呼び出し位置ではない。
+   */
+  readonly path: string;
 }
 
-export const emptyEnv: Env = { vars: empty };
+export const emptyEnv: Env = { vars: empty, path: '' };
 
 /** 束縛を一つ足した環境。resume は引き継ぐ（$let を挟んでも節の継続は見えたまま）。 */
 export const extendEnv = (env: Env, name: string, value: Value): Env => ({
   vars: insert(env.vars, name, value),
   resume: env.resume,
+  path: env.path,
+});
+
+/** 位置だけを差し替えた環境（データの中を一区画降りるときに使う）。 */
+export const atPath = (env: Env, path: string): Env => ({
+  vars: env.vars,
+  resume: env.resume,
+  path,
 });
 
 export const lookupEnv = (env: Env, name: string): Value | undefined => get(env.vars, name);
@@ -78,6 +92,12 @@ export type Comp =
       readonly resume: (v: Value) => Comp;
       /** 呼び出し位置で std.fail を起こして続ける継続。ハンドラは resume と同じ包み直しを施す。 */
       readonly raise: (v: Value) => Comp;
+      /**
+       * 演算を起こした文書内の位置。境界を抜けてドライバに届いた失敗とホスト演算のエラーに添える。
+       * 演算は組み立て時に位置を捕まえるしかない（ドライバまで来ると評価器の文脈は残っていない）。
+       * ハンドラに捕まった演算では捨てられる（捕まった失敗は値なので位置を持たない）。
+       */
+      readonly path?: string;
     }
   | { readonly tag: 'bind'; readonly comp: Comp; readonly fn: (v: Value) => Comp };
 
@@ -86,12 +106,13 @@ export type Forced = Extract<Comp, { tag: 'pure' | 'op' }>;
 
 export const pure = (value: Value): Comp => ({ tag: 'pure', value });
 
-export const perform = (name: string, arg: Value): Comp => ({
+export const perform = (name: string, arg: Value, path?: string): Comp => ({
   tag: 'op',
   name,
   arg,
   resume: pure,
-  raise: (v) => perform('std.fail', v),
+  raise: (v) => perform('std.fail', v, path),
+  path,
 });
 
 export const bind = (c: Comp, f: (v: Value) => Comp): Comp => ({ tag: 'bind', comp: c, fn: f });
@@ -122,6 +143,7 @@ export function force(c: Comp): Forced {
         arg: m.arg,
         resume: (v) => bind(m.resume(v), outer.fn),
         raise: (v) => bind(m.raise(v), outer.fn),
+        path: m.path,
       };
     }
     cur = { tag: 'bind', comp: m.comp, fn: (v) => bind(m.fn(v), outer.fn) };
@@ -130,10 +152,30 @@ export function force(c: Comp): Forced {
 
 /** 言語仕様の「エラー」。fail 作用（$fail）とは別物で、ハンドラでは捕捉できない。 */
 export class EffectfulYamlError extends Error {
+  /** 失敗した値の文書内の位置（`server.hosts[2]`）。文書全体や位置を辿れない経路では undefined。 */
+  path?: string;
+
   constructor(message: string) {
     super(message);
     this.name = 'EffectfulYamlError';
   }
+}
+
+/** メッセージの末尾に添える失敗位置の表記。位置が無ければ何も添えない。 */
+export const atSuffix = (path: string | undefined): string =>
+  path === undefined || path === '' ? '' : ` (at ${path})`;
+
+/**
+ * 失敗位置をエラーに一度だけ添える。二度目以降は無視するので、内側（＝より深い位置）が勝つ。
+ * 新しいエラーを作らずその場で書き換えるのは、MissingPathError などの下位クラスを保つためである
+ * （包み直すと instanceof で分岐している捕捉可能性の判定が変わってしまう）。
+ */
+export function attachPath<E>(e: E, path: string | undefined): E {
+  if (e instanceof EffectfulYamlError && e.path === undefined && atSuffix(path) !== '') {
+    e.path = path;
+    e.message += atSuffix(path);
+  }
+  return e;
 }
 
 /**
