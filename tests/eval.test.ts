@@ -2404,16 +2404,17 @@ $std.merge:
 
   it('ホストが param / op で注入した生の JS 関数も、値へ残れば拒まれる', async () => {
     const msg = /a function value cannot escape into the document value/;
+    // 型上は Value に関数を渡せないが、悪意あるホストの実装を想定して実行時の防御を検査する。
     await expect(
-      run('out: {$std.param: p}', { params: { p: () => 'x' } }),
+      run('out: {$std.param: p}', { params: { p: (() => 'x') as unknown as Value } }),
     ).rejects.toThrow(msg);
     // 一段深く隠しても再帰で捕まえる
     await expect(
-      run('out: {$std.param: p}', { params: { p: { f: () => 1 } } }),
+      run('out: {$std.param: p}', { params: { p: { f: () => 1 } as unknown as Value } }),
     ).rejects.toThrow(msg);
     // op の戻り値が関数でも同じ
     await expect(
-      run('out: {$host.get: x}', { ops: { 'host.get': () => () => 'x' } }),
+      run('out: {$host.get: x}', { ops: { 'host.get': (() => () => 'x') as unknown as (arg: Value) => Value } }),
     ).rejects.toThrow(msg);
   });
 });
