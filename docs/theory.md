@@ -152,6 +152,41 @@ Koka や Eff はこの線上にあり、effectful-yaml も同じ地点に立つ�
 λc がモナド `T` を一つ抽象的に固定するのに対し、この系譜では、プログラムに出現する演算の集合が解釈を索引する。
 effectful-yaml の作用シグネチャは Koka の作用行に相当し、演算の意味を包囲する最も近いハンドラが選ぶ規則も共通である。
 
+## ローカル作用名とケイパビリティ
+
+言語仕様のローカル作用の宣言（`$with` のドットなしの節名）は、レキシカルな名前を生成的な演算名へ脱糖する形をとる。
+これは代数的作用の系譜で確立された手筋であり、次の先例と同じ地点に立つ。
+
+- OCaml の作用宣言と例外宣言は生成的である。同じ綴りの宣言を二度書けば別の作用になり、一方のハンドラが他方を捕まえることはない。
+- Koka の named handlers はハンドラに名前を与え、演算をその名前を通じて呼ぶ。同じ作用の複数の実例（instance）を区別するための機構であり、名前は一級の値である。
+- Effekt はハンドラが本体へケイパビリティを渡し、演算の呼び出しをそのケイパビリティ経由にする。作用を使うことがレキシカルな名前を使うことになる。
+
+Biernacki らはこの構成を「昼は束縛子、夜はラベル」と呼んだ。
+書き手から見れば宣言はレキシカルな束縛子であり、意味論から見れば一意なラベルである。
+effectful-yaml の展開はこの二面をそのまま写したものである。
+束縛子は `$let` が導入する素通しの関数であり、ラベルは構文パスから決まる内部の演算名である。
+
+本言語のラベルは実行時ではなく構文位置から決まる。
+したがって同じ `$handle` が二度起動されれば、二つの起動は同じラベルを共有する。
+ラベルを実行時に生成すれば起動ごとに区別できるが、差が出るのは、ある起動から脱出した閉包が別の起動の内側で呼ばれる場合だけである。
+構文位置から決めれば、内部名は評価前の解析（作用の推論と関数値の流れの検査）から見えたままになる。
+
+### 脱出が実行時のエラーである理由
+
+レキシカルな名前は、宣言したハンドラの動的範囲より長く生きうる。
+素通しの閉包を値としてハンドラの外へ返し、後から呼べば、そのラベルを処理する者はいない。
+Koka と Effekt はこれを型で防ぐ。前者はハンドラ名にスコープ多相を与え、後者はケイパビリティを第二級にして値としての脱出そのものを禁じる。
+どちらも注釈と型検査を前提としており、型を書く構文を持たない本言語では採れない。
+そこで本言語は、名前の一意性だけを構造で保証し（別のハンドラに誤って捕まることはない）、範囲の外での呼び出しは実行時のエラーとした。
+静的に防がないという選択は、named handlers の系譜では古典的な妥協である。
+
+### 停止性との関係
+
+素通しの閉包は普通の `$fn` であり、その本体は内部の演算を一つ呼ぶだけである。
+したがって言語仕様の関数値の流れの検査は、この閉包を他の閉包と同じに扱えばよく、停止性の証明の骨子も変わらない。
+宣言が新たに導入するのは演算の呼び出しであって、関数値の新しい流れ方ではない。
+節の `$resume` で再開される値のような演算の値の経路は、検査がすでに依存として数えている。
+
 ## effectful-yaml との対応
 
 以上を踏まえると、言語仕様の各部は次のように対応する。
@@ -209,3 +244,6 @@ effectful-yaml のカーネルは、逐次を `$let` に一本化し適用を独
 - G. Plotkin, J. Power. Algebraic Operations and Generic Effects. Applied Categorical Structures, 2003.
 - G. Plotkin, M. Pretnar. Handling Algebraic Effects. Logical Methods in Computer Science, 2013.
 - D. Leijen. Type Directed Compilation of Row-typed Algebraic Effects. POPL, 2017.
+- D. Biernacki, M. Piróg, P. Polesiuk, F. Sieczkowski. Binders by Day, Labels by Night: Effect Instances via Lexically Scoped Handlers. POPL, 2020.
+- J. I. Brachthäuser, P. Schuster, K. Ostermann. Effects as Capabilities: Effect Handlers and Lightweight Effect Polymorphism. OOPSLA, 2020.
+- N. Xie, Y. Cong, K. Ikemori, D. Leijen. First-class Names for Effect Handlers. OOPSLA, 2022.
