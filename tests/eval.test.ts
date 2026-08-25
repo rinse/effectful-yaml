@@ -1886,16 +1886,21 @@ describe('予約キーと名前空間（草案 0.6）', () => {
     );
   });
 
-  it('$handle の節名はドット入りの演算名か return でなければならない', async () => {
-    await expect(
-      run(`
+  it('$handle の節名は演算名か裸のローカル名か return でなければならない', async () => {
+    // 裸の名前はローカル作用の宣言なので、誤りなのは `$` 始まりと壊れたドット区切りである。
+    for (const name of ['$fail', 'a..b']) {
+      await expect(
+        run(`
 $handle: 1
 $with:
-  fail:
+  ${JSON.stringify(name)}:
     $fn: m
     $body: x
 `),
-    ).rejects.toThrow(/clause name must be a namespaced operation name or 'return'/);
+      ).rejects.toThrow(
+        /clause name must be an operation name, a bare local name, or 'return'/,
+      );
+    }
   });
 
   it('節に挙げた演算は登録が要らない（事前検査はどの節にも現れない演算だけを拒む）', async () => {

@@ -1,6 +1,6 @@
 /**
  * 静的な作用推論と評価器。
- * 仕様: docs/grammar.md（草案 0.6）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar.md（草案 0.7）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
  * 二つのことを一体で行う。
  * 1. Analyzer: 文書を実行せずに各ノードの作用集合を求める。
@@ -22,9 +22,12 @@
  */
 import { hasPathRef, interpolate, MissingPathError, refPathOf } from './expr.js';
 import {
-  analyzeMapping,
+  classifyClauseName,
   fnParamsOf,
   HANDLER_REMOVES,
+  localDeclsOf,
+  localOpParts,
+  mappingShapeOfNode,
   statementFormOf,
   unescapeDollar,
   type MappingShape,
@@ -626,12 +629,12 @@ class Analyzer {
     if (typeof node === 'string') return hasPathRef(node) ? new Set(FAIL_OPS) : new Set();
     if (Array.isArray(node)) return union(...node.map(rec));
     if (!isNodeMap(node)) return new Set();
-    if (analyzeMapping(Object.keys(node)).kind !== 'plain') return undefined;
+    if (mappingShapeOfNode(node).kind !== 'plain') return undefined;
     return union(...Object.values(node).map(rec));
   }
 
   private dollar(node: NodeMap, senv: SEnv): Set<string> {
-    const shape = analyzeMapping(Object.keys(node));
+    const shape = mappingShapeOfNode(node);
     switch (shape.kind) {
       case 'plain':
         return new Set();
@@ -700,7 +703,8 @@ class Analyzer {
         );
       default:
         // ホスト登録の演算は失敗を通知できるので、出現は std.fail も数える（パスをたどる参照と同じ扱い）。
-        return shape.name.startsWith('std.')
+        // ローカル作用の内部演算はホストへ渡らない（節が必ず処理する）ので数えない。
+        return shape.name.startsWith('std.') || localOpParts(shape.name) !== undefined
           ? union(this.effects(arg, senv), [shape.name])
           : union(this.effects(arg, senv), [shape.name], FAIL_OPS);
     }
@@ -756,8 +760,11 @@ class Analyzer {
           this.effects(aux('with'), senv),
           this.call(this.track(aux('with'), senv), undefined).row ?? [],
         );
-      case 'handle':
-        return this.handled(this.effects(arg, senv), aux('with'), senv);
+      case 'handle': {
+        // ローカル作用の宣言は本体にだけ見える（節と外側には見えない）。
+        const body = this.effects(arg, this.withLocals(aux('with'), senv));
+        return this.handled(body, aux('with'), senv);
+      }
       case 'with':
         // 単独の $with は $do の文の位置でだけ意味を持つ（位置外は評価器がエラーにする）。
         // 推論は出現主義なので、節の本体の作用だけ数えて通す（何も取り除かない）。
@@ -770,13 +777,26 @@ class Analyzer {
     }
   }
 
+  /** ローカル作用の宣言（素通しの閉包）を追跡環境へ足す。本体を解析する側が呼ぶ。 */
+  private withLocals(withNode: unknown, senv: SEnv): SEnv {
+    if (!isNodeMap(withNode)) return senv;
+    let cur = senv;
+    for (const [name, decl] of localDeclsOf(withNode)) {
+      cur = insert(cur, name, this.track(decl.fn, senv));
+    }
+    return cur;
+  }
+
   /**
    * $with の節が本体の作用集合に及ぼす効果。宣言した演算（return 以外の節名）を取り除き、
    * 節の本体の作用を足す。$handle と $do の $with 文で共通。
+   * ローカル作用の節が取り除くのは、素通しの閉包が起こす内部演算の名前である。
    */
   private handled(body: Set<string>, withNode: unknown, senv: SEnv): Set<string> {
     const clauses = isNodeMap(withNode) ? withNode : {};
-    const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return'));
+    const locals = localDeclsOf(clauses);
+    const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return' && !locals.has(k)));
+    for (const decl of locals.values()) removed.add(decl.opName);
     return union(
       without(body, removed),
       // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
@@ -832,7 +852,9 @@ class Analyzer {
           break;
         case 'with':
           flush();
+          // 節は文の位置の追跡環境で見る。ローカル作用の宣言は残りの文（＝本体）から見える。
           steps.push({ kind: 'with', clauses: form.clauses, senv: cur });
+          cur = this.withLocals(form.clauses, cur);
           break;
       }
     }
@@ -863,7 +885,7 @@ class Analyzer {
       return structOf(node.map((n, i) => [String(i), this.track(n, senv)] as const));
     }
     if (!isNodeMap(node)) return undefined;
-    const shape = analyzeMapping(Object.keys(node));
+    const shape = mappingShapeOfNode(node);
     if (shape.kind === 'plain') {
       return structOf(
         Object.entries(node).map(([k, v]) => [unescapeDollar(k), this.track(v, senv)] as const),
@@ -1140,7 +1162,7 @@ class Evaluator {
     if (!isNodeMap(node)) {
       throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
     }
-    if (analyzeMapping(Object.keys(node)).kind !== 'plain') return undefined;
+    if (mappingShapeOfNode(node).kind !== 'plain') return undefined;
     // キーは $$ を literal な $ に解決するだけ（計算されたキーは $mapping で書く）。
     const entries = Object.entries(node);
     const go = (i: number, acc: Cons<readonly [string, Value]> | null): Comp => {
@@ -1154,7 +1176,7 @@ class Evaluator {
   }
 
   private dollar(node: NodeMap, env: Env): Comp {
-    const shape = analyzeMapping(Object.keys(node));
+    const shape = mappingShapeOfNode(node);
     switch (shape.kind) {
       case 'plain':
         throw new EffectfulYamlError('unreachable: plain mapping is not a $ form');
@@ -1371,8 +1393,9 @@ class Evaluator {
             handleState(rest(), cellsOf(cells)),
           );
         case 'with': {
-          const { clauses, ret } = this.clausesOf(form.clauses, env);
-          return handleOps(rest(), clauses, ret);
+          // ローカル作用の宣言は残りの文（＝本体）から見える（$let 文と同じスコープ規則）。
+          const { clauses, ret, inner } = this.clausesOf(form.clauses, env);
+          return handleOps(this.statements(stmts, i + 1, inner), clauses, ret);
         }
       }
     }
@@ -1398,45 +1421,49 @@ class Evaluator {
   }
 
   private handle(body: unknown, withNode: unknown, env: Env): Comp {
-    const { clauses, ret } = this.clausesOf(withNode, env);
+    const { clauses, ret, inner } = this.clausesOf(withNode, env);
     // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。
-    return handleOps(this.node(body, env), clauses, ret);
+    return handleOps(this.node(body, inner), clauses, ret);
   }
 
   /**
    * $with のノードから部分処理の節表と return を組む（$handle と $do の $with 文で共通）。
    * 節は $with の位置の環境で閉包になる。
+   * inner は本体を評価する環境で、ローカル作用の宣言（素通しの閉包）だけが足されている
+   * （展開の `$let` は $handle の外側にあるので、節と return 節からは見えない）。
    */
   private clausesOf(
     withNode: unknown,
     env: Env,
-  ): { clauses: ReadonlyMap<string, Clause>; ret: (v: Value) => Comp } {
+  ): { clauses: ReadonlyMap<string, Clause>; ret: (v: Value) => Comp; inner: Env } {
     if (!isNodeMap(withNode)) throw new EffectfulYamlError('$with requires a mapping of clauses');
+    const locals = localDeclsOf(withNode);
     const clauses = new Map<string, Clause>();
     let ret: (v: Value) => Comp = pure;
     for (const [name, clauseNode] of Object.entries(withNode)) {
-      if (name !== 'return' && !name.includes('.')) {
-        throw new EffectfulYamlError(
-          `$handle clause name must be a namespaced operation name or 'return', got: ${name}`,
-        );
-      }
+      const kind = classifyClauseName(name);
       const closure = this.closureOf(clauseNode, env, name);
-      if (name === 'return') {
+      if (kind === 'return') {
         ret = (v) => this.enter(closure, extendEnv(closure.env, closure.params[0]!, v));
         continue;
       }
-      clauses.set(name, (arg, resume) => {
+      // ローカル作用の節にマッチするのは、素通しの閉包が起こす内部演算である。
+      clauses.set(kind === 'local' ? locals.get(name)!.opName : name, (arg, resume) => {
         // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
         // 本体の中で作られた閉包も env ごと resume を捕まえるので、そこからも再開できる。
-        const inner: Env = {
+        const clauseEnv: Env = {
           vars: insert(closure.env.vars, closure.params[0]!, arg),
           resume,
           path: closure.env.path,
         };
-        return this.enter(closure, inner);
+        return this.enter(closure, clauseEnv);
       });
     }
-    return { clauses, ret };
+    let inner = env;
+    for (const [name, decl] of locals) {
+      inner = extendEnv(inner, name, new Closure(decl.params, decl.body, env));
+    }
+    return { clauses, ret, inner };
   }
 
   private closureOf(node: unknown, env: Env, name: string): Closure {
@@ -1525,6 +1552,18 @@ function containsFunctionValue(v: Value): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * 処理されずに境界へ達した演算の文言。ローカル作用の内部演算がここに現れるのは、
+ * 素通しの閉包がハンドラの動的範囲の外で呼ばれたときだけなので、脱出として報告する。
+ * 内部名が利用者の目に触れるのはこの経路（事前検査と drive）だけである。
+ */
+function unhandledOpMessage(name: string): string {
+  const local = localOpParts(name);
+  if (local === undefined) return `unregistered operation: $${name}`;
+  const where = local.path === '' ? 'the document root' : local.path;
+  return `local effect '${local.name}' escaped its handler (declared at ${where})`;
+}
+
+/**
  * 境界の既定ハンドラを通り抜けて残るのは、失敗と、第一階の標準演算とホスト登録の演算だけである。
  * 失敗は文書全体のエラーにし、演算はその実装へ渡す（ホスト関数は非同期でよい）。
  */
@@ -1543,7 +1582,7 @@ async function drive(
     const fromHost = ops[c.name];
     const host = fromHost ?? BUILTIN_OPS[c.name];
     if (host === undefined) {
-      throw attachPath(new EffectfulYamlError(`unregistered operation: $${c.name}`), c.path);
+      throw attachPath(new EffectfulYamlError(unhandledOpMessage(c.name)), c.path);
     }
     // 閉包はホストへ渡れない（grammar.md ホスト登録の演算）。評価前の流れ検査と二重の砦で、
     // こちらは追跡に依存しない正確な検査である。第一階の標準演算（std.range）は対象外。
@@ -1588,7 +1627,7 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
   // 作用シグネチャ。既定ハンドラが処理しない = 実装が要る演算だけが残る。
   for (const name of analyzer.boundary(doc, empty)) {
     if (!(name in ops) && !(name in BUILTIN_OPS)) {
-      throw new EffectfulYamlError(`unregistered operation: $${name}`);
+      throw new EffectfulYamlError(unhandledOpMessage(name));
     }
   }
 

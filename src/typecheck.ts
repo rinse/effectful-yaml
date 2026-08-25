@@ -1,6 +1,6 @@
 /**
  * 関数値の流れの検査（0CFA 流のフロー解析）。
- * 仕様: docs/grammar.md（草案 0.6）「関数値の流れと停止性」。
+ * 仕様: docs/grammar.md（草案 0.7）「関数値の流れと停止性」。
  *
  * 閉包を作るのは文書内の `$fn` だけである（パラメータとホスト演算の結果は常にデータ）。
  * したがって文書の有限個の `$fn` を抽象閉包とするフロー解析は、追跡不能を持たない全域の解析になる。
@@ -15,7 +15,13 @@
  * エラーの位置は評価時の位置と違い、`$` 式の内側へも降りる構文上の位置で報告する。
  */
 import { refPathOf } from './expr.js';
-import { analyzeMapping, fnParamsOf, statementFormOf, unescapeDollar } from './forms.js';
+import {
+  fnParamsOf,
+  localDeclsOf,
+  mappingShapeOfNode,
+  statementFormOf,
+  unescapeDollar,
+} from './forms.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 import { EffectfulYamlError } from './types.js';
 
@@ -293,7 +299,7 @@ class Checker {
       return out;
     }
     const map = node as NodeMap;
-    const shape = analyzeMapping(Object.keys(map));
+    const shape = mappingShapeOfNode(map);
     switch (shape.kind) {
       case 'plain': {
         const fields = new Map<string, Cell>();
@@ -456,9 +462,9 @@ class Checker {
         return out;
       }
       case 'handle': {
-        const frame = this.prepareHandler(node[auxRaw('with') ?? ''], scope, path);
-        const body = this.walk(arg, scope, argPath);
-        return frame(body);
+        // 節（とローカル宣言）を先に組んでから、宣言を足した scope で本体を走査する。
+        const h = this.prepareHandler(node[auxRaw('with') ?? ''], scope, path);
+        return h.frame(this.walk(arg, h.scope, argPath));
       }
       case 'resume': {
         const v = this.walk(arg, scope, argPath);
@@ -548,7 +554,12 @@ class Checker {
           this.writeState(this.walk(form.init, cur, childPath(stmtPath, '$std.state')));
           continue;
         }
-        frames.push(this.prepareHandler(form.clauses, cur, stmtPath));
+        {
+          // $with 文のローカル宣言は残りの文（＝本体）から見える。
+          const h = this.prepareHandler(form.clauses, cur, stmtPath);
+          frames.push(h.frame);
+          cur = h.scope;
+        }
         continue;
       }
       last = this.walk(stmt, cur, stmtPath);
@@ -561,29 +572,51 @@ class Checker {
   /**
    * $with の節（$handle と $do の $with 文で共通）。節の演算名を記録し、
    * 引数プールを節の関数に適用して、節の結果とハンドラ本体の値を Res に合流させる。
-   * 返す関数が本体の値のセルを受け取り、ハンドラの式全体の値のセルを返す。
+   * 返す frame が本体の値のセルを受け取り、ハンドラの式全体の値のセルを返す。
+   * ローカル作用の宣言（ドットなしの節名）は素通しの関数を本体の scope に束縛する
+   * （内部演算名を鋳造するのはここ＝構文パスを持つ唯一の走査である）。
    */
-  private prepareHandler(withNode: unknown, scope: Scope, path: string): (body: Cell) => Cell {
-    if (!isNodeMap(withNode)) return (body) => body; // 形の誤りは評価器に任せる
+  private prepareHandler(
+    withNode: unknown,
+    scope: Scope,
+    path: string,
+  ): { frame: (body: Cell) => Cell; scope: Scope } {
+    if (!isNodeMap(withNode)) return { frame: (body) => body, scope }; // 形の誤りは評価器に任せる
+    const locals = localDeclsOf(withNode, path);
     const res = this.cell();
     let retCell: Cell | undefined;
     for (const [name, clauseNode] of Object.entries(withNode)) {
       const clausePath = childPath(childPath(path, '$with'), name);
-      if (name !== 'return' && !name.includes('.')) continue; // 節名の誤りは評価器に任せる
+      const local = locals.get(name);
+      // 節名の誤りは評価器に任せる。
+      if (name !== 'return' && local === undefined && !name.includes('.')) continue;
+      const opName = local?.opName ?? name;
       const savedResume = this.currentResume;
       if (name !== 'return') {
-        this.clauseNames.add(name);
-        this.currentResume = { opName: name, res };
+        // ローカル作用の内部演算も「節を持つ」側に数える（ホストへは決して渡らない）。
+        this.clauseNames.add(opName);
+        this.currentResume = { opName, res };
       }
       const cCell = this.walk(clauseNode, scope, clausePath);
       this.currentResume = savedResume;
       if (name === 'return') retCell = cCell;
-      else this.flow(this.apply(cCell, this.argPool(name)), res);
+      else this.flow(this.apply(cCell, this.argPool(opName)), res);
+    }
+    let inner = scope;
+    for (const [name, decl] of locals) {
+      inner = insert(
+        inner,
+        name,
+        this.walk(decl.fn, scope, childPath(childPath(path, '$with'), name)),
+      );
     }
     const ret = retCell;
-    return (body) => {
-      this.flow(ret === undefined ? body : this.apply(ret, body), res);
-      return res;
+    return {
+      frame: (body) => {
+        this.flow(ret === undefined ? body : this.apply(ret, body), res);
+        return res;
+      },
+      scope: inner,
     };
   }
 
