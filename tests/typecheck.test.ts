@@ -154,6 +154,22 @@ $with:
     ).rejects.toThrow(SELF_APP);
   });
 
+  it('ローカル節を通る密輸も拒否される（節名がローカル名でも追跡の盲点を持たない）', async () => {
+    // 上のテストと同じ形を、演算名 my.op の代わりにローカル作用の宣言 run で書いたもの。
+    await expect(
+      run(`
+$handle:
+  $.run:
+    $fn: w
+    $body: {$.w: '\${w}'}
+$with:
+  run:
+    $fn: f
+    $body: {$.f: '\${f}'}
+`),
+    ).rejects.toThrow(SELF_APP);
+  });
+
   it('呼び出しの結果（Cod）を経由する混合の循環も拒否される', async () => {
     // f = λh. (h null)(h)、g = λ_. f。f(g) は g の結果の f が f 自身の適用に届いて発散する。
     await expect(

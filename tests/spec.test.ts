@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.6）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.7）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -254,6 +254,43 @@ $std.list:
     $.dial: \${c}
 `,
     expected: [81, 1],
+  },
+  {
+    name: 'ローカル作用の宣言（打ち切り：caught boom）',
+    yaml: `
+$handle:
+  $do:
+  - {$.throw: boom}
+  - never
+$with:
+  throw:
+    $fn: msg
+    $body: caught \${msg}
+`,
+    expected: 'caught boom',
+  },
+  {
+    name: 'ローカル作用の宣言（入れ子のハンドラは同じ名前でも取り違えない）',
+    yaml: `
+$handle:
+  $do:
+  - $let:
+      up: \${throw}
+  - $handle:
+      a: {$.throw: x}
+      b: {$.up: y}
+    $with:
+      throw:
+        $fn: m
+        $body:
+          $resume: inner \${m}
+$with:
+  throw:
+    $fn: m
+    $body:
+      $resume: outer \${m}
+`,
+    expected: { a: 'inner x', b: 'outer y' },
   },
   {
     name: '$do の $with 文（残りの文にハンドラを被せる）',
@@ -512,6 +549,20 @@ $with:
 `,
     expected: 42,
     expectedLogs: ['app: hello'],
+  },
+  {
+    name: 'handle.md の例（ローカル作用の宣言：caught boom）',
+    yaml: `
+$handle:
+  $do:
+  - {$.throw: boom}
+  - never
+$with:
+  throw:
+    $fn: msg
+    $body: caught \${msg}
+`,
+    expected: 'caught boom',
   },
   {
     name: 'collect.md の例（map の形：各要素を二重にする）',
