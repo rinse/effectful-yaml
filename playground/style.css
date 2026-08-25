@@ -1,0 +1,154 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666666;
+  --border: #d5d5d5;
+  --pane-bg: #f7f7f7;
+  --accent: #2b6cb0;
+  --accent-fg: #ffffff;
+  --error-bg: #fdecec;
+  --error-border: #c0392b;
+  --error-fg: #8a2c22;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1d21;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #3a3f44;
+    --pane-bg: #24282c;
+    --accent: #4a8fd6;
+    --accent-fg: #0c1116;
+    --error-bg: #3a1f1f;
+    --error-border: #e07a6c;
+    --error-fg: #f4b8ac;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+select,
+button {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--pane-bg);
+  color: var(--fg);
+}
+
+button#run-button {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button#run-button:hover {
+  filter: brightness(1.08);
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+@media (max-width: 800px) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.pane h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0.4rem 0 0;
+}
+
+.code {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  background: var(--pane-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#source-input {
+  min-height: 320px;
+}
+
+textarea.params {
+  min-height: 70px;
+}
+
+.output {
+  min-height: 200px;
+  margin: 0;
+  overflow: auto;
+}
+
+.log {
+  min-height: 80px;
+  margin: 0;
+  overflow: auto;
+}
+
+.error {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-fg);
+  border-radius: 6px;
+  padding: 0.6rem;
+}

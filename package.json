@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:site": "node scripts/build-site.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }

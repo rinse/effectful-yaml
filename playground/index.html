@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>effectful-yaml playground</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>effectful-yaml playground</h1>
+    <div class="topbar-controls">
+      <label for="example-select">サンプル</label>
+      <select id="example-select"></select>
+      <button id="run-button" title="Ctrl+Enter でも実行">実行</button>
+    </div>
+  </header>
+
+  <main class="panes">
+    <section class="pane">
+      <h2>YAML 入力</h2>
+      <textarea id="source-input" class="code" spellcheck="false"></textarea>
+      <h2>params（YAML、任意）</h2>
+      <textarea id="params-input" class="code params" spellcheck="false" placeholder="x: 1&#10;y: hello"></textarea>
+    </section>
+
+    <section class="pane">
+      <h2>結果</h2>
+      <pre id="output-pane" class="code output"></pre>
+      <h2>ログ</h2>
+      <pre id="log-pane" class="code log"></pre>
+      <div id="error-pane" class="error" hidden></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
