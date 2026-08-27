@@ -1,0 +1,28 @@
+# return は、値ハンドラと呼ばれる特殊なハンドラ。
+# 下の例では `$.nonzero: 100` は `<std.fail> number` を持つ。
+# std.fail を捕まえて empty list にすると、std.fail を捕まえなかった場合とで戻る型が違ってしまう。
+# このようなケースでは return を使うことで型を揃えられる。
+$do:
+- $let:
+    nonzero:
+      $fn: x
+      $body:
+        $if: ${x != 0}
+        $then: ${x}
+        $else: {$std.fail: "x is zero"}
+    # std.fail を [] に、値を [x] に写す高階関数
+    toList:
+      $fn: [f, x]
+      $body:
+        $handle: {$.f: "${x}"}
+        $with:
+          std.fail: {$fn: _, $body: []}
+          # std.fail でないものだけ値ハンドラを通る
+          return: {$fn: x, $body: ["${x}"]}
+    # 部分適用
+    nonzeroToList: {$.toList: "${nonzero}"}
+- $std.list:
+    $let:
+      x: {$std.each: [100, 0, 101]}
+    $in:
+      $.nonzeroToList: ${x}
