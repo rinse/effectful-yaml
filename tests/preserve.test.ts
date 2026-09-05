@@ -142,7 +142,7 @@ describe('形が合わない場合は置換の退化', () => {
     await expect(render(src)).resolves.toBe(stringify([{ a: 1 }, { a: 2 }]));
   });
 
-  it('文書全体が計算なら従来どおり結果の直列化になる', async () => {
+  it('文書全体が計算なら結果の直列化になる', async () => {
     const src = `$let:
   x: 1
 $in:

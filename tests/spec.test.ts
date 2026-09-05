@@ -413,7 +413,7 @@ $do:
     messagePattern: /\$std\.range requires a natural number/,
   },
   {
-    name: '予約されていないドットなしの $ キーはエラー（旧記法の廃止）',
+    name: '予約されていないドットなしの $ キーはエラー',
     yaml: `{$each: [1, 2]}`,
     messagePattern: /unreserved \$ key: \$each/,
   },

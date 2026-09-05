@@ -1,6 +1,6 @@
 /**
  * effectful-yaml の値・環境・計算表現。
- * 仕様: docs/grammar.md（草案 0.3）
+ * 仕様: docs/grammar.md（草案 0.7）
  */
 import { empty, get, insert, type PMap } from './pmap.js';
 
@@ -181,7 +181,7 @@ export function attachPath<E>(e: E, path: string | undefined): E {
 /**
  * ホスト演算が「データ起因の失敗」を通知する例外。
  * ドライバが演算の呼び出し位置の std.fail に翻訳するので、文書側のハンドラが捕捉できる。
- * これ以外の例外は従来どおり捕捉できない文書のエラーである。
+ * これ以外の例外は捕捉できない文書のエラーである。
  */
 export class OperationFailure extends Error {
   constructor(readonly value: Value) {

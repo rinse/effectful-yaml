@@ -1,5 +1,5 @@
 /**
- * 検証テスト：docs/grammar.md（草案 0.4）が定める std の派生ハンドラ
+ * 検証テスト：docs/grammar.md（草案 0.7）が定める std の派生ハンドラ
  * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
  * 「$handle と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
  * 結果と比較する。

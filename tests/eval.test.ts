@@ -1025,7 +1025,7 @@ $do:
 
 describe('作用の推論の計算量', () => {
   it('$let + $fn の深い入れ子でも走査は線形で終わる', async () => {
-    // かつて $fn の定義ごとに本体を二重走査していたため 2^深さ に爆発した。回帰を防ぐ。
+    // $fn の本体は呼び出し側だけが走査する。定義ごとに走査すると 2^深さ に爆発する。
     let body: unknown = '${x}';
     for (let i = 0; i < 32; i++) {
       body = { $do: [{ $let: { f: { $fn: 'x', $body: body } } }, { '$.f': i }] };
@@ -1033,10 +1033,6 @@ describe('作用の推論の計算量', () => {
     await expect(evaluate(body)).resolves.toBe(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// 草案 0.4 で入った振る舞い
-// ---------------------------------------------------------------------------
 
 describe('$collect（畳み込みのカーネル構文）', () => {
   it('$with の結果リストを文書順に連結する（$into 省略時は list）', async () => {
@@ -1845,10 +1841,10 @@ $with:
   });
 });
 
-describe('予約キーと名前空間（草案 0.6）', () => {
-  it('旧記法のドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
-    const old = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state'];
-    for (const name of old) {
+describe('予約キーと名前空間', () => {
+  it('予約されていないドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
+    const names = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state'];
+    for (const name of names) {
       await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
     }
   });
@@ -2236,7 +2232,7 @@ $do:
     ).rejects.toThrow(/uninitialized cell: n/);
   });
 
-  it('文の位置の外では従来どおりエラー', async () => {
+  it('文の位置の外ではエラー', async () => {
     await expect(
       run('{$do: [{$let: {x: {$with: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
     ).rejects.toThrow(/\$with without \$handle is only allowed as a statement of \$do/);

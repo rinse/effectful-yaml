@@ -97,7 +97,7 @@ export type DollarKeyKind =
  * 区別がつくため、区画がいくつ続いても衝突しない。
  * また `$let` の束縛名自体にはドットを使えない（束縛と制御の節）ので、
  * 名前の中のドットは常に「束縛名の終わり・キーアクセスの始まり」の区切りとして読める。
- * それ以外（空区画・記号・添字）は従来どおりエラーにする。添字アクセスは対象外で、
+ * それ以外（空区画・記号・添字）はエラーにする。添字アクセスは対象外で、
  * 必要なら `$let` で名前を付けてから呼ぶ。
  * ドットを含む名前は登録演算。それ以外は予約キーでなければエラー。
  */
@@ -111,7 +111,7 @@ export function classifyDollarKey(nameAfterDollar: string): DollarKeyKind {
       throw new EffectfulYamlError(`invalid lexical call name: $${nameAfterDollar}`);
     }
     // return は $with の節名として予約されている。呼び出しの形で書かれたら形の誤りである
-    // （束縛としての `$let: {return: ...}` と `${return}` の参照は従来どおり合法）。
+    // （束縛としての `$let: {return: ...}` と `${return}` の参照は合法）。
     // 三者（型検査・解析・評価）が通るこの一箇所で拒めば、出現主義の評価前拒否になる。
     if (name.split('.')[0] === 'return') {
       throw new EffectfulYamlError('return is reserved: $.return is not callable');
@@ -181,7 +181,7 @@ let mintCount = 0;
  * $with のローカル作用の宣言。ハンドラのノードごとに一度だけ作り、合成したノードを
  * 型検査・解析・評価で共有する（走査のたびに新造すると、ノード同一性のメモが効かない）。
  * path は表示用で、最初の呼び出し（型検査）が構文位置を渡す。
- * 節名の誤りはここでは投げない（従来どおり評価器が報告する）。
+ * 節名の誤りはここでは投げない（評価器が報告する）。
  * ponytail: YAML の別名で共有された $with は一つの位置として鋳造する（同じ内部名になり、
  * 入れ子にすると内側が捕まえる）。困ったら構文パスを評価器まで通して位置ごとに鋳造する。
  */
@@ -277,7 +277,7 @@ function analyzeMapping(rawKeys: readonly string[]): MappingShape {
 
   if (mainCandidates.length === 0) {
     // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。ほかのキーを伴えば
-    // 従来どおり孤児である。文の位置かどうかはここでは分からないので、位置外は評価器がエラーにする。
+    // 孤児である。文の位置かどうかはここでは分からないので、位置外は評価器がエラーにする。
     const only = auxCandidates[0];
     if (auxCandidates.length === 1 && only!.c.kind === 'reserved' && only!.c.main === 'with') {
       return { kind: 'reserved', main: 'with', mainRaw: only!.raw, aux: new Map() };
@@ -325,7 +325,7 @@ const synthShapes = new WeakMap<object, MappingShape>();
 
 /**
  * マッピングノードの形。走査（型検査・解析・評価）はキーの並びではなくノードを渡す。
- * ローカル作用の素通しの本体だけは合成物なので出所で形が決まり、それ以外は従来どおり
+ * ローカル作用の素通しの本体だけは合成物なので出所で形が決まり、それ以外は
  * キーの並びから決まる。文書に書かれたキーはこの WeakMap に載らないので、内部演算名を
  * 字面で真似ても演算にはならない。
  */

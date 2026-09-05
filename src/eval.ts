@@ -276,7 +276,7 @@ function setOwn(out: ValueMap, key: string, v: Value): void {
 
 /**
  * キーと値の対の cons をマッピングへ実体化する。文書順に前方代入するので、
- * 重複キーは元の `{...acc, [k]: v}` と同じく「最初の出現位置に、最後の値」になる。
+ * 重複キーは「最初の出現位置に、最後の値」になる。
  */
 function materializeMap(entries: Cons<readonly [string, Value]> | null): ValueMap {
   const out: ValueMap = {};
@@ -1236,7 +1236,7 @@ class Evaluator {
         );
       case 'std.opt':
         // $default の展開（std.fail の節が $default の式を返す）。$default が無ければ
-        // aux('default') は undefined で、node() が pure(null) にするので従来の null になる。
+        // aux('default') は undefined で、node() が pure(null) にするので null になる。
         return handleOps(
           this.node(arg, env),
           new Map([['std.fail', () => this.node(aux('default'), env)]]),
