@@ -1,6 +1,6 @@
 /**
  * YAML ノードからカーネルの AST への脱糖。
- * 仕様: docs/grammar.md（草案 0.8）「予約キーとカーネル」「$do」「引数名の列と部分適用」
+ * 仕様: docs/grammar.md（草案 0.9）「予約キーとカーネル」「$do」「引数名の列と部分適用」
  * 「$std.where」「ハンドラ」「std の派生ハンドラ」。
  *
  * 仕様は導出形を「カーネルへの展開」で定めるので、展開はここで一度だけ行う。
@@ -260,10 +260,29 @@ function displayName(k: DollarKeyKind): string {
   return `$${k.kind === 'op' ? k.name : k.main}`;
 }
 
+/** 前置きとして許される三つの生キー（本体を欠いた二項形）。 */
+const PRELUDE_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
+
+/**
+ * マッピングの生キーの並びが前置き（本体を欠いた二項形を一つ以上、データのキーを
+ * 一つ以上持つ形）であれば、その `$` キーを文書順の配列で返す。`$` キーは書かれたままの
+ * 字面で見るので、`$$let` のようなエスケープは該当しない。
+ * go() が analyzeMapping より先にこれを呼んで前置きを取り分けるので、`$in` など
+ * 前置き以外の `$` キーが混ざったマッピングは前置きと判定されない。
+ */
+function preludeKeysOf(rawKeys: readonly string[]): readonly string[] | undefined {
+  const dollarKeys = rawKeys.filter(isDollarFormKey);
+  if (dollarKeys.length === 0 || dollarKeys.length === rawKeys.length) return undefined;
+  return dollarKeys.every((k) => PRELUDE_KEYS.has(k)) ? dollarKeys : undefined;
+}
+
 /**
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
- * - $ 式でないキーが一つでもあれば、$ キーの有無に関わらず plain（混在はエラー）。
- * - $ キーは主キーちょうど一つと、その主キーが許す補助キーだけを許す。
+ * 前置きは go() がこれより先に取り分けるので、ここに `$` キーとデータのキーが
+ * 混在して届いたときは常にエラーである。
+ * - `$` キーが一つも無ければ plain。
+ * - `$` キーとデータのキーが混在していればエラー。
+ * - `$` キーだけなら、主キーちょうど一つと、その主キーが許す補助キーだけを許す。
  * - 補助キーを許すのは予約キー（`$in` を取る `$let` を含む）のほか、`$in` を取る
  *   `$std.state` と `$default` を取る `$std.param` と `$std.opt` だけ。
  *   レキシカル呼び出しは補助キーを取らない。
@@ -450,7 +469,14 @@ function go(node: unknown, path: string, spath: string, inData: boolean): KNode 
   if (!isNodeMap(node)) {
     throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
   }
-  const shape = analyzeMapping(Object.keys(node));
+  const rawKeys = Object.keys(node);
+  const preludeKeys = preludeKeysOf(rawKeys);
+  if (preludeKeys !== undefined) {
+    const plainKeys = rawKeys.filter((k) => !isDollarFormKey(k));
+    const form = preludeStatements(node, preludeKeys, plainKeys, path, spath);
+    return inData ? { k: 'boundary', path, body: form } : form;
+  }
+  const shape = analyzeMapping(rawKeys);
   if (shape.kind === 'plain') {
     // キーは $$ を literal な $ に解決するだけ（計算されたキーは $std.mapping で書く）。
     // 位置に使うのは書かれたままのキーである。
@@ -593,7 +619,8 @@ function dollarForm(
           children: [main()],
         };
       }
-      return statements(arg, 0, path, childPath(spath, mainRaw));
+      const doPath = childPath(spath, mainRaw);
+      return statements(arg, 0, path, (i) => `${doPath}[${i}]`);
     }
     case 'let': {
       const bindings = letBindings(node[mainRaw], path, childPath(spath, mainRaw));
@@ -725,20 +752,24 @@ function handler(
 }
 
 /**
- * `$do` の文の並び。展開のとおり、束縛文と値を捨てる文は一つの `$let` の束縛列に畳み、
+ * 文の並びを脱糖する。`$do` の文の並びと、マッピングの前置きが並べる文の並びの
+ * 両方から呼ばれる。展開のとおり、束縛文と値を捨てる文は一つの `$let` の束縛列に畳み、
  * `$with` 文と `$std.state` 文だけが残りの文を本体に取る入れ子を作る。
  * 文の数だけ入れ子を作らないので、走査も評価も文の数でスタックを積まない。
+ *
+ * spathOf は i 番目の文の構文パスを返す。`$do` の文は `$do[i]` を刻むが、
+ * 前置きの文はすべてマッピング自身の構文パスを共有する（詳細は preludeStatements）。
  */
 function statements(
   stmts: readonly unknown[],
   from: number,
   path: string,
-  doPath: string,
+  spathOf: (i: number) => string,
 ): KNode {
   const bindings: Binding[] = [];
   for (let i = from; i < stmts.length; i++) {
     const stmt = stmts[i];
-    const sp = `${doPath}[${i}]`;
+    const sp = spathOf(i);
     const form = statementFormOf(stmt);
     if (form !== undefined) {
       if (form.kind === 'let') {
@@ -751,12 +782,12 @@ function statements(
           k: 'state',
           path,
           init,
-          body: statements(stmts, i + 1, path, doPath),
+          body: statements(stmts, i + 1, path, spathOf),
         });
       }
       // ローカル作用の宣言は残りの文（＝本体）から見える（$let 文と同じスコープ規則）。
       const h = handler(form.clauses, path, sp);
-      const rest = statements(stmts, i + 1, path, doPath);
+      const rest = statements(stmts, i + 1, path, spathOf);
       return mkLet(path, bindings, {
         k: 'handle',
         path,
@@ -770,6 +801,27 @@ function statements(
   }
   // 空の $do、および末尾が束縛文だけの $do の値は null。
   return mkLet(path, bindings, lit(path, null));
+}
+
+/**
+ * マッピングの前置き（本体を欠いた二項形を一つ以上、データのキーを一つ以上持つ形）を
+ * $do の文の並びへ展開する。$ キーはそれぞれ単一キーのマッピングの文にし、データのキーは
+ * 一つにまとめたマッピングの文にして、$ キーが先・データのキーが最後という文書順で
+ * statements() に渡す（データのキーとの元の相対位置は問わない）。
+ * 前置きの文はどれも `$do[i]` を刻まず、マッピング自身の構文パス spath を共有する
+ * （$let の束縛 f は spath.$let.f、$with のローカル作用の内部名は 名前@spath、
+ * データのキー k は spath.k になる）。
+ */
+function preludeStatements(
+  node: NodeMap,
+  dollarKeys: readonly string[],
+  plainKeys: readonly string[],
+  path: string,
+  spath: string,
+): KNode {
+  const stmts: unknown[] = dollarKeys.map((k) => ({ [k]: node[k] }));
+  stmts.push(Object.fromEntries(plainKeys.map((k) => [k, node[k]])));
+  return statements(stmts, 0, path, () => spath);
 }
 
 /** 文書を脱糖する。文書全体が一つの作用境界である。 */

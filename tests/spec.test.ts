@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.8）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.9）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -317,6 +317,56 @@ $do:
 - \${n + 1}
 `,
     expected: 42,
+  },
+  {
+    name: '前置きを持つマッピング（$let の前置き）',
+    yaml: `
+$let:
+  registry: ghcr.io/acme
+  env: {$std.param: env, $default: dev}
+name: api
+image: \${registry}/api:\${env}
+replicas:
+  $if: \${env == 'prod'}
+  $then: 3
+  $else: 1
+`,
+    expected: { name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 },
+  },
+  {
+    name: '前置きを持つマッピング（$with の前置き）',
+    yaml: `
+database:
+  $with:
+    std.fail: {$fn: _, $body: {$resume: null}}
+  host: {$std.param: db_host}
+  port: {$std.param: db_port}
+`,
+    params: { db_host: 'db' },
+    expected: { database: { host: 'db', port: null } },
+  },
+  {
+    name: '前置きを持つマッピング（合成位置の $let の前置き）',
+    yaml: `
+$std.list:
+  $let:
+    x: {$std.each: [1, 2]}
+  v: \${x}
+`,
+    expected: [{ v: 1 }, { v: 2 }],
+  },
+  {
+    name: '前置きを持つマッピング（$std.state の前置き）',
+    yaml: `
+$do:
+- $std.set: {n: 100}
+- inner:
+    $std.state: {n: 0}
+    a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
+    b: {$std.get: n}
+  outer: {$std.get: n}
+`,
+    expected: { inner: { a: 1, b: 1 }, outer: 100 },
   },
 ];
 

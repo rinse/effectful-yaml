@@ -1,4 +1,4 @@
-# 外部パラメータを文書ルートの $let で束縛
+# 外部パラメータを文書の前置きの $let で束縛
 $let:
   x:
     $std.param: x
@@ -6,8 +6,7 @@ $let:
   y:
     $std.param: y
     $default: { yaml: false } # オブジェクトの受け取り
-$in:
-  # 外部から受け取った値の利用
-  param:
-    number: ${x}
-    object: ${y}
+# 外部から受け取った値の利用
+param:
+  number: ${x}
+  object: ${y}
