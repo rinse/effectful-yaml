@@ -2,7 +2,7 @@
  * `$` キーの分類と、マッピングノードの形の判定。
  * 仕様: docs/grammar.md（草案 0.8）呼び出しと名前空間 / 各フォームの節。
  *
- * effect-infer（eval-core に同居）と evaluator の双方が、同じマッピングを
+ * 評価前の検査（typecheck.ts）と評価器（eval.ts）の双方が、同じマッピングを
  * 同じ形として認識しなければならないため、その判定をここに集約する。
  */
 import { EffectfulYamlError } from './types.js';
