@@ -8,12 +8,14 @@
  * 差し替える（テキストのスプライシング）。コメント・整形・キー順・クォートの
  * 選択は、島の外である限りすべて原文のまま残る。
  *
- * 島の内側には踏み込まない（内側のコメントは失われる）。また、スプライシングが
- * できない・結果が合わない場合は常に stringify(result) に退化する。
+ * 島の内側には踏み込まない（内側のコメントは失われる）。例外はブロックで書かれた
+ * 前置きを持つマッピングで、前置きの `$` の対だけを取り除いてデータのキーの内側へ降りる。
+ * `$in` や `$do` の本体は字下げを変えずに原文から取り出せないので、これらは島のまま置き換える。
+ * スプライシングができない・結果が合わない場合は常に stringify(result) に退化する。
  */
 import { isDeepStrictEqual } from 'node:util';
 import { isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, stringify } from 'yaml';
-import { isDollarFormKey } from './desugar.js';
+import { isDollarFormKey, preludeKeysOf } from './desugar.js';
 import { isClosure, type Value } from './types.js';
 
 /** 原文の [start, end) を text で差し替える指示。文書順に並び、互いに重ならない。 */
@@ -95,12 +97,38 @@ function walk(
   const flow = inFlow || (isCollection(node) && node.flow === true && !isRoot);
 
   if (isMap(node)) {
-    // 規則 2: $ 形のキーが一つでもあれば計算の島。内側には踏み込まない。
-    if (node.items.some((p) => rawKey(p.key) !== undefined && isDollarFormKey(rawKey(p.key)!))) {
+    // 生キー。$ 形になれるのは文字列のキーだけなので、それ以外はデータのキーとして扱う。
+    const rawKeys = node.items.map((p) => rawKey(p.key) ?? '');
+    // 規則 2: ブロックで書かれた前置きを持つマッピングは、前置きの `$` の対を取り除き、
+    // 残るデータの対を結果のエントリと i 番目どうしで対応させて内側へ降りる。
+    // フローの前置きは対の削除がカンマの扱いを要するので、規則 3 の島に落とす。
+    const prelude = preludeKeysOf(rawKeys);
+    if (prelude !== undefined && !inFlow && node.flow !== true && isValueMap(value)) {
+      const entries = Object.entries(value);
+      const drops = node.items.map((p, i) =>
+        isDollarFormKey(rawKeys[i]!) ? dropPair(source, p) : null,
+      );
+      if (!drops.includes(undefined) && node.items.length - prelude.length === entries.length) {
+        let n = 0;
+        node.items.forEach((pair, i) => {
+          const drop = drops[i];
+          if (drop) {
+            splices.push(drop);
+            return;
+          }
+          const [key, v] = entries[n++]!;
+          if (keyText(pair.key) !== key) splices.push(replace(source, pair.key, key, flow));
+          walk(source, pair.value, v, flow, false, splices);
+        });
+        return;
+      }
+    }
+    // 規則 3: $ 形のキーが一つでもあれば計算の島。内側には踏み込まない。
+    if (rawKeys.some(isDollarFormKey)) {
       splices.push(replace(source, node, value, flow));
       return;
     }
-    // 規則 3: マッピング同士でペア数が合えば、i 番目どうしを対応させて再帰する。
+    // 規則 4: マッピング同士でペア数が合えば、i 番目どうしを対応させて再帰する。
     if (isValueMap(value) && node.items.length === Object.keys(value).length) {
       const entries = Object.entries(value);
       node.items.forEach((pair, i) => {
@@ -111,12 +139,31 @@ function walk(
       return;
     }
   } else if (isSeq(node) && Array.isArray(value) && node.items.length === value.length) {
-    // 規則 3: シーケンス同士で要素数が合えば再帰する。
+    // 規則 4: シーケンス同士で要素数が合えば再帰する。
     node.items.forEach((item, i) => walk(source, item, value[i]!, flow, false, splices));
     return;
   }
 
-  splices.push(replace(source, node, value, flow)); // 規則 4: 形が合わなければノードごと置換
+  splices.push(replace(source, node, value, flow)); // 規則 5: 形が合わなければノードごと置換
+}
+
+/**
+ * 前置きの `$` の対を原文から取り除く指示。キーの行の先頭から値ノードの終端までを消す。
+ * 行頭から消すのは、残した字下げが次の行と繋がってその対を一段深くしてしまうからである。
+ * 終端に range[2] を使うので、その対の行内コメントと行末の改行まで一緒に消える。
+ * 取り除けるのは、レンジを持ち、キーの前が字下げだけの対に限る。`- $let: 束縛` のように
+ * ブロックのシーケンスの標識と同じ行にある対を消すと、続くデータの対が標識を失って
+ * YAML でなくなる。取り除けない対は undefined を返す。
+ */
+function dropPair(
+  source: string,
+  pair: { readonly key: unknown; readonly value: unknown },
+): Splice | undefined {
+  const { key, value } = pair;
+  if (!isNode(key) || !key.range || !isNode(value) || !value.range) return undefined;
+  const start = source.lastIndexOf('\n', key.range[0] - 1) + 1;
+  if (source.slice(start, key.range[0]).trim() !== '') return undefined;
+  return { start, end: value.range[2], text: '' };
 }
 
 /**

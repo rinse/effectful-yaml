@@ -7,8 +7,10 @@
  * 評価前の検査（typecheck.ts）も評価器（eval.ts）も、この AST だけを歩く。
  *
  * ノードは二種類の位置を持つ。
- *   - path:  データ位置。失敗位置の出どころであり、データを降りるときだけ伸びて
- *            `$` 式の内側では凍る（キーは値の位置ではない）。
+ *   - path:  失敗位置。出力の値の中でのその値の場所であり、式の値がそのまま出力の値に
+ *            なる経路（データのキーと添字、`$in` の本体、`$do` の最後の文、`$if` の分岐、
+ *            `return` の節を持たない `$handle` の本体、`$std.opt` と `$std.param` の
+ *            `$default`）をたどる間だけ伸びる。
  *   - spath: 構文パス。`$` 式の内側へも降りる。関数値の流れの検査のエラー位置と、
  *            ローカル作用の内部演算名に使う。必要とするノード（`$fn`）だけが持つ。
  *
@@ -269,8 +271,9 @@ const PRELUDE_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with'
  * 字面で見るので、`$$let` のようなエスケープは該当しない。
  * go() が analyzeMapping より先にこれを呼んで前置きを取り分けるので、`$in` など
  * 前置き以外の `$` キーが混ざったマッピングは前置きと判定されない。
+ * 保持レンダラ（src/preserve.ts）も、原文のマッピングが前置きかどうかをこれで判定する。
  */
-function preludeKeysOf(rawKeys: readonly string[]): readonly string[] | undefined {
+export function preludeKeysOf(rawKeys: readonly string[]): readonly string[] | undefined {
   const dollarKeys = rawKeys.filter(isDollarFormKey);
   if (dollarKeys.length === 0 || dollarKeys.length === rawKeys.length) return undefined;
   return dollarKeys.every((k) => PRELUDE_KEYS.has(k)) ? dollarKeys : undefined;
@@ -450,10 +453,13 @@ function statementFormOf(stmt: unknown): StatementForm | undefined {
 }
 
 /**
- * ノードを脱糖する。inData が真ならデータ位置であり、そこで出会った `$` 式は作用境界になる。
+ * ノードを脱糖する。
+ * inData が真ならデータ位置であり、そこで出会った `$` 式は作用境界になる。
  * `$` 式の内側は一律に合成位置なので、データ位置は再び現れない。
+ * open が真なら、このノードの値はそのまま出力の値になる。データのキーと添字で位置が
+ * 伸びるのはこの間だけである（データ位置は必ず素通しなので inData は open を含む）。
  */
-function go(node: unknown, path: string, spath: string, inData: boolean): KNode {
+function go(node: unknown, path: string, spath: string, inData: boolean, open: boolean): KNode {
   if (typeof node === 'string') return { k: 'str', path, raw: node };
   if (node === null || node === undefined) return lit(path, null);
   if (typeof node === 'number' || typeof node === 'boolean') return lit(path, node);
@@ -462,7 +468,7 @@ function go(node: unknown, path: string, spath: string, inData: boolean): KNode 
       k: 'list',
       path,
       items: node.map((c, i) =>
-        go(c, inData ? `${path}[${i}]` : path, `${spath}[${i}]`, inData),
+        go(c, open ? `${path}[${i}]` : path, `${spath}[${i}]`, inData, open),
       ),
     };
   }
@@ -473,7 +479,7 @@ function go(node: unknown, path: string, spath: string, inData: boolean): KNode 
   const preludeKeys = preludeKeysOf(rawKeys);
   if (preludeKeys !== undefined) {
     const plainKeys = rawKeys.filter((k) => !isDollarFormKey(k));
-    const form = preludeStatements(node, preludeKeys, plainKeys, path, spath);
+    const form = preludeStatements(node, preludeKeys, plainKeys, path, spath, open);
     return inData ? { k: 'boundary', path, body: form } : form;
   }
   const shape = analyzeMapping(rawKeys);
@@ -489,26 +495,33 @@ function go(node: unknown, path: string, spath: string, inData: boolean): KNode 
             unescapeDollar(rawKey),
             go(
               child,
-              inData ? childPath(path, rawKey) : path,
+              open ? childPath(path, rawKey) : path,
               childPath(spath, rawKey),
               inData,
+              open,
             ),
           ] as const,
       ),
     };
   }
-  const form = dollarForm(node, shape, path, spath);
+  const form = dollarForm(node, shape, path, spath, open);
   return inData ? { k: 'boundary', path, body: form } : form;
 }
 
-/** 合成位置（`$` 式の内側）の脱糖。 */
-const expr = (node: unknown, path: string, spath: string): KNode => go(node, path, spath, false);
+/** 合成位置（`$` 式の内側）の脱糖。値の形が出力と対応しないので位置は凍る。 */
+const expr = (node: unknown, path: string, spath: string): KNode =>
+  go(node, path, spath, false, false);
+
+/** 素通しの子（値がそのまま親の値になる位置）の脱糖。親の open をそのまま引き継ぐ。 */
+const body = (node: unknown, path: string, spath: string, open: boolean): KNode =>
+  go(node, path, spath, false, open);
 
 function dollarForm(
   node: NodeMap,
   shape: Exclude<MappingShape, { kind: 'plain' }>,
   path: string,
   spath: string,
+  open: boolean,
 ): KNode {
   if (shape.kind === 'lexical') {
     const [head, ...keys] = shape.name.split('.');
@@ -522,10 +535,17 @@ function dollarForm(
   }
   const mainRaw = shape.kind === 'op' ? shape.raw : shape.mainRaw;
   const main = (): KNode => expr(node[mainRaw], path, childPath(spath, mainRaw));
+  /** 主キーの値が素通しの本体である形（`$handle`、`$std.opt`）のための脱糖。 */
+  const mainBody = (): KNode => body(node[mainRaw], path, childPath(spath, mainRaw), open);
   /** 補助キーの部分木。書かれていなければ undefined。 */
   const aux = (name: string): KNode | undefined => {
     const raw = shape.aux.get(name);
     return raw === undefined ? undefined : expr(node[raw], path, childPath(spath, raw));
+  };
+  /** 素通しの補助キー（`$in`、`$then`、`$else`、`$default`）の部分木。 */
+  const auxBody = (name: string): KNode | undefined => {
+    const raw = shape.aux.get(name);
+    return raw === undefined ? undefined : body(node[raw], path, childPath(spath, raw), open);
   };
 
   if (shape.kind === 'op') {
@@ -552,7 +572,7 @@ function dollarForm(
         return {
           k: 'handle',
           path,
-          body: main(),
+          body: mainBody(),
           clauses: [
             {
               op: 'std.fail',
@@ -560,15 +580,15 @@ function dollarForm(
                 path,
                 childPath(spath, '$std.opt'),
                 '_@opt',
-                aux('default') ?? lit(path, null),
+                auxBody('default') ?? lit(path, null),
               ),
             },
           ],
         };
       case 'std.state': {
         const init = main();
-        const body = aux('in');
-        if (body !== undefined) return { k: 'state', path, init, body };
+        const inBody = auxBody('in');
+        if (inBody !== undefined) return { k: 'state', path, init, body: inBody };
         return {
           k: 'err',
           path,
@@ -579,7 +599,7 @@ function dollarForm(
       case 'std.param': {
         // 未渡しを std.fail に翻訳するのは呼び出し位置（評価器の op の節）である。
         const read: KNode = { k: 'op', path, name: 'std.param', arg: main() };
-        const fallback = aux('default');
+        const fallback = auxBody('default');
         if (fallback === undefined) return read;
         return {
           k: 'handle',
@@ -620,12 +640,12 @@ function dollarForm(
         };
       }
       const doPath = childPath(spath, mainRaw);
-      return statements(arg, 0, path, (i) => `${doPath}[${i}]`);
+      return statements(arg, 0, path, (i) => `${doPath}[${i}]`, open);
     }
     case 'let': {
       const bindings = letBindings(node[mainRaw], path, childPath(spath, mainRaw));
-      const body = aux('in');
-      if (body !== undefined) return mkLet(path, bindings, body);
+      const inBody = auxBody('in');
+      if (inBody !== undefined) return mkLet(path, bindings, inBody);
       return {
         k: 'err',
         path,
@@ -639,8 +659,8 @@ function dollarForm(
         path,
         what: '$if condition',
         cond: main(),
-        then: aux('then')!,
-        else: aux('else')!,
+        then: auxBody('then')!,
+        else: auxBody('else')!,
       };
     case 'fn':
       return {
@@ -660,10 +680,11 @@ function dollarForm(
       };
     case 'handle': {
       const h = handler(node[shape.aux.get('with')!], path, spath);
+      // return の節は本体の値を作り変えるので、その形の `$handle` の本体は素通しでない。
       return {
         k: 'handle',
         path,
-        body: mkLet(path, h.locals, main()),
+        body: mkLet(path, h.locals, h.ret === undefined ? mainBody() : main()),
         clauses: h.clauses,
         ...(h.ret === undefined ? {} : { ret: h.ret }),
       };
@@ -759,12 +780,16 @@ function handler(
  *
  * spathOf は i 番目の文の構文パスを返す。`$do` の文は `$do[i]` を刻むが、
  * 前置きの文はすべてマッピング自身の構文パスを共有する（詳細は preludeStatements）。
+ *
+ * 値が全体の値になるのは最後の文だけなので、素通しの open を引き継ぐのもそこだけである。
+ * 残りの文を本体に取る形（`$with` 文と `$std.state` 文）では、その本体が最後の文を含む。
  */
 function statements(
   stmts: readonly unknown[],
   from: number,
   path: string,
   spathOf: (i: number) => string,
+  open: boolean,
 ): KNode {
   const bindings: Binding[] = [];
   for (let i = from; i < stmts.length; i++) {
@@ -782,12 +807,12 @@ function statements(
           k: 'state',
           path,
           init,
-          body: statements(stmts, i + 1, path, spathOf),
+          body: statements(stmts, i + 1, path, spathOf, open),
         });
       }
       // ローカル作用の宣言は残りの文（＝本体）から見える（$let 文と同じスコープ規則）。
       const h = handler(form.clauses, path, sp);
-      const rest = statements(stmts, i + 1, path, spathOf);
+      const rest = statements(stmts, i + 1, path, spathOf, open && h.ret === undefined);
       return mkLet(path, bindings, {
         k: 'handle',
         path,
@@ -796,7 +821,7 @@ function statements(
         ...(h.ret === undefined ? {} : { ret: h.ret }),
       });
     }
-    if (i === stmts.length - 1) return mkLet(path, bindings, expr(stmt, path, sp));
+    if (i === stmts.length - 1) return mkLet(path, bindings, body(stmt, path, sp, open));
     bindings.push({ name: null, rhs: expr(stmt, path, sp) });
   }
   // 空の $do、および末尾が束縛文だけの $do の値は null。
@@ -818,14 +843,15 @@ function preludeStatements(
   plainKeys: readonly string[],
   path: string,
   spath: string,
+  open: boolean,
 ): KNode {
   const stmts: unknown[] = dollarKeys.map((k) => ({ [k]: node[k] }));
   stmts.push(Object.fromEntries(plainKeys.map((k) => [k, node[k]])));
-  return statements(stmts, 0, path, () => spath);
+  return statements(stmts, 0, path, () => spath, open);
 }
 
-/** 文書を脱糖する。文書全体が一つの作用境界である。 */
+/** 文書を脱糖する。文書全体が一つの作用境界であり、その値がそのまま出力になる。 */
 export function desugar(doc: unknown): KNode {
-  const root = go(doc, '', '', true);
+  const root = go(doc, '', '', true, true);
   return root.k === 'boundary' ? root : { k: 'boundary', path: '', body: root };
 }

@@ -9,7 +9,11 @@
  *    最小の部分木（＝計算の島）だけである。
  * 3. 島の置換テキストは yaml の stringify（ブロック文脈）/ JSON 互換のフロー
  *    （フロー文脈）で書く。島の内側のコメントは失われる（仕様）。
- * 4. 原文と結果の形が合わない場合（選択が島の外へ漏れて文書全体が分岐した等）は
+ * 4. ブロックで書かれた前置きを持つマッピングは島にならない。前置きの `$` の対が
+ *    行内コメントごと消え、データのキーの対はコメントを保ったまま内側へ降りる。
+ *    フロー形式の前置きと、シーケンスの標識と同じ行に書かれた前置きは島として置換する。
+ * 5. 原文と結果の形が合わない場合（選択が島の外へ漏れて文書全体が分岐した、
+ *    前置きの `$with` の節が本体を打ち切って値がマッピングでなくなった等）は
  *    エラーにせず、合わなくなったノード全体（最悪は文書全体）の置換に退化する。
  */
 import { parse, stringify } from 'yaml';
@@ -132,7 +136,96 @@ plain: 2
   });
 });
 
+describe('前置きを持つマッピング', () => {
+  it('前置きの対は行内コメントごと消え、データのキーのコメントは残る', async () => {
+    const src = `# 先頭
+$let:
+  registry: ghcr.io/acme   # 前置きの中
+name: api   # 名前
+# データのキーの前
+image: \${registry}/api
+# 末尾
+`;
+    await expect(render(src)).resolves.toBe(`# 先頭
+name: api   # 名前
+# データのキーの前
+image: ghcr.io/acme/api
+# 末尾
+`);
+  });
+
+  it('三つの前置きを並べても、残るのはデータのキーだけ', async () => {
+    const src = `$let:
+  base: 41
+$std.state: {n: "\${base}"}
+$with:
+  std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+seed: {$std.get: n}   # 状態
+missing: {$std.param: nope}
+`;
+    await expect(render(src)).resolves.toBe(`seed: 41   # 状態
+missing: 41
+`);
+  });
+
+  it('前置きより前に書かれたデータのキーも、コメントごとその場に残る', async () => {
+    const src = `name: api   # 先
+$let:
+  x: 1
+v: \${x}   # 後
+`;
+    await expect(render(src)).resolves.toBe(`name: api   # 先
+v: 1   # 後
+`);
+  });
+
+  it('入れ子の前置きも内側へ降りる', async () => {
+    const src = `$let:
+  base: 10
+inner:   # 内側
+  $let:
+    y: \${base + 1}
+  z: \${y + base}
+`;
+    await expect(render(src)).resolves.toBe(`inner:   # 内側
+  z: 21
+`);
+  });
+
+  it('フロー形式の前置きは島として置換される', async () => {
+    await expect(render('{$let: {x: 1}, a: "${x}"}\n')).resolves.toBe(stringify({ a: 1 }));
+    const src = `outer: {$let: {y: 2}, a: "\${y}"} # 行内
+`;
+    await expect(render(src)).resolves.toBe(`outer: {"a":2} # 行内
+`);
+  });
+
+  it('シーケンスの標識と同じ行の前置きは、その要素ごと島として置換される', async () => {
+    const src = `services:
+- $let: {port: 8080}
+  name: web   # 消える
+  port: \${port}
+- name: db   # 残る
+`;
+    await expect(render(src)).resolves.toBe(`services:
+- name: web
+  port: 8080
+- name: db   # 残る
+`);
+  });
+});
+
 describe('形が合わない場合は置換の退化', () => {
+  it('前置きの $with の節が本体を打ち切ると、島の置換に退化する', async () => {
+    const src = `$with:
+  throw:
+    $fn: m
+    $body: caught \${m}
+a: {$.throw: boom}   # 消える
+`;
+    await expect(render(src)).resolves.toBe(stringify('caught boom'));
+  });
+
   it('選択が島の外に漏れて文書が分岐したら、文書全体の再直列化に退化する', async () => {
     // データ位置では島自身が作用境界なので選択は漏れない（tests/eval.test.ts の
     // 「データ文脈では最も外側の $ 式だけが境界になる」）。漏れるのは $do の中である。

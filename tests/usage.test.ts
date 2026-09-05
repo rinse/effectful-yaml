@@ -63,6 +63,20 @@ cache:
     );
   });
 
+  it('素通しの経路をたどった失敗位置', async () => {
+    await expect(
+      evaluateYaml(
+        `
+$do:
+- $std.log: start
+- server:
+    hosts: [a, {$std.range: x}]
+`,
+        { onLog: () => {} },
+      ),
+    ).rejects.toThrow(expect.objectContaining({ path: 'server.hosts[1]' }));
+  });
+
   it('$std.fail は EffectfulYamlError で reject される', async () => {
     const p = evaluateYaml('{$std.fail: boom}');
     await expect(p).rejects.toBeInstanceOf(EffectfulYamlError);

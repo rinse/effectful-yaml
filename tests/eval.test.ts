@@ -2529,15 +2529,111 @@ a:
     expect(e.message).toContain('(at a.b[0])');
   });
 
-  // ponytail: 位置が伸びるのはデータを降りるときだけで、`$` 式の内側では凍る。
-  // なので `$do` を根に置いた文書は位置を持たない（`$do[1]` のような `$` のキーを
-  // 含む位置まで組むなら operation / reserved にも位置を通すことになる）。
-  it('`$` 式の内側は位置が凍るので、根が `$do` の文書には位置が付かない', async () => {
+  // ponytail: 位置は出力の値の中の場所なので、最後の文そのものが失敗すればその値は
+  // 出力全体であり、位置は空になる（`$do[1]` のような構文のキーは位置に現れない）。
+  it('$do の最後の文そのものが失敗すると位置は空になる', async () => {
     await expect(run('$do:\n- a\n- {$std.range: x}')).rejects.toThrow(
       '$std.range requires a natural number, got: x',
     );
     await expect(run('$do:\n- a\n- {$std.range: x}')).rejects.toThrow(
       expect.objectContaining({ path: undefined }),
     );
+  });
+});
+
+describe('位置が素通しになる経路', () => {
+  it('$do の最後の文はそのまま出力になるので、その中のデータで位置が伸びる', async () => {
+    await expect(run('$do:\n- a\n- server:\n    hosts: [b, {$std.range: x}]')).rejects.toThrow(
+      '(at server.hosts[1])',
+    );
+  });
+
+  it('$let の $in の本体で位置が伸びる', async () => {
+    await expect(run('$let: {x: 1}\n$in:\n  a:\n    b: {$std.range: x}')).rejects.toThrow(
+      '(at a.b)',
+    );
+  });
+
+  it('$std.state の $in の本体で位置が伸びる', async () => {
+    await expect(run('$std.state: {n: 0}\n$in:\n  a: {$std.range: x}')).rejects.toThrow('(at a)');
+  });
+
+  it('$if の $then と $else で位置が伸びる', async () => {
+    await expect(run('$if: true\n$then:\n  a: {$std.range: x}\n$else: null')).rejects.toThrow(
+      '(at a)',
+    );
+    await expect(run('$if: false\n$then: null\n$else:\n  b: {$std.range: x}')).rejects.toThrow(
+      '(at b)',
+    );
+  });
+
+  it('$std.opt の本体で位置が伸びる（捕捉できないエラーはそのまま出る）', async () => {
+    await expect(run('$std.opt:\n  a: {$std.range: x}\n$default: fallback')).rejects.toThrow(
+      '(at a)',
+    );
+  });
+
+  it('$std.opt と $std.param の $default で位置が伸びる（失敗時の値がそのまま出力になる）', async () => {
+    await expect(
+      run('a:\n  $std.opt: {$std.fail: boom}\n  $default:\n    b: {$std.range: q}'),
+    ).rejects.toThrow('(at a.b)');
+    await expect(
+      run('a:\n  $std.param: nope\n  $default:\n    b: {$std.range: q}'),
+    ).rejects.toThrow('(at a.b)');
+  });
+
+  it('前置きを持つマッピングのデータのキーで位置が伸びる', async () => {
+    await expect(run('$let: {x: 1}\nserver:\n  hosts: [a, {$std.range: q}]')).rejects.toThrow(
+      '(at server.hosts[1])',
+    );
+  });
+});
+
+describe('位置が凍る経路', () => {
+  it('$std.list の本体は値の形を変えるので凍る', async () => {
+    await expect(run('k:\n  $std.list:\n    a: {$std.range: x}')).rejects.toThrow(
+      expect.objectContaining({ path: 'k' }),
+    );
+  });
+
+  it('$let の束縛の右辺は凍る', async () => {
+    await expect(run('k:\n  $let:\n    x:\n      a: {$std.range: q}\n  $in: 1')).rejects.toThrow(
+      expect.objectContaining({ path: 'k' }),
+    );
+  });
+
+  it('return の節を持つ $handle の本体は凍る', async () => {
+    await expect(
+      run(`
+k:
+  $handle:
+    a: {$std.range: x}
+  $with:
+    return: {$fn: v, $body: "\${v}"}
+`),
+    ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
+  });
+
+  it('$fn の本体は凍る', async () => {
+    await expect(
+      run(`
+k:
+  $let:
+    f: {$fn: y, $body: {a: {$std.range: x}}}
+  $in: {$.f: 1}
+`),
+    ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
+  });
+
+  it('凍った位置の内側の $in は伸びない', async () => {
+    await expect(
+      run(`
+k:
+  $std.list:
+    $let: {x: 1}
+    $in:
+      a: {$std.range: q}
+`),
+    ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
   });
 });
