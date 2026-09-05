@@ -56,6 +56,37 @@ $do:
 // value: { password: 'secret(secret/db)' }、logs: ['reading secret']
 ```
 
+## 登録演算の失敗
+
+ホスト関数は、値を返す代わりに `OperationFailure` を投げてデータ起因の失敗を通知できる。
+処理系はこれを演算の呼び出し位置で起きた `std.fail`（値はコンストラクタに渡した値）として扱うので、文書側の `$std.opt` や `std.fail` の節を持つ `$handle` で捕捉できる。
+捕捉されなければ `failure: メッセージ` で reject される。
+`OperationFailure` 以外の例外は捕捉できないエラーであり、失敗位置を添えてそのまま reject される。
+
+```ts
+import { evaluateYaml, OperationFailure } from './src/index.js';
+
+const hosts: Record<string, string> = { db: '10.0.0.5' };
+const value = await evaluateYaml(
+  `
+db: {$dns.lookup: db}
+cache:
+  $std.opt: {$dns.lookup: cache}
+  $default: localhost
+`,
+  {
+    ops: {
+      'dns.lookup': (name) => {
+        const addr = hosts[String(name)];
+        if (addr === undefined) throw new OperationFailure(`unknown host: ${String(name)}`);
+        return addr;
+      },
+    },
+  },
+);
+// value: { db: '10.0.0.5', cache: 'localhost' }
+```
+
 ## エラー
 
 評価の失敗はすべて `EffectfulYamlError` で reject される。

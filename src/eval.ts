@@ -32,7 +32,7 @@ import {
   force,
   isClosure,
   lookupEnv,
-  OperationFailure,
+  isOperationFailure,
   perform,
   pure,
   resumeOf,
@@ -734,7 +734,7 @@ async function drive(
     try {
       out = await host(c.arg);
     } catch (e) {
-      if (e instanceof OperationFailure) {
+      if (isOperationFailure(e)) {
         // 通知された失敗を呼び出し位置の std.fail に翻訳する。内側のハンドラが捕捉できる。
         c = force(c.raise(e.value));
         continue;

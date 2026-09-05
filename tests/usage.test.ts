@@ -3,7 +3,7 @@
  * ページの記述と食い違ったら、直すのは先にページのほうかを確かめること。
  */
 import { describe, expect, it } from 'vitest';
-import { EffectfulYamlError, evaluateYaml } from '../src/index.js';
+import { EffectfulYamlError, evaluateYaml, OperationFailure } from '../src/index.js';
 
 describe('docs/usage.md の例', () => {
   it('最小の例', async () => {
@@ -35,6 +35,32 @@ $do:
       ),
     ).resolves.toEqual({ password: 'secret(secret/db)' });
     expect(logs).toEqual(['reading secret']);
+  });
+
+  it('登録演算の失敗', async () => {
+    const hosts: Record<string, string> = { db: '10.0.0.5' };
+    const ops = {
+      'dns.lookup': (name: unknown) => {
+        const addr = hosts[String(name)];
+        if (addr === undefined) throw new OperationFailure(`unknown host: ${String(name)}`);
+        return addr;
+      },
+    };
+    await expect(
+      evaluateYaml(
+        `
+db: {$dns.lookup: db}
+cache:
+  $std.opt: {$dns.lookup: cache}
+  $default: localhost
+`,
+        { ops },
+      ),
+    ).resolves.toEqual({ db: '10.0.0.5', cache: 'localhost' });
+    // 捕捉されなければ failure として reject される。
+    await expect(evaluateYaml('{$dns.lookup: cache}', { ops })).rejects.toThrow(
+      'failure: unknown host: cache',
+    );
   });
 
   it('$std.fail は EffectfulYamlError で reject される', async () => {

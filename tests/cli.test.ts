@@ -90,6 +90,27 @@ describe('eff-yaml CLI', () => {
       expect(r.out).toBe('a: "HELLO"\n');
     });
 
+    it('モジュールが投げた OperationFailure は文書側で捕捉できる', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      // モジュールが別の複製の effectful-yaml を import していても通知として扱われる（名前と value で判定する）。
+      await writeFile(
+        opsFile,
+        `class OperationFailure extends Error {
+  constructor(value) { super(String(value)); this.name = 'OperationFailure'; this.value = value; }
+}
+export default { 'env.get': (name) => { throw new OperationFailure('environment variable not set: ' + name); } };
+`,
+        'utf8',
+      );
+      const ok = await runCli(['--ops', opsFile], 'home: {$std.opt: {$env.get: HOME}, $default: /}');
+      expect(ok.code).toBe(0);
+      expect(ok.out).toBe('home: "/"\n');
+      const ng = await runCli(['--ops', opsFile], 'home: {$env.get: HOME}');
+      expect(ng.code).toBe(1);
+      expect(ng.err).toContain('failure: environment variable not set: HOME');
+    });
+
     it('-o と組み合わせるとヘッダに --ops が含まれる', async () => {
       dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
       const opsFile = join(dir, 'ops.mjs');

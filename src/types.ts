@@ -177,6 +177,15 @@ export class OperationFailure extends Error {
   }
 }
 
+/**
+ * ホスト演算が投げた例外が失敗の通知かどうか。
+ * `--ops` のモジュールが別の複製の effectful-yaml から OperationFailure を import していると
+ * instanceof は偽になるので、名前と value の有無でも判定する。
+ */
+export const isOperationFailure = (e: unknown): e is OperationFailure =>
+  e instanceof OperationFailure ||
+  (e instanceof Error && e.name === 'OperationFailure' && 'value' in e);
+
 /** 値を人が読む形にする（エラー文言と、文字列そのものの表示）。 */
 export function describe(v: Value): string {
   if (typeof v === 'string') return v;

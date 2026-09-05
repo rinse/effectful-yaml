@@ -56,6 +56,23 @@ eff-yaml config.eyaml --ops ./ops.mjs
 ```
 
 関数は同期・非同期のどちらでもよい。
+データ起因の失敗（見つからない、一致しない）は `OperationFailure` を投げて通知する。
+処理系はこれを呼び出し位置の `std.fail` に翻訳するので、文書側の `$std.opt` や `$handle` で捕捉できる（[処理系の利用](usage.md)の「登録演算の失敗」）。
+モジュールから `OperationFailure` を import するには、`npm link` かローカルパス依存で `effectful-yaml` を解決できるようにしておく。
+
+```js
+// ops.mjs
+import { OperationFailure } from 'effectful-yaml';
+
+export default {
+  'env.get': (name) => {
+    const value = process.env[name];
+    if (value === undefined) throw new OperationFailure(`environment variable not set: ${name}`);
+    return value;
+  },
+};
+```
+
 `--ops` を複数指定すると、すべてのモジュールのマッピングを後勝ちでマージする。
 モジュールが見つからない、または `default` export が演算名から関数へのマッピングでない場合は終了コード 1 でエラーになる。
 `std.` 名前空間はホストが登録できないので、演算名にこの接頭辞は使えない。
