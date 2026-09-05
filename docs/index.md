@@ -11,7 +11,7 @@ effectful-yaml のドキュメントの索引である。
 ## 利用
 
 - [処理系の利用](usage.md)：TypeScript から評価器を呼び出す API と評価オプション。
-- [CLI（eff-yaml）](cli.md)：std の演算だけで文書を評価するコマンド。
+- [CLI（eff-yaml）](cli.md)：文書を評価するコマンド。`--ops` でホストの登録演算を渡せる。
 
 ## リファレンス
 
