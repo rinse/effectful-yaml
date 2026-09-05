@@ -1,13 +1,9 @@
 /**
- * 静的な作用推論と評価器。
- * 仕様: docs/grammar.md（草案 0.7）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 評価器。
+ * 仕様: docs/grammar.md（草案 0.8）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
- * 二つのことを一体で行う。
- * 1. Analyzer: 文書を実行せずに各ノードの作用集合を求める。
- *    - 登録されていない演算を評価前に拒否する。
- *    - 各作用境界の値の形（単値かリストか）を決める。実行結果の個数からは決めない。
- * 2. Evaluator: Comp（freer モナド風の計算表現）を組み立てる。
- *    ハンドラは Comp → Comp の純粋変換なので、$handle の節は $resume を何度でも呼べる。
+ * Comp（freer モナド風の計算表現）を組み立てる。
+ * ハンドラは Comp → Comp の純粋変換なので、$handle の節は $resume を何度でも呼べる。
  *
  * 作用境界は、文書全体と、データの中に現れた最も外側の `$` 式だけである。
  * 境界の内側には、明示のハンドラ（$handle と std の派生ハンドラ）を除いて
@@ -15,21 +11,20 @@
  * 演算の引数も、呼び出しの引数と本体も、$collect の対象と関数本体も、
  * すべて合成であり、作用はそのまま周囲へ合流する。
  *
- * この三態を Analyzer と Evaluator が同じ形で持つ（片方だけ直すのは誤り）。
+ * 評価の三態。
  *   - data:     まだどの `$` 式にも入っていないデータ位置。`$` 式に出会ったらそこが境界。
  *   - boundary: 境界。中身を評価し、既定ハンドラ一式で処理し尽くす。
  *   - node:     合成位置（`$` 式の内側）。子も一律に合成。
  */
-import { hasPathRef, interpolate, MissingPathError, refPathOf } from './expr.js';
+import { interpolate, MissingPathError } from './expr.js';
 import {
   classifyClauseName,
   fnParamsOf,
-  HANDLER_REMOVES,
   localDeclsOf,
-  localOpParts,
   mappingShapeOfNode,
   statementFormOf,
   unescapeDollar,
+  unhandledOpMessage,
   type MappingShape,
 } from './forms.js';
 import { typecheck } from './typecheck.js';
@@ -38,12 +33,12 @@ import {
   atPath,
   attachPath,
   bind,
-  CHOICE_OPS,
+  BUILTIN_OPS,
   Closure,
+  describe,
   EffectfulYamlError,
   emptyEnv,
   extendEnv,
-  FAIL_OPS,
   force,
   isClosure,
   lookupEnv,
@@ -51,7 +46,6 @@ import {
   perform,
   pure,
   resumeOf,
-  STATE_OPS,
   type Comp,
   type Env,
   type Value,
@@ -60,15 +54,6 @@ import {
 // ---------------------------------------------------------------------------
 // 小道具
 // ---------------------------------------------------------------------------
-
-/** 境界の既定ハンドラ一式が処理する演算（外側から 失敗・パラメータ・ログ・状態・選択）。 */
-const DEFAULT_OPS: ReadonlySet<string> = new Set([
-  ...FAIL_OPS,
-  'std.param',
-  'std.log',
-  ...STATE_OPS,
-  ...CHOICE_OPS,
-]);
 
 type NodeMap = Record<string, unknown>;
 type ValueMap = { [key: string]: Value };
@@ -109,23 +94,6 @@ const isNodeMap = (n: unknown): n is NodeMap =>
 const isValueMap = (v: Value): v is ValueMap =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
 
-function union(...sets: readonly Iterable<string>[]): Set<string> {
-  const out = new Set<string>();
-  for (const s of sets) for (const x of s) out.add(x);
-  return out;
-}
-
-function without(s: Iterable<string>, removed: ReadonlySet<string>): Set<string> {
-  const out = new Set<string>();
-  for (const x of s) if (!removed.has(x)) out.add(x);
-  return out;
-}
-
-const hasChoice = (s: ReadonlySet<string>): boolean => {
-  for (const c of CHOICE_OPS) if (s.has(c)) return true;
-  return false;
-};
-
 function requireString(v: unknown, what: string): string {
   if (typeof v !== 'string') {
     throw new EffectfulYamlError(`${what} must be a string, got: ${JSON.stringify(v)}`);
@@ -140,32 +108,12 @@ function requireBoolean(v: Value, what: string): boolean {
   return v;
 }
 
-function describe(v: Value): string {
-  if (typeof v === 'string') return v;
-  if (isClosure(v)) return '<function>';
-  return JSON.stringify(v) ?? String(v);
-}
-
 /** 構造を回る形（$std.each の分岐、$collect の対象）。マッピングは {key, value} に分解する。 */
 function entriesOf(arg: Value, what: string): Value[] {
   if (Array.isArray(arg)) return arg;
   if (isValueMap(arg)) return Object.entries(arg).map(([key, value]) => ({ key, value }));
   throw new EffectfulYamlError(`${what} requires a list or mapping, got: ${describe(arg)}`);
 }
-
-/**
- * 第一階の標準演算（値から値を計算するだけ）。導出できないが評価器の協力も要らないので、
- * カーネルではなく「処理系が事前登録する演算」として供給の層に置く。
- * ホスト登録の演算と同じ経路（境界を抜けてドライバへ）を通る。
- */
-const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
-  'std.range': (n) => {
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
-      throw new EffectfulYamlError(`$std.range requires a natural number, got: ${describe(n)}`);
-    }
-    return Array.from({ length: n }, (_, i) => i);
-  },
-};
 
 /**
  * $std.lookup の意味（展開と等価な O(1) の照会）。無いキーは呼び出し位置の std.fail。
@@ -395,605 +343,6 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
 }
 
 // ---------------------------------------------------------------------------
-// 静的な作用推論
-// ---------------------------------------------------------------------------
-
-/**
- * レキシカルな名前 -> 静的に追跡できた値。undefined は「構造的に追跡できない」。
- * 評価器の Env と同じ永続平衡木なので、伸ばすのも捕まえるのも複製を伴わない
- * （閉包の捕獲は木への参照ひとつ = O(1)、束縛の追加は O(log n)）。
- * get は「未束縛」と「undefined が束縛されている」を区別しないが、これは Map でも同じで、
- * 解析の健全性はもともとその区別に依存していない（正準形ではどちらも -1 に潰れる）。
- */
-type SEnv = PMap<Track | undefined>;
-
-/**
- * 静的に追跡できた値（行の木）。undefined は追跡不能。
- * - closure: 呼べる値。呼んだときの作用は call() が本体から求める。
- * - struct: マッピングとリストのリテラル。キーは名前、リストは添字の 10 進表記。
- * - alt: 分岐しうる値（`$if` の両分岐、リテラルのリストからの `$each`）の過大近似。
- */
-type Track =
-  | {
-      readonly kind: 'closure';
-      /** 循環ガードの同一性に使う $fn ノード。 */
-      readonly fn: object;
-      /** 残りのパラメータ（1 個以上）。部分適用のたびに先頭が senv へ移る。 */
-      readonly params: readonly string[];
-      readonly body: unknown;
-      /** 定義位置の追跡環境（レキシカル）。木は不変なので参照ひとつで捕まえられる。 */
-      readonly senv: SEnv;
-    }
-  | { readonly kind: 'struct'; readonly fields: ReadonlyMap<string, Track> }
-  | { readonly kind: 'alt'; readonly alts: readonly Track[] };
-
-/** 追跡できた子だけを持つ構造ノード。追跡できない子はキーごと落とす（＝たどれない）。 */
-function structOf(entries: readonly (readonly [string, Track | undefined])[]): Track {
-  const fields = new Map<string, Track>();
-  for (const [key, t] of entries) if (t !== undefined) fields.set(key, t);
-  return { kind: 'struct', fields };
-}
-
-/** 分岐しうる値。一つでも追跡できない分岐があれば全体を追跡不能にする。 */
-function altOf(ts: readonly (Track | undefined)[]): Track | undefined {
-  if (ts.length === 0) return undefined;
-  const alts: Track[] = [];
-  for (const t of ts) {
-    if (t === undefined) return undefined;
-    alts.push(t);
-  }
-  return { kind: 'alt', alts };
-}
-
-/** 追跡木のパスを一区画たどる。たどれなければ undefined。 */
-function field(t: Track | undefined, seg: string): Track | undefined {
-  if (t === undefined) return undefined;
-  if (t.kind === 'struct') return t.fields.get(seg);
-  if (t.kind === 'alt') return altOf(t.alts.map((a) => field(a, seg)));
-  return undefined;
-}
-
-/**
- * 木のどこかに関数値があるか。
- * 無ければ、その木をたどった先の呼び出しはすべて追跡不能なので、引数としては undefined と同じ。
- * 同一視することでメモの鍵が揃い、データだけの引数で本体を何度も走査せずに済む。
- */
-function hasFunction(t: Track): boolean {
-  switch (t.kind) {
-    case 'closure':
-      return true;
-    case 'struct':
-      return [...t.fields.values()].some(hasFunction);
-    case 'alt':
-      return t.alts.some(hasFunction);
-  }
-}
-
-/**
- * 呼び出しの解析結果。row は呼び出しが起こす作用集合（undefined は追跡不能）、
- * out は返り値の追跡木（undefined は追跡不能）。
- */
-type CallResult = {
-  readonly row: ReadonlySet<string> | undefined;
-  readonly out: Track | undefined;
-};
-
-const UNTRACKED_CALL: CallResult = { row: undefined, out: undefined };
-
-const NO_REFS: ReadonlySet<string> = new Set();
-const refsCache = new WeakMap<object, ReadonlySet<string>>();
-
-/**
- * 部分木の解析が追跡環境から読みうる名前（純粋に構文的な集合）。
- * 追跡環境を読むのは二箇所だけである。
- *   - `$.名前` のレキシカルな呼び出し（dollar の 'lexical'）
- *   - スカラー全体がちょうど一つの参照のとき、その先頭区画（track の refPathOf）
- * 束縛（$let / $fn のパラメータ）は無視するので、自由変数の上位集合になる。
- * 上位集合であることが要る（鍵が細かくなる分には結果が変わらない）のは、
- * これを閉包の正準形の鍵に使うためである。
- */
-function refsOf(node: unknown): ReadonlySet<string> {
-  if (typeof node === 'string') {
-    const path = refPathOf(node);
-    return path === undefined ? NO_REFS : new Set([path[0]!]);
-  }
-  if (typeof node !== 'object' || node === null) return NO_REFS;
-  const cached = refsCache.get(node);
-  if (cached !== undefined) return cached;
-  const out = new Set<string>();
-  const children = Array.isArray(node) ? node : Object.values(node);
-  if (!Array.isArray(node)) {
-    // `$.a.self` が読むレキシカルな束縛は先頭区画の a だけ（self 以降はその値のキーアクセス）。
-    // パス全体 "a.self" を足すと a の読みを鍵から落とし、環境が異なる閉包同士が
-    // 正準形の同じ鍵（canonKey の case 'closure'）に潰れて作用の行が不健全になる。
-    for (const key of Object.keys(node)) {
-      if (key.startsWith('$.')) out.add(key.slice(2).split('.')[0]!);
-    }
-  }
-  for (const child of children) for (const name of refsOf(child)) out.add(name);
-  refsCache.set(node, out);
-  return out;
-}
-
-/**
- * 作用集合を求めつつ、リストに評価される作用境界のノードを記録する。
- * 出現主義なので、実行されない分岐（$if の選ばれない側）の演算も数える。
- */
-class Analyzer {
-  /** 値がリストになる境界ノード。スカラーは作用を持てないので object だけを入れる。 */
-  readonly listBoundaries = new WeakSet<object>();
-
-  /** 閉包の呼び出しのメモ。鍵は「閉包の正準 ID, 引数の正準 ID」。 */
-  private readonly memo = new Map<string, CallResult>();
-
-  /** 解析中の $fn ノード。再入は自己適用なので追跡不能に倒す（停止性）。 */
-  private readonly inProgress = new Set<object>();
-
-  // -------------------------------------------------------------------------
-  // 追跡木の正準化（hash-consing）
-  //
-  // track() は呼ばれるたびに新しい Track を作るので、木の同一性で引くメモは
-  // 「同じ $fn を同じ環境で捕まえた閉包」を毎回別物と見なし、呼び出し位置ごとに
-  // 本体を解析し直す（入れ子の深さに対して指数）。構造的に等しい木へ同じ ID を
-  // 与えれば、その再走査は 1 回に畳まれる。
-  // 木は有向非巡回である（senv は定義時点のスナップショットで、$let は非再帰）ため、
-  // 正準化は停止する。
-  // -------------------------------------------------------------------------
-
-  private nextId = 0;
-  /** 正準キー -> 代表 ID。 */
-  private readonly ids = new Map<string, number>();
-  /** $fn ノードなど object の同一性 -> ID。 */
-  private readonly objIds = new WeakMap<object, number>();
-  /** 同じ Track を二度たどらないための覚え書き（Track は不変）。 */
-  private readonly trackIds = new WeakMap<object, number>();
-
-  private objId(o: object): number {
-    let id = this.objIds.get(o);
-    if (id === undefined) {
-      id = this.nextId++;
-      this.objIds.set(o, id);
-    }
-    return id;
-  }
-
-  /** 追跡木の正準 ID。追跡不能（undefined）は -1。 */
-  private canon(t: Track | undefined): number {
-    if (t === undefined) return -1;
-    const cached = this.trackIds.get(t);
-    if (cached !== undefined) return cached;
-    const key = this.canonKey(t);
-    let id = this.ids.get(key);
-    if (id === undefined) {
-      id = this.nextId++;
-      this.ids.set(key, id);
-    }
-    this.trackIds.set(t, id);
-    return id;
-  }
-
-  private canonKey(t: Track): string {
-    switch (t.kind) {
-      case 'struct':
-        // ponytail: 鍵はフィールド数に比例した文字列。巨大なリテラルのリストを
-        // 束縛して呼び出しに渡すと 1 回だけ長い鍵を組む。困ったら深さで打ち切る。
-        return JSON.stringify(['s', [...t.fields].map(([k, v]) => [k, this.canon(v)])]);
-      case 'alt':
-        return JSON.stringify(['a', t.alts.map((a) => this.canon(a))]);
-      case 'closure': {
-        // 本体の解析が捕まえた環境から読みうる名前だけを鍵に入れる。ここを絞らないと、
-        // 各レベルの環境に呼び出し経路が丸ごと残り、正準形にしても指数のままになる。
-        // 残りのパラメータは applyClosure が引数で必ず上書きするので除く
-        // （部分適用で束縛済みのパラメータは params から抜けているため、鍵に入る）。
-        // 追跡不能（-1）の束縛も入れる（名前の有無はシャドーイングとして意味を持つ）。
-        // 残り個数も鍵に入れる。同じ $fn でも部分適用の進み具合が違えば、適用の意味
-        // （本体を走らせるか、閉包を返すか）が違うからである。
-        const env: (readonly [string, number])[] = [];
-        for (const name of refsOf(t.body)) {
-          if (!t.params.includes(name)) env.push([name, this.canon(get(t.senv, name))] as const);
-        }
-        return JSON.stringify(['c', this.objId(t.fn), t.params.length, env]);
-      }
-    }
-  }
-
-  /** 境界位置。既定ハンドラが処理する作用は消え、登録演算だけが外へ残る。 */
-  boundary(node: unknown, senv: SEnv): Set<string> {
-    const e = this.data(node, senv, true);
-    if (typeof node === 'object' && node !== null && hasChoice(e)) {
-      this.listBoundaries.add(node);
-    }
-    return without(e, DEFAULT_OPS);
-  }
-
-  /**
-   * データ位置。`$` 式に出会ったらそこが最も外側の `$` 式＝境界である。
-   * here が真のときはこのノード自身が境界（文書全体、または呼び出し元が境界と決めた位置）。
-   */
-  private data(node: unknown, senv: SEnv, here = false): Set<string> {
-    const composed = this.compose(node, (n) => this.data(n, senv));
-    if (composed !== undefined) return composed;
-    return here ? this.dollar(node as NodeMap, senv) : this.boundary(node, senv);
-  }
-
-  /** 合成位置。内側の作用がそのまま周囲へ合流する。 */
-  effects(node: unknown, senv: SEnv): Set<string> {
-    return (
-      this.compose(node, (n) => this.effects(n, senv)) ?? this.dollar(node as NodeMap, senv)
-    );
-  }
-
-  /** データ構成（スカラー・リスト・プレーンマッピング）。`$` 式なら undefined。 */
-  private compose(node: unknown, rec: (n: unknown) => Set<string>): Set<string> | undefined {
-    // パスをたどる参照は欠落しうるので std.fail を数える（裸の ${x} は純粋）。
-    if (typeof node === 'string') return hasPathRef(node) ? new Set(FAIL_OPS) : new Set();
-    if (Array.isArray(node)) return union(...node.map(rec));
-    if (!isNodeMap(node)) return new Set();
-    if (mappingShapeOfNode(node).kind !== 'plain') return undefined;
-    return union(...Object.values(node).map(rec));
-  }
-
-  private dollar(node: NodeMap, senv: SEnv): Set<string> {
-    const shape = mappingShapeOfNode(node);
-    switch (shape.kind) {
-      case 'plain':
-        return new Set();
-      case 'lexical': {
-        // 先頭区画は束縛の解決、残りは値の追跡木をたどるキーアクセス（track() の ref と同じ形）。
-        const path = shape.name.split('.');
-        const target = path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
-        return union(
-          this.effects(node[shape.raw], senv),
-          // 引数の追跡木をパラメータに束縛して本体を解析する（多相的解析）。
-          this.call(target, this.track(node[shape.raw], senv)).row ?? [],
-        );
-      }
-      case 'op':
-        return this.operation(shape, node, senv);
-      case 'reserved':
-        return this.reserved(shape, node, senv);
-    }
-  }
-
-  /**
-   * 演算の呼び出し。std の派生ハンドラだけが部分処理を行い、それ以外は
-   * 「引数の作用 ∪ 自分の名前」である（標準演算もホスト登録の演算も同じ規則）。
-   */
-  private operation(
-    shape: Extract<MappingShape, { kind: 'op' }>,
-    node: NodeMap,
-    senv: SEnv,
-  ): Set<string> {
-    const arg = node[shape.raw];
-    const aux = (name: string): unknown => {
-      const raw = shape.aux.get(name);
-      return raw === undefined ? undefined : node[raw];
-    };
-    switch (shape.name) {
-      case 'std.list':
-      case 'std.mapping':
-      case 'std.first':
-        return without(this.effects(arg, senv), HANDLER_REMOVES[shape.name]!);
-      case 'std.opt':
-        // $default は遅延位置だが、作用の推論は出現主義なので中の演算も数える（$std.param と同じ）。
-        return union(
-          without(this.effects(arg, senv), FAIL_OPS),
-          shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
-        );
-      case 'std.where':
-        // 導出形。展開 {$if: 条件, $then: null, $else: {$std.each: []}} のとおり std.each を数える。
-        return union(this.effects(arg, senv), CHOICE_OPS);
-      case 'std.lookup':
-        // 展開（$std.first の照合）が選択を処理し尽くすので、出現が数えるのは std.fail と引数の作用だけ。
-        return union(this.effects(arg, senv), FAIL_OPS);
-      case 'std.merge':
-        // 展開（$std.mapping の重ね合わせ）が選択と欠落を処理し尽くすので、出現が数えるのは引数の作用だけ。
-        return this.effects(arg, senv);
-      case 'std.state':
-        // $in の無い $std.state は $do の文の位置でだけ意味を持ち（doEffects が扱う）、
-        // 位置外は評価器がエラーにする。推論は出現主義なので、ここは初期値の作用だけ数えて通す
-        // （aux('in') が undefined なら本体の作用は空集合）。
-        return union(this.effects(arg, senv), without(this.effects(aux('in'), senv), STATE_OPS));
-      case 'std.param':
-        // $default は遅延位置だが、作用の推論は出現主義なので中の演算も数える。
-        return union(
-          this.effects(arg, senv),
-          shape.aux.has('default') ? this.effects(aux('default'), senv) : [],
-          ['std.param'],
-        );
-      default:
-        // ホスト登録の演算は失敗を通知できるので、出現は std.fail も数える（パスをたどる参照と同じ扱い）。
-        // ローカル作用の内部演算はホストへ渡らない（節が必ず処理する）ので数えない。
-        return shape.name.startsWith('std.') || localOpParts(shape.name) !== undefined
-          ? union(this.effects(arg, senv), [shape.name])
-          : union(this.effects(arg, senv), [shape.name], FAIL_OPS);
-    }
-  }
-
-  private reserved(
-    shape: Extract<MappingShape, { kind: 'reserved' }>,
-    node: NodeMap,
-    senv: SEnv,
-  ): Set<string> {
-    const arg = node[shape.mainRaw];
-    const aux = (name: string): unknown => {
-      const raw = shape.aux.get(name);
-      return raw === undefined ? undefined : node[raw];
-    };
-    switch (shape.main) {
-      case 'do':
-        return this.doEffects(Array.isArray(arg) ? arg : [], senv);
-      case 'let': {
-        // 右辺を文書順に合流させ、束縛を伸ばした senv で $in の本体を見る
-        // （逐次のカーネル構文）。$in の無い単独の $let は評価器がエラーにするが、
-        // 推論は出現主義なので右辺の作用だけ数えて通す。
-        const out = new Set<string>();
-        let cur = senv;
-        if (isNodeMap(arg)) {
-          for (const [name, rhs] of Object.entries(arg)) {
-            for (const x of this.effects(rhs, cur)) out.add(x);
-            cur = insert(cur, name, this.track(rhs, cur));
-          }
-        }
-        if (shape.aux.has('in')) for (const x of this.effects(aux('in'), cur)) out.add(x);
-        return out;
-      }
-      case 'if':
-        return union(
-          this.effects(arg, senv),
-          this.effects(aux('then'), senv),
-          this.effects(aux('else'), senv),
-        );
-      case 'fn':
-        // 値を作るだけで作用は起こさない。本体の作用は呼び出しを追跡できる側
-        // （$let の束縛、$handle の節）が call() で数える。
-        // ここで本体を走査してはならない。定義のたびに二重走査になり、
-        // 入れ子の深さに対して指数的になる。
-        fnParamsOf(arg); // 形の検査だけ行う（出現主義なので、実行されない位置でも検査する）
-        return new Set();
-      case 'collect':
-        // $collect 自身は作用を持たない。対象の作用と、追跡できる関数本体の作用の合併。
-        // ponytail: 関数へ渡す引数の追跡木は undefined（$handle の節と同じ天井）。
-        // 要素ごとの追跡が要るようになったら対象がリテラルのときだけ altOf で渡す。
-        return union(
-          this.effects(arg, senv),
-          this.effects(aux('with'), senv),
-          this.call(this.track(aux('with'), senv), undefined).row ?? [],
-        );
-      case 'handle': {
-        // ローカル作用の宣言は本体にだけ見える（節と外側には見えない）。
-        const body = this.effects(arg, this.withLocals(aux('with'), senv));
-        return this.handled(body, aux('with'), senv);
-      }
-      case 'with':
-        // 単独の $with は $do の文の位置でだけ意味を持つ（位置外は評価器がエラーにする）。
-        // 推論は出現主義なので、節の本体の作用だけ数えて通す（何も取り除かない）。
-        return this.handled(new Set(), arg, senv);
-      case 'resume':
-        // 継続の作用は $handle の本体側で既に数えている。ここは引数だけ。
-        return this.effects(arg, senv);
-      default:
-        return new Set();
-    }
-  }
-
-  /** ローカル作用の宣言（素通しの閉包）を追跡環境へ足す。本体を解析する側が呼ぶ。 */
-  private withLocals(withNode: unknown, senv: SEnv): SEnv {
-    if (!isNodeMap(withNode)) return senv;
-    let cur = senv;
-    for (const [name, decl] of localDeclsOf(withNode)) {
-      cur = insert(cur, name, this.track(decl.fn, senv));
-    }
-    return cur;
-  }
-
-  /**
-   * $with の節が本体の作用集合に及ぼす効果。宣言した演算（return 以外の節名）を取り除き、
-   * 節の本体の作用を足す。$handle と $do の $with 文で共通。
-   * ローカル作用の節が取り除くのは、素通しの閉包が起こす内部演算の名前である。
-   */
-  private handled(body: Set<string>, withNode: unknown, senv: SEnv): Set<string> {
-    const clauses = isNodeMap(withNode) ? withNode : {};
-    const locals = localDeclsOf(clauses);
-    const removed = new Set(Object.keys(clauses).filter((k) => k !== 'return' && !locals.has(k)));
-    for (const decl of locals.values()) removed.add(decl.opName);
-    return union(
-      without(body, removed),
-      // 節のパラメータは演算の実行時の引数なので、追跡木は渡せない。
-      ...Object.values(clauses).map((c) => this.call(this.track(c, senv), undefined).row ?? []),
-    );
-  }
-
-  /**
-   * $do の文の並びの作用。文形（$let / $in なしの $std.state / 単独の $with）は
-   * 残りの文を本体に取るので、その作用集合が定まるまで除去を適用できない。
-   * そこで二度なめる。前向きに束縛を伸ばしながら「自前の作用」と除去の仕方を記録し、
-   * 後ろから畳んで残りの集合へ適用する（再帰で書くと文の数だけスタックを積む）。
-   * 束縛は文から文へ伸びる（同じ $let の中でも後の右辺は前の束縛を見る）が、
-   * 外側の senv は不変なので $do を出れば元のままである。
-   */
-  private doEffects(stmts: readonly unknown[], senv: SEnv): Set<string> {
-    type Step =
-      /** 残りの作用に自前の作用を足すだけの文（文形でない文と $let 文）。 */
-      | { readonly kind: 'plain'; readonly own: Set<string> }
-      /** 残りから状態の演算を除き、初期値の作用を足す。 */
-      | { readonly kind: 'state'; readonly own: Set<string> }
-      /** 残りから節名を除き、節の本体の作用を足す（節は文の位置の追跡環境で見る）。 */
-      | { readonly kind: 'with'; readonly clauses: unknown; readonly senv: SEnv };
-
-    const steps: Step[] = [];
-    let cur = senv;
-    // 除去を行うのは $std.state 文と $with 文だけなので、その手前までの文の作用は
-    // 一つに畳んでから積む（文の数だけ Set を抱えない）。
-    let pending = new Set<string>();
-    const flush = (): void => {
-      if (pending.size > 0) steps.push({ kind: 'plain', own: pending });
-      pending = new Set();
-    };
-    for (const stmt of stmts) {
-      const form = statementFormOf(stmt);
-      if (form === undefined) {
-        for (const x of this.effects(stmt, cur)) pending.add(x);
-        continue;
-      }
-      switch (form.kind) {
-        case 'let':
-          if (isNodeMap(form.bindings)) {
-            for (const [name, rhs] of Object.entries(form.bindings)) {
-              for (const x of this.effects(rhs, cur)) pending.add(x);
-              cur = insert(cur, name, this.track(rhs, cur));
-            }
-          }
-          break;
-        case 'state':
-          // 初期値の作用はハンドラの外側（＝この文の位置）に現れる。
-          flush();
-          steps.push({ kind: 'state', own: this.effects(form.init, cur) });
-          break;
-        case 'with':
-          flush();
-          // 節は文の位置の追跡環境で見る。ローカル作用の宣言は残りの文（＝本体）から見える。
-          steps.push({ kind: 'with', clauses: form.clauses, senv: cur });
-          cur = this.withLocals(form.clauses, cur);
-          break;
-      }
-    }
-    flush();
-
-    let out = new Set<string>();
-    for (let i = steps.length - 1; i >= 0; i--) {
-      const step = steps[i]!;
-      if (step.kind === 'with') out = this.handled(out, step.clauses, step.senv);
-      else if (step.kind === 'state') out = union(step.own, without(out, STATE_OPS));
-      else out = union(step.own, out);
-    }
-    return out;
-  }
-
-  /**
-   * ノードが静的に表す値の追跡木。追跡できなければ undefined。
-   * ここでは $fn の本体を走査しない（走査は call() だけが行う）。
-   * これを守らないと、定義のたびに本体を数える二重走査になり、入れ子の深さに対して爆発する。
-   */
-  private track(node: unknown, senv: SEnv): Track | undefined {
-    if (typeof node === 'string') {
-      const path = refPathOf(node);
-      if (path === undefined) return undefined;
-      return path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
-    }
-    if (Array.isArray(node)) {
-      return structOf(node.map((n, i) => [String(i), this.track(n, senv)] as const));
-    }
-    if (!isNodeMap(node)) return undefined;
-    const shape = mappingShapeOfNode(node);
-    if (shape.kind === 'plain') {
-      return structOf(
-        Object.entries(node).map(([k, v]) => [unescapeDollar(k), this.track(v, senv)] as const),
-      );
-    }
-    if (shape.kind === 'op') {
-      // リテラルのリストから選ぶ形だけ追える。マッピングの $std.each が選ぶのは
-      // 値そのものではなく {key, value} なので、値の木で近似してはならない。
-      if (shape.name !== 'std.each') return undefined;
-      const items = node[shape.raw];
-      return Array.isArray(items) ? altOf(items.map((n) => this.track(n, senv))) : undefined;
-    }
-    if (shape.kind === 'lexical') {
-      // 追跡できる呼び出しの結果（部分適用が返す閉包を含む）。dollar() と同じ経路解決。
-      const path = shape.name.split('.');
-      const target = path.slice(1).reduce<Track | undefined>(field, get(senv, path[0]!));
-      return this.call(target, this.track(node[shape.raw], senv)).out;
-    }
-    if (shape.kind !== 'reserved') return undefined;
-    switch (shape.main) {
-      case 'fn':
-        return {
-          kind: 'closure',
-          fn: node,
-          params: fnParamsOf(node[shape.mainRaw]),
-          body: node[shape.aux.get('body')!],
-          senv,
-        };
-      case 'if':
-        return altOf([
-          this.track(node[shape.aux.get('then')!], senv),
-          this.track(node[shape.aux.get('else')!], senv),
-        ]);
-      default:
-        return undefined;
-    }
-  }
-
-  /**
-   * 追跡木の値を引数 argument で呼んだときの解析結果。
-   * row は作用集合（undefined は追跡不能）、out は返り値の追跡木
-   * （部分適用が返す閉包をここで追うことで、後続の適用の本体を算入できる）。
-   * 各 $fn 本体の走査はここだけが行う（effects() は $fn を素通りする）。
-   */
-  private call(t: Track | undefined, argument: Track | undefined): CallResult {
-    if (t === undefined) return UNTRACKED_CALL;
-    switch (t.kind) {
-      case 'struct':
-        // マッピングやリストは呼べない。呼べば実行時のエラーだが、推論は行を作らない。
-        return UNTRACKED_CALL;
-      case 'alt': {
-        const rows: ReadonlySet<string>[] = [];
-        const outs: (Track | undefined)[] = [];
-        let tracked = true;
-        for (const a of t.alts) {
-          const r = this.call(a, argument);
-          if (r.row === undefined) tracked = false;
-          else rows.push(r.row);
-          outs.push(r.out);
-        }
-        return { row: tracked ? union(...rows) : undefined, out: altOf(outs) };
-      }
-      case 'closure':
-        return this.applyClosure(t, argument === undefined || !hasFunction(argument) ? undefined : argument);
-    }
-  }
-
-  /**
-   * 閉包の本体を、引数の追跡木をパラメータに束縛して解析する。
-   * パラメータが 2 個以上残っていれば部分適用であり、本体は走らないので作用は無く、
-   * 引数を束縛した残りの閉包が結果になる（$fn の列のカリー化展開に一致する）。
-   * メモの鍵は（閉包の正準 ID、引数の正準 ID）。閉包の正準形は $fn ノードと残り個数と、
-   * 捕まえた環境のうち本体が読みうる束縛なので、同じ $fn でも環境が違えば別の鍵になる。
-   * 進行中の $fn ノードへ再入したら自己適用なので追跡不能に倒す。
-   * これで解析の停止性は $fn ノードの個数で押さえられる。
-   */
-  private applyClosure(t: Track & { kind: 'closure' }, argument: Track | undefined): CallResult {
-    if (t.params.length > 1) {
-      return {
-        row: new Set(),
-        out: {
-          kind: 'closure',
-          fn: t.fn,
-          params: t.params.slice(1),
-          body: t.body,
-          senv: insert(t.senv, t.params[0]!, argument),
-        },
-      };
-    }
-    const key = `${this.canon(t)},${this.canon(argument)}`;
-    const hit = this.memo.get(key);
-    if (hit !== undefined) return hit;
-    if (this.inProgress.has(t.fn)) return UNTRACKED_CALL;
-    this.inProgress.add(t.fn);
-    try {
-      const senv = insert(t.senv, t.params[0]!, argument);
-      const result: CallResult = { row: this.effects(t.body, senv), out: this.track(t.body, senv) };
-      // ponytail: 循環ガードが働いた内側の結果もそのままメモに残る（作用を数え落とす向き＝
-      // 追跡不能と同じ扱いなので健全性は崩れない）。気になるならガード発火を数えて弾く。
-      this.memo.set(key, result);
-      return result;
-    } finally {
-      this.inProgress.delete(t.fn);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // 評価器
 // ---------------------------------------------------------------------------
 
@@ -1019,42 +368,18 @@ const ABSENT: Value = Object.freeze({});
 
 class Evaluator {
   constructor(
-    private readonly analyzer: Analyzer,
     private readonly params: Record<string, Value>,
     private readonly onLog: (v: Value) => void,
   ) {}
 
   /**
    * 作用境界（文書全体、およびデータの中に現れた最も外側の `$` 式）。
-   * 残る作用を既定ハンドラ一式（失敗・パラメータ・ログ・状態・選択）で処理し尽くす。
-   * 失敗と登録演算だけは外（トップレベルのドライバ）へ委ねる。
-   * 値の形は静的な作用集合だけで決める。実行して得た個数からは決めない。
+   * 残る作用を既定ハンドラ一式（失敗・パラメータ・ログ・状態）で処理し尽くす。
+   * 選択と失敗と登録演算だけは外（トップレベルのドライバ）へ委ねる。
+   * 選択を処理するのは明示のハンドラだけなので、境界に達した選択はドライバのエラーになる。
    */
   boundary(node: unknown, env: Env): Comp {
-    const drained = this.handleParam(
-      this.handleLog(handleState(collectChoice(this.data(node, env, true)), empty)),
-    );
-    if (typeof node === 'object' && node !== null && this.analyzer.listBoundaries.has(node)) {
-      return drained;
-    }
-    return bindAt(env.path, drained, (results) => pure(this.single(asList(results), node)));
-  }
-
-  private single(results: readonly Value[], node: unknown): Value {
-    if (results.length === 1) return results[0]!;
-    const where = JSON.stringify(node) ?? String(node);
-    const cause =
-      results.length === 0
-        ? 'a branch was cut ($where / empty $each)'
-        : 'a choice produced several branches';
-    throw new EffectfulYamlError(
-      `boundary was inferred to be a single value but ${cause}: expected 1 result, got ${results.length}. ` +
-        `Choice most likely reached this boundary through a call the analyzer cannot track ` +
-        `(a function value picked at run time, e.g. out of data or out of a $do result). ` +
-        `Wrap the call in an explicit handler ($std.list:, $std.first: or $std.mapping:) to declare the shape ` +
-        `instead of relying on static tracking; the choice is then handled there. ` +
-        `Boundary node: ${where}`,
-    );
+    return this.handleParam(this.handleLog(handleState(this.data(node, env, true), empty)));
   }
 
   private handleLog(comp: Comp): Comp {
@@ -1552,20 +877,9 @@ function containsFunctionValue(v: Value): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * 処理されずに境界へ達した演算の文言。ローカル作用の内部演算がここに現れるのは、
- * 素通しの閉包がハンドラの動的範囲の外で呼ばれたときだけなので、脱出として報告する。
- * 内部名が利用者の目に触れるのはこの経路（事前検査と drive）だけである。
- */
-function unhandledOpMessage(name: string): string {
-  const local = localOpParts(name);
-  if (local === undefined) return `unregistered operation: $${name}`;
-  const where = local.path === '' ? 'the document root' : local.path;
-  return `local effect '${local.name}' escaped its handler (declared at ${where})`;
-}
-
-/**
- * 境界の既定ハンドラを通り抜けて残るのは、失敗と、第一階の標準演算とホスト登録の演算だけである。
- * 失敗は文書全体のエラーにし、演算はその実装へ渡す（ホスト関数は非同期でよい）。
+ * 境界の既定ハンドラを通り抜けて残るのは、選択と失敗と、第一階の標準演算とホスト登録の演算である。
+ * どのハンドラにも捕まらなかった選択と失敗は文書全体のエラーにし、演算はその実装へ渡す
+ * （ホスト関数は非同期でよい）。
  */
 async function drive(
   comp: Comp,
@@ -1579,13 +893,24 @@ async function drive(
     if (c.name === 'std.fail') {
       throw attachPath(new EffectfulYamlError(`failure: ${describe(c.arg)}`), c.path);
     }
+    // 選択を値にするのは明示のハンドラだけである。捕まえ手なく境界に達した選択は、
+    // 形が書かれていない（言語仕様の作用境界）ので、値にせずここで報せる。
+    if (c.name === 'std.each') {
+      throw attachPath(
+        new EffectfulYamlError(
+          'unhandled choice: $std.each reached the boundary without a handler; ' +
+            'wrap the computation in $std.list, $std.first or $std.mapping',
+        ),
+        c.path,
+      );
+    }
     const fromHost = ops[c.name];
     const host = fromHost ?? BUILTIN_OPS[c.name];
     if (host === undefined) {
       throw attachPath(new EffectfulYamlError(unhandledOpMessage(c.name)), c.path);
     }
     // 閉包はホストへ渡れない（grammar.md ホスト登録の演算）。評価前の流れ検査と二重の砦で、
-    // こちらは追跡に依存しない正確な検査である。第一階の標準演算（std.range）は対象外。
+    // こちらは実際に渡る値を見る正確な検査である。第一階の標準演算（std.range）は対象外。
     if (fromHost !== undefined && containsFunctionValue(c.arg)) {
       throw attachPath(
         new EffectfulYamlError(`a function value cannot be passed to a host operation: $${c.name}`),
@@ -1618,21 +943,11 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
     }
   }
 
-  // 関数値の流れの検査（grammar.md「関数値の流れと停止性」）。自己適用を含みうる文書と、
-  // ホスト演算の引数に閉包が流れうる文書を、評価を始める前に拒否する。
-  typecheck(doc);
-
-  const analyzer = new Analyzer();
-
-  // 作用シグネチャ。既定ハンドラが処理しない = 実装が要る演算だけが残る。
-  for (const name of analyzer.boundary(doc, empty)) {
-    if (!(name in ops) && !(name in BUILTIN_OPS)) {
-      throw new EffectfulYamlError(unhandledOpMessage(name));
-    }
-  }
+  // 評価前の検査（grammar.md「関数値の流れと停止性」「演算」）。自己適用を含みうる文書、
+  // ホスト演算の引数に閉包が流れうる文書、実装の無い演算を含む文書を、評価を始める前に拒否する。
+  typecheck(doc, ops);
 
   const evaluator = new Evaluator(
-    analyzer,
     options.params ?? {},
     options.onLog ?? ((v) => console.error(describe(v))),
   );

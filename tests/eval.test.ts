@@ -72,13 +72,14 @@ describe('選択の基本形（grammar.md 用例）', () => {
   it('末尾が $std.each なら 18 要素になる', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-- $std.each:
-  - \${x}
-  - \${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [a, b, c]}
+      y: {$std.each: [x, y, z]}
+  - $std.each:
+    - \${x}
+    - \${y}
 `),
     ).resolves.toEqual([
       'a', 'x', 'a', 'y', 'a', 'z',
@@ -90,12 +91,13 @@ $do:
   it('末尾が literal なリストなら 9 ペアになる', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-- - \${x}
-  - \${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [a, b, c]}
+      y: {$std.each: [x, y, z]}
+  - - \${x}
+    - \${y}
 `),
     ).resolves.toEqual([
       ['a', 'x'], ['a', 'y'], ['a', 'z'],
@@ -107,29 +109,34 @@ $do:
   it('$std.each はマッピングを {key, value} に分解する', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    e: {$std.each: {web: 80, db: 5432}}
-- \${e.key}
+$std.list:
+  $do:
+  - $let:
+      e: {$std.each: {web: 80, db: 5432}}
+  - \${e.key}
 `),
     ).resolves.toEqual(['web', 'db']);
   });
 
   it('リストの要素は合成なので、選択は外側のブロック全体を分岐させる', async () => {
-    await expect(run('$do: [[1, {$std.each: [a, b]}]]')).resolves.toEqual([
+    await expect(run('$std.list: {$do: [[1, {$std.each: [a, b]}]]}')).resolves.toEqual([
       [1, 'a'],
       [1, 'b'],
     ]);
   });
 
   it('演算の引数も合成なので、$std.each の入れ子が平坦化される', async () => {
-    await expect(run('{$std.each: {$std.each: [[1, 2], [3, 4]]}}')).resolves.toEqual([1, 2, 3, 4]);
+    await expect(run('{$std.list: {$std.each: {$std.each: [[1, 2], [3, 4]]}}}')).resolves.toEqual([
+      1, 2, 3, 4,
+    ]);
   });
 
   it('データ文脈では最も外側の $ 式だけが境界になる（$do の中との対比）', async () => {
     // 上の $do のテストでは同じ字面がブロック全体を分岐させる。
-    // データ文脈では {$std.each} 自身が境界なので、そこで収集されてリストになる。
-    await expect(run('x: [1, {$std.each: [a, b]}]')).resolves.toEqual({ x: [1, ['a', 'b']] });
+    // データ文脈では {$std.list} 自身が境界なので、収集はその中で閉じる。
+    await expect(run('x: [1, {$std.list: {$std.each: [a, b]}}]')).resolves.toEqual({
+      x: [1, ['a', 'b']],
+    });
   });
 
   it('兄弟の境界は作用を共有しない（状態は島ごとに独立）', async () => {
@@ -143,13 +150,14 @@ describe('$std.where', () => {
   it('内包表記になる', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    x: {$std.each: [1, 2, 3]}
-    y: {$std.each: [1, 2, 3]}
-- $std.where: \${x < y}
-- - \${x}
-  - \${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3]}
+      y: {$std.each: [1, 2, 3]}
+  - $std.where: \${x < y}
+  - - \${x}
+    - \${y}
 `),
     ).resolves.toEqual([
       [1, 2],
@@ -158,9 +166,11 @@ $do:
     ]);
   });
 
-  it('境界に単独で置くと、展開の std.each が選択として数えられてリスト形になる', async () => {
-    await expect(run('{$std.where: true}')).resolves.toEqual([null]);
-    await expect(run('{$std.where: false}')).resolves.toEqual([]);
+  it('境界に単独で置くと、真は null、偽は打ち切りの選択が境界に達してエラーになる', async () => {
+    await expect(run('{$std.where: true}')).resolves.toBeNull();
+    await expect(run('{$std.where: false}')).rejects.toThrow(/unhandled choice/);
+    await expect(run('{$std.list: {$std.where: true}}')).resolves.toEqual([null]);
+    await expect(run('{$std.list: {$std.where: false}}')).resolves.toEqual([]);
   });
 
   it('打ち切りは展開のとおり std.each の節が捕捉する', async () => {
@@ -263,12 +273,17 @@ port:
     expect(logs).toEqual([]);
   });
 
-  it('評価されない $default の演算も作用に数える（$if の分岐と同じ出現主義）', async () => {
-    // 選択が $default にだけ現れるので境界はリスト形。渡されていれば分岐せず要素 1 になる。
+  it('$default は評価されないので、その中の選択も起きない', async () => {
+    // 渡されていれば $default は評価されず、選択が境界に達することもない。
     await expect(
       run('{$std.param: x, $default: {$std.each: [1, 2]}}', { params: { x: 5 } }),
-    ).resolves.toEqual([5]);
-    await expect(run('{$std.param: x, $default: {$std.each: [1, 2]}}')).resolves.toEqual([1, 2]);
+    ).resolves.toBe(5);
+    await expect(run('{$std.param: x, $default: {$std.each: [1, 2]}}')).rejects.toThrow(
+      /unhandled choice/,
+    );
+    await expect(
+      run('{$std.list: {$std.param: x, $default: {$std.each: [1, 2]}}}'),
+    ).resolves.toEqual([1, 2]);
   });
 
   it('grammar.md の用例（パラメータと条件分岐）', async () => {
@@ -318,16 +333,17 @@ $do:
   it('マッピングの値の $std.get が貫流状態を読む（選択と組み合わせた形）', async () => {
     await expect(
       run(`
-$do:
-- $std.set: {n: 0}
-- $let:
-    name: {$std.each: [web, db]}
-- $let:
-    c: {$std.get: n}
-- $std.set:
-    n: \${c + 1}
-- name: \${name}
-  id: {$std.get: n}
+$std.list:
+  $do:
+  - $std.set: {n: 0}
+  - $let:
+      name: {$std.each: [web, db]}
+  - $let:
+      c: {$std.get: n}
+  - $std.set:
+      n: \${c + 1}
+  - name: \${name}
+    id: {$std.get: n}
 `),
     ).resolves.toEqual([
       { name: 'web', id: 1 },
@@ -418,17 +434,18 @@ $std.list:
   it('分岐ごとに初期化', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    x: {$std.each: [a, b]}
-- $std.state: {n: 0}
-  $in:
-    $do:
-    - $let:
-        i: {$std.get: n}
-    - $std.set:
-        n: \${i + 1}
-    - \${x}\${i}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [a, b]}
+  - $std.state: {n: 0}
+    $in:
+      $do:
+      - $let:
+          i: {$std.get: n}
+      - $std.set:
+          n: \${i + 1}
+      - \${x}\${i}
 `),
     ).resolves.toEqual(['a0', 'b0']);
   });
@@ -436,15 +453,16 @@ $do:
   it('連番の採番（既定ハンドラの貫流）', async () => {
     await expect(
       run(`
-$do:
-- $std.set: {n: 0}
-- $let:
-    name: {$std.each: [web, db, cache]}
-    id: {$std.get: n}
-- $std.set:
-    n: \${id + 1}
-- name: \${name}
-  id: \${id}
+$std.list:
+  $do:
+  - $std.set: {n: 0}
+  - $let:
+      name: {$std.each: [web, db, cache]}
+      id: {$std.get: n}
+  - $std.set:
+      n: \${id + 1}
+  - name: \${name}
+    id: \${id}
 `),
     ).resolves.toEqual([
       { name: 'web', id: 0 },
@@ -584,12 +602,13 @@ $do:
   it('呼び出しの引数は合成なので、引数の選択が呼び出しごと分岐する', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    double:
-      $fn: x
-      $body: \${x * 2}
-- $.double: {$std.each: [1, 2]}
+$std.list:
+  $do:
+  - $let:
+      double:
+        $fn: x
+        $body: \${x * 2}
+  - $.double: {$std.each: [1, 2]}
 `),
     ).resolves.toEqual([2, 4]);
   });
@@ -858,11 +877,12 @@ $with:
   it('組み込みの $std.each も同じ結果になる', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    x: {$std.each: [1, 2]}
-    y: {$std.each: [10, 20]}
-- \${x + y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2]}
+      y: {$std.each: [10, 20]}
+  - \${x + y}
 `),
     ).resolves.toEqual([11, 21, 12, 22]);
   });
@@ -872,8 +892,8 @@ $do:
   });
 });
 
-describe('静的な作用推論', () => {
-  it('実行されない分岐の選択も境界の形に算入される', async () => {
+describe('境界に達した選択', () => {
+  it('選ばれなかった分岐の選択は起きない（$else 側なら値は単値のまま）', async () => {
     await expect(
       run(
         `
@@ -884,12 +904,11 @@ result:
 `,
         { params: { cond: false } },
       ),
-    ).resolves.toEqual({ result: [42] });
+    ).resolves.toEqual({ result: 42 });
   });
 
-  it('同じ $if でも境界の内側なら、リストになるのは境界（文書）の側', async () => {
+  it('$do の内側でも同じで、選ばれない分岐の選択は文書の値に影響しない', async () => {
     // $if は最も外側の $ 式ではない（$do の内側）ので境界ではない。
-    // 選択はマッピングの値から文書の境界まで合流する。
     await expect(
       run(
         `
@@ -901,62 +920,44 @@ $do:
 `,
         { params: { cond: false } },
       ),
-    ).resolves.toEqual([{ result: 42 }]);
+    ).resolves.toEqual({ result: 42 });
   });
 
-  it('選ばれた側が選択でも同じ形になる', async () => {
-    await expect(
-      run(
-        `
+  it('選ばれた側が選択なら、ハンドラが無い限り境界でエラーになる', async () => {
+    const doc = `
 result:
   $if: {$std.param: cond}
   $then: {$std.each: [a, b]}
   $else: 42
+`;
+    await expect(run(doc, { params: { cond: true } })).rejects.toThrow(/unhandled choice/);
+    await expect(
+      run(
+        `
+result:
+  $std.list:
+    $if: {$std.param: cond}
+    $then: {$std.each: [a, b]}
+    $else: 42
 `,
         { params: { cond: true } },
       ),
     ).resolves.toEqual({ result: ['a', 'b'] });
   });
 
-  it('レキシカルな関数の本体の選択も呼び出し位置の形に効く', async () => {
+  it('関数の本体の選択も、呼び出しを包む選択のハンドラが処理する', async () => {
     await expect(
       run(`
-$do:
-- $let:
-    pick:
-      $fn: xs
-      $body:
-        $std.each: \${xs}
-- {$.pick: [1, 2, 3]}
+$std.list:
+  $do:
+  - $let:
+      pick:
+        $fn: xs
+        $body:
+          $std.each: \${xs}
+  - {$.pick: [1, 2, 3]}
 `),
     ).resolves.toEqual([1, 2, 3]);
-  });
-
-  it('追跡できない呼び出しの選択では境界をリスト扱いしない（実行時に検出する）', async () => {
-    // 引数 arg は $if の分岐で、片方が関数を持たないので構造的に追跡できない
-    // （パス参照 ${a.f} 自体は追跡できる。tests/analyzer.test.ts を参照）。
-    // 「不明な呼び出しが選択を持つかもしれない」ことを理由に境界をリストにはせず、
-    // 実際に分岐したときだけ実行時のエラーにする。
-    await expect(
-      run(
-        `
-$do:
-- $let:
-    apply:
-      $fn: a
-      $body: {$.a.f: 1}
-    arg:
-      $if: {$std.param: with_choice}
-      $then:
-        f:
-          $fn: x
-          $body: {$std.each: [1, 2]}
-      $else: 0
-- $.apply: \${arg}
-`,
-        { params: { with_choice: true } },
-      ),
-    ).rejects.toThrow(/expected 1 result, got 2[\s\S]*cannot track/);
   });
 
   it('登録されていない演算は評価前に拒否される', async () => {
@@ -1174,16 +1175,16 @@ $with:
   });
 
   it('対象と関数本体の作用は周囲へ合流する（呼び出しと同じ規則）', async () => {
-    // 本体の $std.each が境界の形をリストに決める。追跡できていなければ
-    // 「expected 1 result」で落ちるので、リストになること自体が算入の証拠になる。
+    // 関数本体の $std.each は $collect に堰き止められず、外側の $std.list が集める。
     await expect(
       run(`
-$do:
-- $collect: [1, 2]
-  $with:
-    $fn: x
-    $body:
-    - {$std.each: [a, b]}
+$std.list:
+  $do:
+  - $collect: [1, 2]
+    $with:
+      $fn: x
+      $body:
+      - {$std.each: [a, b]}
 `),
     ).resolves.toEqual([
       ['a', 'a'],
@@ -1486,9 +1487,8 @@ $do:
     await expect(run('{$std.list: 1, $default: 2}')).rejects.toThrow(/does not accept \$default/);
   });
 
-  it('本体が成功しても、$default の中の演算は作用集合に数える（出現主義。$std.param の $default と同じ）', async () => {
-    // 選択が $default にだけ現れるので境界はリスト形。本体が成功すれば分岐せず要素 1 になる。
-    await expect(run('{$std.opt: ok, $default: {$std.each: [1, 2]}}')).resolves.toEqual(['ok']);
+  it('本体が成功すれば $default は評価されず、その中の選択も起きない（$std.param の $default と同じ）', async () => {
+    await expect(run('{$std.opt: ok, $default: {$std.each: [1, 2]}}')).resolves.toBe('ok');
   });
 
   it('ホスト演算の失敗通知（OperationFailure）も $default で埋められる', async () => {
@@ -1596,7 +1596,7 @@ $do:
     ).resolves.toBe(2);
   });
 
-  it('境界の形に影響しない：単値の文書は選択なしにそのまま単値になり、ops を登録しなくても評価できる', async () => {
+  it('展開の中の選択は $std.first が処理し尽くすので外へ出ず、ops の登録も要らない', async () => {
     await expect(
       run(`
 $std.lookup:
@@ -1666,14 +1666,15 @@ $do:
     );
   });
 
-  it('引数の中に $std.each があると merge 全体が分岐する（境界の値が各分岐の merge 結果のリストになる）', async () => {
+  it('引数の中に $std.each があると merge 全体が分岐する（値は各分岐の merge 結果）', async () => {
     await expect(
       run(`
-$std.merge:
-- $std.each:
-  - {x: 1}
-  - {x: 2}
-- {y: 3}
+$std.list:
+  $std.merge:
+  - $std.each:
+    - {x: 1}
+    - {x: 2}
+  - {y: 3}
 `),
     ).resolves.toEqual([
       { x: 1, y: 3 },
@@ -2069,12 +2070,13 @@ $in:
     ).resolves.toBe(2);
   });
 
-  it('右辺の選択は包囲する逐次の全体を分岐させ、境界がリストに集める', async () => {
+  it('右辺の選択は包囲する逐次の全体を分岐させ、選択のハンドラがリストに集める', async () => {
     await expect(
       run(`
-$let:
-  x: {$std.each: [1, 2]}
-$in: \${x * 10}
+$std.list:
+  $let:
+    x: {$std.each: [1, 2]}
+  $in: \${x * 10}
 `),
     ).resolves.toEqual([10, 20]);
   });
@@ -2094,16 +2096,17 @@ $in: ok
     expect(logs).toEqual(['hi']);
   });
 
-  it('$let で束縛した関数の本体の作用は $in の本体の呼び出しでも算入される', async () => {
+  it('$let で束縛した関数の本体の選択も、外側の選択のハンドラが集める', async () => {
     await expect(
       run(`
-$let:
-  pick:
-    $fn: xs
-    $body:
-      $std.each: \${xs}
-$in:
-  $.pick: [a, b]
+$std.list:
+  $let:
+    pick:
+      $fn: xs
+      $body:
+        $std.each: \${xs}
+  $in:
+    $.pick: [a, b]
 `),
     ).resolves.toEqual(['a', 'b']);
   });

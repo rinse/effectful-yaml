@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.7）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.8）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -43,25 +43,27 @@ $with:
   {
     name: '選択の基本形（18 要素版：$in の本体が $std.each）',
     yaml: `
-$let:
-  x: {$std.each: [a, b, c]}
-  y: {$std.each: [x, y, z]}
-$in:
-  $std.each:
-  - \${x}
-  - \${y}
+$std.list:
+  $let:
+    x: {$std.each: [a, b, c]}
+    y: {$std.each: [x, y, z]}
+  $in:
+    $std.each:
+    - \${x}
+    - \${y}
 `,
     expected: ['a', 'x', 'a', 'y', 'a', 'z', 'b', 'x', 'b', 'y', 'b', 'z', 'c', 'x', 'c', 'y', 'c', 'z'],
   },
   {
     name: '選択の基本形（9 ペア版：$in の本体が literal なリスト）',
     yaml: `
-$let:
-  x: {$std.each: [a, b, c]}
-  y: {$std.each: [x, y, z]}
-$in:
-- \${x}
-- \${y}
+$std.list:
+  $let:
+    x: {$std.each: [a, b, c]}
+    y: {$std.each: [x, y, z]}
+  $in:
+  - \${x}
+  - \${y}
 `,
     expected: [
       ['a', 'x'], ['a', 'y'], ['a', 'z'],
@@ -72,13 +74,14 @@ $in:
   {
     name: '打ち切りつきの選択（$std.where によるリスト内包表記）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [1, 2, 3]}
-    y: {$std.each: [1, 2, 3]}
-- $std.where: \${x < y}
-- - \${x}
-  - \${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3]}
+      y: {$std.each: [1, 2, 3]}
+  - $std.where: \${x < y}
+  - - \${x}
+    - \${y}
 `,
     expected: [[1, 2], [1, 3], [2, 3]],
   },
@@ -100,15 +103,16 @@ server:
   {
     name: '分岐を貫く状態（連番の採番）',
     yaml: `
-$do:
-- $std.set: {n: 0}
-- $let:
-    name: {$std.each: [web, db, cache]}
-    id: {$std.get: n}
-- $std.set:
-    n: \${id + 1}
-- name: \${name}
-  id: \${id}
+$std.list:
+  $do:
+  - $std.set: {n: 0}
+  - $let:
+      name: {$std.each: [web, db, cache]}
+      id: {$std.get: n}
+  - $std.set:
+      n: \${id + 1}
+  - name: \${name}
+    id: \${id}
 `,
     expected: [
       { name: 'web', id: 0 },
@@ -610,34 +614,37 @@ $into: mapping
   {
     name: 'std.each.md の例（二重の選択で全組み合わせを作る）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [1, 2]}
-    y: {$std.each: [10, 20]}
-- \${x + y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2]}
+      y: {$std.each: [10, 20]}
+  - \${x + y}
 `,
     expected: [11, 21, 12, 22],
   },
   {
     name: 'std.each.md の例（マッピングの分解）',
     yaml: `
-$do:
-- $let:
-    e: {$std.each: {web: 80, db: 5432}}
-- \${e.key}
+$std.list:
+  $do:
+  - $let:
+      e: {$std.each: {web: 80, db: 5432}}
+  - \${e.key}
 `,
     expected: ['web', 'db'],
   },
   {
     name: 'std.where.md の例（リスト内包表記のガード）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [1, 2, 3]}
-    y: {$std.each: [1, 2, 3]}
-- $std.where: \${x < y}
-- - \${x}
-  - \${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3]}
+      y: {$std.each: [1, 2, 3]}
+  - $std.where: \${x < y}
+  - - \${x}
+    - \${y}
 `,
     expected: [[1, 2], [1, 3], [2, 3]],
   },
@@ -870,32 +877,34 @@ $std.list:
   {
     name: 'std.state.md の例（分岐ごとに初期化：各分岐が初期値から作り直す）',
     yaml: `
-$do:
-- $let:
-    x: {$std.each: [a, b]}
-- $std.state: {n: 0}
-  $in:
-    $do:
-    - $let:
-        i: {$std.get: n}
-    - $std.set:
-        n: \${i + 1}
-    - \${x}\${i}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [a, b]}
+  - $std.state: {n: 0}
+    $in:
+      $do:
+      - $let:
+          i: {$std.get: n}
+      - $std.set:
+          n: \${i + 1}
+      - \${x}\${i}
 `,
     expected: ['a0', 'b0'],
   },
   {
     name: 'std.state.md の例（連番の採番）',
     yaml: `
-$do:
-- $std.set: {n: 0}
-- $let:
-    name: {$std.each: [web, db, cache]}
-    id: {$std.get: n}
-- $std.set:
-    n: \${id + 1}
-- name: \${name}
-  id: \${id}
+$std.list:
+  $do:
+  - $std.set: {n: 0}
+  - $let:
+      name: {$std.each: [web, db, cache]}
+      id: {$std.get: n}
+  - $std.set:
+      n: \${id + 1}
+  - name: \${name}
+    id: \${id}
 `,
     expected: [
       { name: 'web', id: 0 },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evalExpr, hasPathRef, interpolate, MissingPathError } from '../src/expr.js';
+import { evalExpr, interpolate, MissingPathError } from '../src/expr.js';
 import { EffectfulYamlError, emptyEnv, extendEnv, type Env, type Value } from '../src/types.js';
 
 function envOf(vars: Record<string, Value>): Env {
@@ -143,22 +143,6 @@ describe('evalExpr: references and paths', () => {
   });
 });
 
-describe('hasPathRef（作用の推論が std.fail を数える条件）', () => {
-  it('パスをたどる参照だけを見つける', () => {
-    expect(hasPathRef('${x.y}')).toBe(true);
-    expect(hasPathRef('${xs[0]}')).toBe(true);
-    expect(hasPathRef('prefix ${a + b.c} suffix')).toBe(true);
-  });
-
-  it('裸の参照・補間なし・パースできない文字列は数えない', () => {
-    expect(hasPathRef('${x}')).toBe(false);
-    expect(hasPathRef('${x + 1}')).toBe(false);
-    expect(hasPathRef('plain text')).toBe(false);
-    expect(hasPathRef('costs $$5')).toBe(false);
-    expect(hasPathRef('${')).toBe(false);
-    expect(hasPathRef('${!!!}')).toBe(false);
-  });
-});
 
 describe('interpolate', () => {
   it('returns the value as-is (any type) when the whole scalar is one ${expr}', () => {

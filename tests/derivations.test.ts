@@ -1,5 +1,5 @@
 /**
- * 検証テスト：docs/grammar.md（草案 0.7）が定める std の派生ハンドラ
+ * 検証テスト：docs/grammar.md（草案 0.8）が定める std の派生ハンドラ
  * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
  * 「$handle と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
  * 結果と比較する。
@@ -416,9 +416,8 @@ $std.first:
   it('失敗しない本体では $std.opt は素通しになる', async () => {
     expect(await run('{$std.opt: 5}')).toBe(5);
     expect(await run(optExpanded('5'))).toBe(5);
-    // 打ち切りの定型は $default が std.where を含むため、出現だけで作用集合に選択が
-    // 加わる（grammar.md）。境界の直下で裸に使うと境界がリスト形になるので、
-    // 選択のハンドラ（ここでは $std.list）の内側で素通しを確かめる。
+    // 打ち切りの定型は $default が std.where を含むので、選択のハンドラ
+    // （ここでは $std.list）の内側で素通しを確かめる。
     expect(await run('{$std.list: {$std.opt: 5, $default: {$std.where: false}}}')).toEqual([5]);
     expect(await run(`$std.list:${block(cutExpanded('5'), 2)}`)).toEqual([5]);
   });

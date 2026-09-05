@@ -49,9 +49,9 @@ const DELTA = 3;
 const RATIO = 2;
 
 /**
- * 値が undefined でも壊れないこと。SEnv は「追跡不能」を undefined という値として束縛する。
- * ノードの有無と値は無関係なので、undefined を入れてもサイズもバランスも正しく保たれる。
- * ただし get の戻りでは「未束縛」と「undefined が束縛されている」を区別できない（後述の利用側の注記参照）。
+ * 値が undefined でも壊れないこと。ノードの有無と値は無関係なので、
+ * undefined を入れてもサイズもバランスも正しく保たれる。
+ * ただし get の戻りでは「未束縛」と「undefined が束縛されている」を区別できない。
  */
 export function get<V>(m: PMap<V>, key: string): V | undefined {
   for (let cur = m; cur !== null; ) {

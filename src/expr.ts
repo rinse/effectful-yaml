@@ -1,6 +1,6 @@
 /**
  * `${式}` の式言語（参照・比較・算術・論理演算）と文字列補間。
- * 仕様: docs/grammar.md（草案 0.7）「参照と式」節。
+ * 仕様: docs/grammar.md（草案 0.8）「参照と式」節。
  *
  * この式言語に作用は無い。Value と Env だけを相手にする純粋な関数として実装する。
  * 作用を起こしうるのはパスの部分性だけで、それも MissingPathError を投げるにとどめ、
@@ -490,49 +490,12 @@ export function interpolate(scalar: string, env: Env): Value {
   return out;
 }
 
-/** 部分式のどこかにパスをたどる参照があるか。 */
-function anyPathRef(node: Node): boolean {
-  switch (node.k) {
-    case 'ref':
-      return node.path.length > 0;
-    case 'not':
-      return anyPathRef(node.e);
-    case 'bin':
-      return anyPathRef(node.l) || anyPathRef(node.r);
-    default:
-      return false;
-  }
-}
-
-/**
- * スカラーの中に、キーや添字をたどる参照（`${x.y}` `${xs[0]}`）が出現するか。
- * 出現すれば失敗しうるので、作用の推論はそのスカラーに std.fail を数える。
- * 裸の `${x}` は純粋なので数えない。パースできない文字列は評価時に報告するので false。
- */
-export function hasPathRef(scalar: string): boolean {
-  if (!scalar.includes('${')) return false;
-  let segments: Segment[];
-  try {
-    segments = splitInterpolation(scalar);
-  } catch {
-    return false;
-  }
-  for (const seg of segments) {
-    if (seg.kind !== 'expr') continue;
-    try {
-      if (anyPathRef(parse(seg.src))) return true;
-    } catch {
-      continue;
-    }
-  }
-  return false;
-}
 
 /**
  * スカラー全体がちょうど一つの `${参照名}` なら、その参照名を区画に分けて返す。
  * `${a.b[0]}` は `['a', 'b', '0']`。演算や補間を含むスカラーは undefined。
- * 参照名の文法（grammar.md「参照と式」）を Analyzer が持ち直さずに済むよう、
- * 静的な追跡もこの式言語のパーサーを通す。パースできない文字列は
+ * 参照名の文法（grammar.md「参照と式」）を走査側が持ち直さずに済むよう、
+ * 評価前の検査もこの式言語のパーサーを通す。パースできない文字列は
  * ここではエラーにせず undefined を返し、報告は評価時に任せる。
  */
 export function refPathOf(scalar: string): string[] | undefined {

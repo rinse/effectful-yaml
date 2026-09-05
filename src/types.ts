@@ -1,6 +1,6 @@
 /**
  * effectful-yaml の値・環境・計算表現。
- * 仕様: docs/grammar.md（草案 0.7）
+ * 仕様: docs/grammar.md（草案 0.8）
  */
 import { empty, get, insert, type PMap } from './pmap.js';
 
@@ -190,26 +190,23 @@ export class OperationFailure extends Error {
   }
 }
 
-/** 選択の作用に属する演算は std.each ただ一つ（$std.where は std.each への展開で定まる導出形）。境界にこれが残ると値はリストになる。 */
-export const CHOICE_OPS: ReadonlySet<string> = new Set(['std.each']);
-
-/** 状態の作用に属する演算。 */
-export const STATE_OPS: ReadonlySet<string> = new Set(['std.get', 'std.set']);
-
-/** 失敗の作用。 */
-export const FAIL_OPS: ReadonlySet<string> = new Set(['std.fail']);
+/** 値を人が読む形にする（エラー文言と、文字列そのものの表示）。 */
+export function describe(v: Value): string {
+  if (typeof v === 'string') return v;
+  if (isClosure(v)) return '<function>';
+  return JSON.stringify(v) ?? String(v);
+}
 
 /**
- * 標準演算。作用を起こす 6 つと、第一階の `std.range`、展開で意味が定まる `std.lookup`。
- * std の派生ハンドラ（$std.list など）と導出形 `$std.where` は演算ではないので含まない。
+ * 第一階の標準演算（値から値を計算するだけ）。導出できないが評価器の協力も要らないので、
+ * カーネルではなく「処理系が事前登録する演算」として供給の層に置く。
+ * ホスト登録の演算と同じ経路（境界を抜けてドライバへ）を通る。
  */
-export const STD_OPS: ReadonlySet<string> = new Set([
-  'std.each',
-  'std.param',
-  'std.get',
-  'std.set',
-  'std.log',
-  'std.fail',
-  'std.range',
-  'std.lookup',
-]);
+export const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
+  'std.range': (n) => {
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      throw new EffectfulYamlError(`$std.range requires a natural number, got: ${describe(n)}`);
+    }
+    return Array.from({ length: n }, (_, i) => i);
+  },
+};

@@ -1,11 +1,11 @@
 /**
  * `$` キーの分類と、マッピングノードの形の判定。
- * 仕様: docs/grammar.md（草案 0.7）呼び出しと名前空間 / 各フォームの節。
+ * 仕様: docs/grammar.md（草案 0.8）呼び出しと名前空間 / 各フォームの節。
  *
  * effect-infer（eval-core に同居）と evaluator の双方が、同じマッピングを
  * 同じ形として認識しなければならないため、その判定をここに集約する。
  */
-import { CHOICE_OPS, EffectfulYamlError, FAIL_OPS, STATE_OPS } from './types.js';
+import { EffectfulYamlError } from './types.js';
 
 /** 予約キー（$ を除く）。仕様の 14 個がすべてであり、演算はここに現れない。 */
 export const RESERVED_KEYS: ReadonlySet<string> = new Set([
@@ -380,13 +380,13 @@ export function statementFormOf(stmt: unknown): StatementForm | undefined {
 }
 
 /**
- * 作用集合（演算名の集合）に対する std の派生ハンドラの部分処理。
- * 「宣言した作用だけを取り除く」の宣言側の一覧。$handle は $with の節名で動的に決まるため含まない。
+ * 処理されずに境界へ達した演算の文言。ローカル作用の内部演算がここに現れるのは、
+ * 素通しの閉包がハンドラの動的範囲の外で呼ばれたときだけなので、脱出として報告する。
+ * 内部名が利用者の目に触れるのはこの経路（事前検査と評価時のドライバ）だけである。
  */
-export const HANDLER_REMOVES: Readonly<Record<string, ReadonlySet<string>>> = {
-  'std.list': CHOICE_OPS,
-  'std.mapping': CHOICE_OPS,
-  'std.first': new Set([...CHOICE_OPS, ...FAIL_OPS]),
-  'std.state': STATE_OPS,
-  'std.opt': FAIL_OPS,
-};
+export function unhandledOpMessage(name: string): string {
+  const local = localOpParts(name);
+  if (local === undefined) return `unregistered operation: $${name}`;
+  const where = local.path === '' ? 'the document root' : local.path;
+  return `local effect '${local.name}' escaped its handler (declared at ${where})`;
+}

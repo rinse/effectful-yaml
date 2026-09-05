@@ -34,13 +34,14 @@
 ## 例
 
 ```yaml
-$do:
-- $let:
-    x: {$std.each: [1, 2, 3]}
-    y: {$std.each: [1, 2, 3]}
-- $std.where: ${x < y}
-- - ${x}
-  - ${y}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3]}
+      y: {$std.each: [1, 2, 3]}
+  - $std.where: ${x < y}
+  - - ${x}
+    - ${y}
 ```
 
 ```yaml

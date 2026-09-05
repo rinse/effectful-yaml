@@ -136,7 +136,8 @@ describe('形が合わない場合は置換の退化', () => {
   it('選択が島の外に漏れて文書が分岐したら、文書全体の再直列化に退化する', async () => {
     // データ位置では島自身が作用境界なので選択は漏れない（tests/eval.test.ts の
     // 「データ文脈では最も外側の $ 式だけが境界になる」）。漏れるのは $do の中である。
-    const src = `$do:
+    const src = `$std.list:
+  $do:
   - a: {$std.each: [1, 2]}
 `;
     await expect(render(src)).resolves.toBe(stringify([{ a: 1 }, { a: 2 }]));

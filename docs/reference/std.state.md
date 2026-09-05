@@ -130,17 +130,18 @@ $std.list:
 
 ```yaml
 # 分岐ごとに初期化: 各分岐が初期値から作り直す
-$do:
-- $let:
-    x: {$std.each: [a, b]}
-- $std.state: {n: 0}
-  $in:
-    $do:
-    - $let:
-        i: {$std.get: n}
-    - $std.set:
-        n: ${i + 1}
-    - ${x}${i}
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [a, b]}
+  - $std.state: {n: 0}
+    $in:
+      $do:
+      - $let:
+          i: {$std.get: n}
+      - $std.set:
+          n: ${i + 1}
+      - ${x}${i}
 ```
 
 結果は `[a0, b0]` である。
@@ -193,15 +194,16 @@ $do:
 貫流を使った例である。
 
 ```yaml
-$do:
-- $std.set: {n: 0}
-- $let:
-    name: {$std.each: [web, db, cache]}
-    id: {$std.get: n}
-- $std.set:
-    n: ${id + 1}
-- name: ${name}
-  id: ${id}
+$std.list:
+  $do:
+  - $std.set: {n: 0}
+  - $let:
+      name: {$std.each: [web, db, cache]}
+      id: {$std.get: n}
+  - $std.set:
+      n: ${id + 1}
+  - name: ${name}
+    id: ${id}
 ```
 
 ```yaml

@@ -1,7 +1,7 @@
 /**
  * 永続平衡木（src/pmap.ts）の単体テスト。
  * 見るのは三つ。読み書きの意味、挿入順によらずバランスが保たれること（＝退化しないこと）、
- * そして undefined を値として入れても壊れないこと（SEnv が「追跡不能」をそう表す）。
+ * そして undefined を値として入れても壊れないこと。
  */
 import { describe, expect, it } from 'vitest';
 import { empty, get, insert, inspect, type PMap } from '../src/pmap.js';

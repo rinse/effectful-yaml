@@ -1,14 +1,14 @@
 /**
- * 関数値の流れの検査（0CFA 流のフロー解析）。
- * 仕様: docs/grammar.md（草案 0.7）「関数値の流れと停止性」。
+ * 関数値の流れの検査（0CFA 流のフロー解析）と、演算の事前検査。
+ * 仕様: docs/grammar.md（草案 0.8）「関数値の流れと停止性」「演算」。
  *
  * 閉包を作るのは文書内の `$fn` だけである（パラメータとホスト演算の結果は常にデータ）。
  * したがって文書の有限個の `$fn` を抽象閉包とするフロー解析は、追跡不能を持たない全域の解析になる。
  * 各構文を一度だけ走査して「どのセルにどの閉包が流れうるか」の制約を組み立て、
  * ワークリストで不動点まで伝播させ、`$fn` の間の到達グラフに循環があれば評価前にエラーにする。
  *
- * 作用の推論（eval.ts の Analyzer）とは独立である。あちらは作用集合と境界の形を、
- * こちらは停止性を担い、あちらの追跡の盲点（$collect の $with 引数、ハンドラ節の引数）を持たない。
+ * 走査は演算のサイトも余さず数えるので、文書の作用シグネチャ（要求するハンドラの一覧）も
+ * ここで得られる。実装の要る演算が供給されていない文書は、同じ走査の結果から拒否する。
  *
  * データは追わない（Data の原子は持たず、閉包を運びうる原子だけをセルに入れる）。
  * 出現主義：$if の選ばれない側や $default の中の適用も数える。
@@ -21,9 +21,10 @@ import {
   mappingShapeOfNode,
   statementFormOf,
   unescapeDollar,
+  unhandledOpMessage,
 } from './forms.js';
 import { empty, get, insert, type PMap } from './pmap.js';
-import { EffectfulYamlError } from './types.js';
+import { BUILTIN_OPS, EffectfulYamlError } from './types.js';
 
 type NodeMap = Record<string, unknown>;
 const isNodeMap = (n: unknown): n is NodeMap =>
@@ -661,6 +662,21 @@ class Checker {
     return undefined;
   }
 
+  /**
+   * 実装が供給されていない演算。境界の既定ハンドラの系列（失敗・パラメータ・ログ・状態）と
+   * 選択のハンドラが処理する演算、文書内の節が処理する演算、第一階の標準演算、
+   * ホストが登録した演算のいずれでもない名前を返す。
+   * 走査は演算の出現に対して全域なので、この検査も全域である。
+   */
+  findUnsuppliedOp(ops: Readonly<Record<string, unknown>>): string | undefined {
+    for (const name of this.argPools.keys()) {
+      if (IMPLICIT_OPS.has(name) || this.clauseNames.has(name)) continue;
+      if (name in ops || name in BUILTIN_OPS) continue;
+      return name;
+    }
+    return undefined;
+  }
+
   private reachesClosure(cell: Cell): boolean {
     const visited = new Set<Cell>();
     const stack = [cell];
@@ -678,13 +694,28 @@ class Checker {
   }
 }
 
+/**
+ * 実装の登録を要さない演算。境界の既定ハンドラの系列が処理する 5 つと、
+ * 選択のハンドラ（$std.list など）が処理する std.each である。
+ * std.each がここに在るのは、選択を処理するハンドラが在るかどうかを走査では決められず、
+ * 捕まえ手のない選択を評価時のエラーにすると定めたからである（言語仕様の作用境界）。
+ */
+const IMPLICIT_OPS: ReadonlySet<string> = new Set([
+  'std.fail',
+  'std.param',
+  'std.log',
+  'std.get',
+  'std.set',
+  'std.each',
+]);
+
 const describePath = (p: string): string => (p === '' ? 'the document root' : p);
 
 /**
- * 文書全体の関数値の流れの検査。自己適用を含みうる文書と、
- * ホスト演算の引数に閉包が流れうる文書を EffectfulYamlError で拒否する。
+ * 文書全体の評価前の検査。自己適用を含みうる文書、ホスト演算の引数に閉包が流れうる文書、
+ * 実装の供給されていない演算を含む文書を EffectfulYamlError で拒否する。
  */
-export function typecheck(doc: unknown): void {
+export function typecheck(doc: unknown, ops: Readonly<Record<string, unknown>> = {}): void {
   const checker = new Checker();
   checker.walk(doc, empty, '');
   const cycle = checker.findCycle();
@@ -703,4 +734,6 @@ export function typecheck(doc: unknown): void {
   if (host !== undefined) {
     throw new EffectfulYamlError(`a function value cannot be passed to a host operation: $${host}`);
   }
+  const missing = checker.findUnsuppliedOp(ops);
+  if (missing !== undefined) throw new EffectfulYamlError(unhandledOpMessage(missing));
 }
