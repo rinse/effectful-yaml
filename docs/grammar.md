@@ -800,7 +800,13 @@ $with:
 `$std.where` の打ち切りは、展開により空の `$std.each` として現れ、`std.each` の節が 0 個の候補を畳んで分岐を消す。
 分岐の中の失敗は節にないので処理せず、全体の失敗として伝播させる。
 
-**$std.mapping** は同じ骨格で、`return` 節が `{key, value}` を単エントリのマッピングにし（`$collect` の `$into: mapping`）、`std.each` の節が各再開の結果のエントリを集め直す。
+**$std.mapping** は `$std.list` の上の導出であり、展開は次のとおりである。
+
+```
+{$std.mapping: 式} ≡ {$collect: {$std.list: 式}, $with: {$fn: e, $body: [${e}]}, $into: mapping}
+```
+
+`$std.list` が全分岐の `{key, value}` を文書順のリストに集め、`$collect` がその各要素をそのまま流しながら `$into: mapping` でマッピングへ組み立てる。
 エントリの検査（ちょうど二つのキー、`key` は文字列、重複の禁止）は `$collect` の契約に含まれるので、展開には現れない。
 `$std.where` で分岐を打ち切れば、条件を満たすエントリだけを持つマッピングが作れる。
 これは「null を入れること」と「キーが無いこと」の区別、すなわちキーの条件付き省略を兼ねる。

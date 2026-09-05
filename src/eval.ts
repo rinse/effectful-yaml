@@ -2,6 +2,10 @@
  * 評価器。
  * 仕様: docs/grammar.md（草案 0.8）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
+ * 入力はカーネルの AST（src/desugar.ts）である。導出形はすべて脱糖済みなので、
+ * ここで扱うのはカーネルの形と、仕様が「等価な組み込みで最適化してよい」と定める
+ * std の派生ハンドラ（$std.list / $std.first / $std.state）だけである。
+ *
  * Comp（freer モナド風の計算表現）を組み立てる。
  * ハンドラは Comp → Comp の純粋変換なので、$handle の節は $resume を何度でも呼べる。
  *
@@ -9,28 +13,14 @@
  * 境界の内側には、明示のハンドラ（$handle と std の派生ハンドラ）を除いて
  * 作用を堰き止める場所はない。データ構成（リストの要素、`$` キーを持たないマッピングの値）も、
  * 演算の引数も、呼び出しの引数と本体も、$collect の対象と関数本体も、
- * すべて合成であり、作用はそのまま周囲へ合流する。
- *
- * 評価の三態。
- *   - data:     まだどの `$` 式にも入っていないデータ位置。`$` 式に出会ったらそこが境界。
- *   - boundary: 境界。中身を評価し、既定ハンドラ一式で処理し尽くす。
- *   - node:     合成位置（`$` 式の内側）。子も一律に合成。
+ * すべて合成であり、作用はそのまま周囲へ合流する。境界の位置は脱糖器が決め、
+ * boundary ノードとして AST に現れる。
  */
+import { desugar, unhandledOpMessage, type Clause as KClause, type KNode } from './desugar.js';
 import { interpolate, MissingPathError } from './expr.js';
-import {
-  classifyClauseName,
-  fnParamsOf,
-  localDeclsOf,
-  mappingShapeOfNode,
-  statementFormOf,
-  unescapeDollar,
-  unhandledOpMessage,
-  type MappingShape,
-} from './forms.js';
 import { typecheck } from './typecheck.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 import {
-  atPath,
   attachPath,
   bind,
   BUILTIN_OPS,
@@ -55,27 +45,23 @@ import {
 // 小道具
 // ---------------------------------------------------------------------------
 
-type NodeMap = Record<string, unknown>;
 type ValueMap = { [key: string]: Value };
 
 // ---------------------------------------------------------------------------
 // 失敗位置
 //
 // 位置は「入力文書の中のデータの位置」であり、キーを `.` で、リストの添字を `[2]` で連ねる
-// （キーの `.` はエスケープしない）。データを降りるときだけ伸び、`$` 式の内側では凍る。
-// したがって報告される位置は、失敗を含む最も外側の `$` 式の位置になる。
+// （キーの `.` はエスケープしない）。脱糖器がノードごとに決めた位置であり、データを降りるときだけ
+// 伸びて `$` 式の内側では凍る。したがって報告される位置は、失敗を含む最も外側の `$` 式の位置になる。
 //
 // Comp は遅延して組み立てられ、bind の継続はドライバのスタックで走るので、
 // 呼び出しを try/catch で囲んでも継続の中で起きたエラーは捕まらない（位置ともずれる）。
 // そこで位置は二つの経路で運ぶ。
-//   - Env.path: 評価器の中で投げられるエラー用。継続はこれをレキシカルに捕まえる。
+//   - ノードの評価を包む at: 評価器の中で投げられるエラー用。継続はこれをレキシカルに捕まえる。
 //   - op の path: 境界を抜けてドライバに届く失敗とホスト演算のエラー用。
 // ---------------------------------------------------------------------------
 
-/** 位置をキー一つぶん降りる。添字は `${path}[${i}]` でよいので専用の関数は要らない。 */
-const keyPath = (path: string, key: string): string => (path === '' ? key : `${path}.${key}`);
-
-/** f の中で投げられたエラーに失敗位置を添える。位置を捕まえた関数の中でだけ意味を持つ。 */
+/** f の中で投げられたエラーに失敗位置を添える。 */
 function at<T>(path: string, f: () => T): T {
   try {
     return f();
@@ -87,9 +73,6 @@ function at<T>(path: string, f: () => T): T {
 /** 継続の中で投げられたエラーにも失敗位置が乗る bind。 */
 const bindAt = (path: string, c: Comp, f: (v: Value) => Comp): Comp =>
   bind(c, (v) => at(path, () => f(v)));
-
-const isNodeMap = (n: unknown): n is NodeMap =>
-  typeof n === 'object' && n !== null && !Array.isArray(n);
 
 const isValueMap = (v: Value): v is ValueMap =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
@@ -156,7 +139,7 @@ function mergeComp(arg: Value): Comp {
 // ---------------------------------------------------------------------------
 
 /** 演算の節。resume は「残りの計算（同じハンドラが効き続ける）」。 */
-type Clause = (arg: Value, resume: (v: Value) => Comp) => Comp;
+type Handler = (arg: Value, resume: (v: Value) => Comp) => Comp;
 
 /**
  * 部分処理の汎用コンビネータ。
@@ -165,7 +148,7 @@ type Clause = (arg: Value, resume: (v: Value) => Comp) => Comp;
  */
 function handleOps(
   comp: Comp,
-  clauses: ReadonlyMap<string, Clause>,
+  clauses: ReadonlyMap<string, Handler>,
   ret: (v: Value) => Comp = pure,
 ): Comp {
   const rec = (c0: Comp): Comp => {
@@ -232,11 +215,11 @@ function materializeMap(entries: Cons<readonly [string, Value]> | null): ValueMa
   return out;
 }
 
-/** 選択を処理し、全分岐の結果を文書順に並べたリストにする（$std.list、および境界の既定）。 */
+/** 選択を処理し、全分岐の結果を文書順に並べたリストにする（$std.list）。 */
 function collectChoice(comp: Comp): Comp {
   return handleOps(
     comp,
-    new Map<string, Clause>([
+    new Map<string, Handler>([
       [
         'std.each',
         (arg, k) => {
@@ -261,7 +244,7 @@ function collectChoice(comp: Comp): Comp {
 function collectFirst(comp: Comp): Comp {
   return handleOps(
     comp,
-    new Map<string, Clause>([
+    new Map<string, Handler>([
       [
         'std.each',
         (arg, k) => {
@@ -366,6 +349,12 @@ export interface EvaluateOptions {
  */
 const ABSENT: Value = Object.freeze({});
 
+/** 節の表示名。ローカル作用の節は内部演算名ではなく、宣言に書いた裸の名前で報せる。 */
+function clauseDisplayName(op: string): string {
+  const i = op.indexOf('@');
+  return i < 0 ? op : op.slice(0, i);
+}
+
 class Evaluator {
   constructor(
     private readonly params: Record<string, Value>,
@@ -378,14 +367,14 @@ class Evaluator {
    * 選択と失敗と登録演算だけは外（トップレベルのドライバ）へ委ねる。
    * 選択を処理するのは明示のハンドラだけなので、境界に達した選択はドライバのエラーになる。
    */
-  boundary(node: unknown, env: Env): Comp {
-    return this.handleParam(this.handleLog(handleState(this.data(node, env, true), empty)));
+  private boundary(comp: Comp): Comp {
+    return this.handleParam(this.handleLog(handleState(comp, empty)));
   }
 
   private handleLog(comp: Comp): Comp {
     return handleOps(
       comp,
-      new Map<string, Clause>([
+      new Map<string, Handler>([
         [
           'std.log',
           (v, k) => {
@@ -401,7 +390,7 @@ class Evaluator {
   private handleParam(comp: Comp): Comp {
     return handleOps(
       comp,
-      new Map<string, Clause>([
+      new Map<string, Handler>([
         [
           'std.param',
           (arg, k) => {
@@ -417,101 +406,59 @@ class Evaluator {
     );
   }
 
-  /**
-   * `{$std.param: 名前}` の呼び出し位置。未渡しならその場で std.fail を起こす。
-   * `$default` があるときは、その std.fail を捕まえて `$default` の式を返す $handle で包む
-   * （仕様が定める展開そのもの）。節が $resume を呼ばないので、失敗した時点で
-   * ハンドラ全体の値が `$default` の値になり、渡されていれば `$default` は評価されない。
-   */
-  private param(name: string, defaultNode: unknown, hasDefault: boolean, env: Env): Comp {
-    const read = bind(perform('std.param', name, env.path), (v) =>
-      v === ABSENT ? perform('std.fail', `parameter not provided: ${name}`, env.path) : pure(v),
-    );
-    if (!hasDefault) return read;
-    return handleOps(
-      read,
-      new Map<string, Clause>([['std.fail', () => this.node(defaultNode, env)]]),
-    );
+  /** ノードの評価。投げられたエラーにはこのノードの失敗位置が乗る（内側が勝つ）。 */
+  eval(node: KNode, env: Env): Comp {
+    return at(node.path, () => this.step(node, env));
   }
 
-  /**
-   * データ位置。`$` 式に出会ったらそこが最も外側の `$` 式＝境界である。
-   * here が真のときはこのノード自身が境界。
-   * 失敗位置が伸びるのはここだけである（子のデータ位置ごとに Env の path を差し替える）。
-   */
-  private data(node: unknown, env: Env, here = false): Comp {
-    return at(env.path, () => {
-      const composed = this.compose(node, env, (n, path) => this.data(n, atPath(env, path)));
-      if (composed !== undefined) return composed;
-      return here ? this.dollar(node as NodeMap, env) : this.boundary(node, env);
-    });
-  }
-
-  /** 合成位置の評価（`$` 式の内側）。子も一律に合成。失敗位置は `$` 式の位置のまま凍る。 */
-  node(node: unknown, env: Env): Comp {
-    return at(
-      env.path,
-      () => this.compose(node, env, (n) => this.node(n, env)) ?? this.dollar(node as NodeMap, env),
-    );
-  }
-
-  /**
-   * データ構成（スカラー・リスト・プレーンマッピング）を rec で組み立てる。`$` 式なら undefined。
-   * データ構成は作用を起こさないが、遮りもしない（bind でつなぐだけ）。
-   * rec には子の失敗位置も渡す（データ位置の rec だけが使い、合成位置の rec は捨てる）。
-   */
-  private compose(
-    node: unknown,
-    env: Env,
-    rec: (n: unknown, path: string) => Comp,
-  ): Comp | undefined {
-    if (typeof node === 'string') {
-      // 欠落したキーと添字は失敗作用（捕捉できる）。束縛の未定義や非コンテナの走査、
-      // 型の不一致は文書の形の誤りなので、そのままエラーとして投げ抜ける。
-      try {
-        return pure(interpolate(node, env));
-      } catch (e) {
-        if (e instanceof MissingPathError) return perform('std.fail', e.message, env.path);
-        throw e;
+  private step(node: KNode, env: Env): Comp {
+    switch (node.k) {
+      case 'lit':
+        return pure(node.value);
+      case 'str':
+        // 欠落したキーと添字は失敗作用（捕捉できる）。束縛の未定義や非コンテナの走査、
+        // 型の不一致は文書の形の誤りなので、そのままエラーとして投げ抜ける。
+        try {
+          return pure(interpolate(node.raw, env));
+        } catch (e) {
+          if (e instanceof MissingPathError) return perform('std.fail', e.message, node.path);
+          throw e;
+        }
+      case 'list': {
+        // データ構成は作用を起こさないが、遮りもしない（bind でつなぐだけ）。
+        const items = node.items;
+        const go = (i: number, acc: Cons<Value> | null): Comp =>
+          i >= items.length
+            ? pure(toDocumentOrder(acc))
+            : bind(this.eval(items[i]!, env), (v) => go(i + 1, { head: v, tail: acc }));
+        return go(0, null);
       }
-    }
-    if (node === null || node === undefined) return pure(null);
-    if (typeof node === 'number' || typeof node === 'boolean') return pure(node);
-    if (Array.isArray(node)) {
-      const go = (i: number, acc: Cons<Value> | null): Comp =>
-        i >= node.length
-          ? pure(toDocumentOrder(acc))
-          : bind(rec(node[i], `${env.path}[${i}]`), (v) => go(i + 1, { head: v, tail: acc }));
-      return go(0, null);
-    }
-    if (!isNodeMap(node)) {
-      throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
-    }
-    if (mappingShapeOfNode(node).kind !== 'plain') return undefined;
-    // キーは $$ を literal な $ に解決するだけ（計算されたキーは $mapping で書く）。
-    const entries = Object.entries(node);
-    const go = (i: number, acc: Cons<readonly [string, Value]> | null): Comp => {
-      if (i >= entries.length) return pure(materializeMap(acc));
-      const [rawKey, valueNode] = entries[i]!;
-      return bind(rec(valueNode, keyPath(env.path, rawKey)), (v) =>
-        go(i + 1, { head: [unescapeDollar(rawKey), v], tail: acc }),
-      );
-    };
-    return go(0, null);
-  }
-
-  private dollar(node: NodeMap, env: Env): Comp {
-    const shape = mappingShapeOfNode(node);
-    switch (shape.kind) {
-      case 'plain':
-        throw new EffectfulYamlError('unreachable: plain mapping is not a $ form');
-      case 'lexical': {
+      case 'map': {
+        const entries = node.entries;
+        const go = (i: number, acc: Cons<readonly [string, Value]> | null): Comp => {
+          if (i >= entries.length) return pure(materializeMap(acc));
+          const [key, valueNode] = entries[i]!;
+          return bind(this.eval(valueNode, env), (v) => go(i + 1, { head: [key, v], tail: acc }));
+        };
+        return go(0, null);
+      }
+      case 'boundary':
+        return this.boundary(this.eval(node.body, env));
+      case 'let':
+        // 右辺は合成。ここの作用は束縛先ではなく後続の計算へ合流する。
+        return this.letBind(node, 0, env);
+      case 'if':
+        return bindAt(node.path, this.eval(node.cond, env), (cond) =>
+          this.eval(requireBoolean(cond, node.what) ? node.then : node.else, env),
+        );
+      case 'fn':
+        return pure(new Closure(node.params, node.body, env));
+      case 'call': {
         // 先頭区画はレキシカルな束縛の解決、残りの区画は値のマッピングのキーアクセス。
         // エラーの語彙は式の参照 ${a.self}（expr.ts の evalNode の case 'ref'）に揃える。
-        const [head, ...rest] = shape.name.split('.');
-        let cur = lookupEnv(env, head!);
-        if (cur === undefined) throw new EffectfulYamlError(`undefined reference: ${head}`);
-        for (const seg of rest) {
+        let cur = lookupEnv(env, node.head);
+        if (cur === undefined) throw new EffectfulYamlError(`undefined reference: ${node.head}`);
+        for (const seg of node.keys) {
           if (!isValueMap(cur)) {
             throw new EffectfulYamlError(`cannot access key '.${seg}' of a non-mapping value`);
           }
@@ -521,82 +468,65 @@ class Evaluator {
           cur = cur[seg]!;
         }
         const f = cur;
-        return bindAt(env.path, this.node(node[shape.raw], env), (arg) =>
-          this.apply(f, arg, shape.name),
-        );
+        const what = [node.head, ...node.keys].join('.');
+        return bindAt(node.path, this.eval(node.arg, env), (arg) => this.apply(f, arg, what));
       }
       case 'op':
-        return this.operation(shape, node, env);
-      case 'reserved':
-        return this.reserved(shape, node, env);
+        return this.operation(node, env);
+      case 'handle': {
+        const { clauses, ret } = this.clausesOf(node, env);
+        // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。
+        return handleOps(this.eval(node.body, env), clauses, ret);
+      }
+      case 'collect':
+        return this.collect(node, env);
+      case 'resume': {
+        const k = resumeOf(env);
+        if (k === undefined) {
+          throw new EffectfulYamlError('$resume is only allowed inside a $handle clause');
+        }
+        return bind(this.eval(node.arg, env), k);
+      }
+      case 'state':
+        return bindAt(node.path, this.eval(node.init, env), (cells) =>
+          handleState(this.eval(node.body, env), cellsOf(cells)),
+        );
+      case 'first':
+        return bind(collectFirst(this.eval(node.body, env)), (r) =>
+          asList(r).length > 0
+            ? pure(asList(r)[0]!)
+            : perform('std.fail', 'every branch of $std.first failed or was cut', node.path),
+        );
+      case 'listOf':
+        return collectChoice(this.eval(node.body, env));
+      case 'err':
+        throw new EffectfulYamlError(node.message);
     }
   }
 
   /**
    * 演算の呼び出し。標準演算もホスト登録の演算も同じ経路（引数を評価してから perform）を通る。
-   * std の派生ハンドラだけは本体を内側に持つ形なので、それぞれの展開に相当する処理を行う。
+   * 第一階の照会（$std.lookup と $std.merge）と、未渡しの判定が呼び出し位置に属する
+   * $std.param だけは、展開と等価な意味をここで直に与える。
    */
-  private operation(
-    shape: Extract<MappingShape, { kind: 'op' }>,
-    node: NodeMap,
-    env: Env,
-  ): Comp {
-    const arg = node[shape.raw];
-    const aux = (name: string): unknown => {
-      const raw = shape.aux.get(name);
-      return raw === undefined ? undefined : node[raw];
-    };
-    switch (shape.name) {
-      case 'std.list':
-        return collectChoice(this.node(arg, env));
-      case 'std.mapping':
-        return bindAt(env.path, collectChoice(this.node(arg, env)), (l) =>
-          pure(toMapping(asList(l))),
-        );
-      case 'std.first':
-        return bind(collectFirst(this.node(arg, env)), (r) =>
-          asList(r).length > 0
-            ? pure(asList(r)[0]!)
-            : perform('std.fail', 'every branch of $std.first failed or was cut', env.path),
-        );
-      case 'std.opt':
-        // $default の展開（std.fail の節が $default の式を返す）。$default が無ければ
-        // aux('default') は undefined で、node() が pure(null) にするので null になる。
-        return handleOps(
-          this.node(arg, env),
-          new Map([['std.fail', () => this.node(aux('default'), env)]]),
-        );
-      case 'std.state':
-        if (!shape.aux.has('in')) {
-          throw new EffectfulYamlError(
-            '$std.state without $in is only allowed as a statement of $do',
-          );
-        }
-        return bindAt(env.path, this.node(arg, env), (cells) =>
-          handleState(this.node(aux('in'), env), cellsOf(cells)),
-        );
+  private operation(node: Extract<KNode, { k: 'op' }>, env: Env): Comp {
+    switch (node.name) {
       case 'std.param':
-        return bindAt(env.path, this.node(arg, env), (name) =>
-          this.param(
-            requireString(name, '$std.param name'),
-            aux('default'),
-            shape.aux.has('default'),
-            env,
-          ),
-        );
-      case 'std.where':
-        // 導出形 {$if: 条件, $then: null, $else: {$std.each: []}} と等価。
-        // std.where という演算は存在せず、打ち切りは空の std.each として選択のハンドラに届く。
-        return bindAt(env.path, this.node(arg, env), (b) =>
-          requireBoolean(b, '$std.where') ? pure(null) : perform('std.each', [], env.path),
-        );
+        return bindAt(node.path, this.eval(node.arg, env), (name) => {
+          const key = requireString(name, '$std.param name');
+          return bind(perform('std.param', key, node.path), (v) =>
+            v === ABSENT
+              ? perform('std.fail', `parameter not provided: ${key}`, node.path)
+              : pure(v),
+          );
+        });
       case 'std.lookup':
-        return bindAt(env.path, this.node(arg, env), (v) => lookupComp(v, env.path));
+        return bindAt(node.path, this.eval(node.arg, env), (v) => lookupComp(v, node.path));
       case 'std.merge':
-        return bindAt(env.path, this.node(arg, env), mergeComp);
+        return bindAt(node.path, this.eval(node.arg, env), mergeComp);
       default:
         // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
-        return bind(this.node(arg, env), (v) => perform(shape.name, v, env.path));
+        return bind(this.eval(node.arg, env), (v) => perform(node.name, v, node.path));
     }
   }
 
@@ -611,56 +541,9 @@ class Evaluator {
    * 部分適用であり、本体は走らせず残りを待つ閉包を返す（$fn の列のカリー化展開と等価）。
    */
   private enter(f: Closure, inner: Env): Comp {
-    return f.params.length > 1 ? pure(new Closure(f.params.slice(1), f.body, inner)) : this.node(f.body, inner);
-  }
-
-  private reserved(
-    shape: Extract<MappingShape, { kind: 'reserved' }>,
-    node: NodeMap,
-    env: Env,
-  ): Comp {
-    const arg = node[shape.mainRaw];
-    const aux = (name: string): unknown => {
-      const raw = shape.aux.get(name);
-      return raw === undefined ? undefined : node[raw];
-    };
-    switch (shape.main) {
-      case 'do': {
-        if (!Array.isArray(arg)) {
-          throw new EffectfulYamlError('$do requires a list of statements');
-        }
-        return this.statements(arg, 0, env);
-      }
-      case 'let': {
-        // 逐次のカーネル構文。右辺を文書順に評価して束縛し、$in の本体を評価する。
-        if (!shape.aux.has('in')) {
-          throw new EffectfulYamlError('$let without $in is only allowed as a statement of $do');
-        }
-        if (!isNodeMap(arg)) throw new EffectfulYamlError('$let requires a mapping of bindings');
-        return this.letBind(Object.entries(arg), 0, env, (inner) => this.node(aux('in'), inner));
-      }
-      case 'if':
-        return bindAt(env.path, this.node(arg, env), (cond) =>
-          this.node(requireBoolean(cond, '$if condition') ? aux('then') : aux('else'), env),
-        );
-      case 'fn':
-        return pure(new Closure(fnParamsOf(arg), aux('body'), env));
-      case 'collect':
-        return this.collect(arg, aux('with'), intoOf(aux('into')), env);
-      case 'handle':
-        return this.handle(arg, aux('with'), env);
-      case 'with':
-        throw new EffectfulYamlError('$with without $handle is only allowed as a statement of $do');
-      case 'resume': {
-        const k = resumeOf(env);
-        if (k === undefined) {
-          throw new EffectfulYamlError('$resume is only allowed inside a $handle clause');
-        }
-        return bind(this.node(arg, env), k);
-      }
-      default:
-        throw new EffectfulYamlError(`$${shape.main} cannot be used as a main key`);
-    }
+    return f.params.length > 1
+      ? pure(new Closure(f.params.slice(1), f.body, inner))
+      : this.eval(f.body, inner);
   }
 
   /**
@@ -668,21 +551,17 @@ class Evaluator {
    * 対象も関数本体も合成なので、そこで起きた作用は周囲へ合流する。
    * $collect 自身は作用を起こさないので、ハンドラで捕捉されることはない。
    */
-  private collect(
-    target: unknown,
-    withNode: unknown,
-    into: 'list' | 'mapping',
-    env: Env,
-  ): Comp {
-    return bindAt(env.path, this.node(target, env), (structure) =>
-      bindAt(env.path, this.node(withNode, env), (f) => {
+  private collect(node: Extract<KNode, { k: 'collect' }>, env: Env): Comp {
+    const path = node.path;
+    return bindAt(path, this.eval(node.target, env), (structure) =>
+      bindAt(path, this.eval(node.fn, env), (f) => {
         const items = entriesOf(structure, '$collect');
         const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp => {
           if (i >= items.length) {
             const flat = flattenChunks(chunks);
-            return pure(into === 'mapping' ? toMapping(flat) : flat);
+            return pure(node.into === 'mapping' ? toMapping(flat) : flat);
           }
-          return bindAt(env.path, this.apply(f, items[i]!, '$collect $with'), (r) => {
+          return bindAt(path, this.apply(f, items[i]!, '$collect $with'), (r) => {
             if (!Array.isArray(r)) {
               throw new EffectfulYamlError(
                 `$collect requires the $with function to return a list, got: ${describe(r)}`,
@@ -696,114 +575,55 @@ class Evaluator {
     );
   }
 
-  /**
-   * $do の文の並び。文形（$let / $in なしの $std.state / 単独の $with）は残りの文を本体に取る
-   * ので、展開のとおり「残りの文の計算」を作ってから包む。先の文ほど外側のハンドラになり、
-   * 束縛・初期値・節はその文の位置の環境で評価される。
-   */
-  private statements(stmts: readonly unknown[], i: number, env: Env): Comp {
-    if (i >= stmts.length) return pure(null);
-    const stmt = stmts[i];
-    const rest = (): Comp => this.statements(stmts, i + 1, env);
-    const form = statementFormOf(stmt);
-    if (form !== undefined) {
-      switch (form.kind) {
-        case 'let':
-          return this.letBind(letEntriesOf(form.bindings), 0, env, (next) =>
-            this.statements(stmts, i + 1, next),
-          );
-        case 'state':
-          // 初期値の作用はこのハンドラの外側へ合流する（完結形の case 'std.state' と同じ）。
-          return bindAt(env.path, this.node(form.init, env), (cells) =>
-            handleState(rest(), cellsOf(cells)),
-          );
-        case 'with': {
-          // ローカル作用の宣言は残りの文（＝本体）から見える（$let 文と同じスコープ規則）。
-          const { clauses, ret, inner } = this.clausesOf(form.clauses, env);
-          return handleOps(this.statements(stmts, i + 1, inner), clauses, ret);
-        }
-      }
-    }
-    const comp = this.node(stmt, env);
-    return i + 1 >= stmts.length ? comp : bind(comp, () => rest());
-  }
-
-  private letBind(
-    entries: readonly (readonly [string, unknown])[],
-    i: number,
-    env: Env,
-    k: (env: Env) => Comp,
-  ): Comp {
-    if (i >= entries.length) return k(env);
-    const [name, rhs] = entries[i]!;
-    if (name.includes('.')) {
-      throw new EffectfulYamlError(`$let binding name must not contain a dot: ${name}`);
-    }
-    // 右辺は合成。ここの作用は束縛先ではなく後続の文へ合流する。
-    return bindAt(env.path, this.node(rhs, env), (v) =>
-      this.letBind(entries, i + 1, extendEnv(env, name, v), k),
+  /** 束縛の並びを文書順に評価して環境を伸ばし、本体を評価する。名前の無い束縛は値を捨てる。 */
+  private letBind(node: Extract<KNode, { k: 'let' }>, i: number, env: Env): Comp {
+    const bindings = node.bindings;
+    if (i >= bindings.length) return this.eval(node.body, env);
+    const b = bindings[i]!;
+    return bindAt(node.path, this.eval(b.rhs, env), (v) =>
+      this.letBind(node, i + 1, b.name === null ? env : extendEnv(env, b.name, v)),
     );
   }
 
-  private handle(body: unknown, withNode: unknown, env: Env): Comp {
-    const { clauses, ret, inner } = this.clausesOf(withNode, env);
-    // 節の本体が起こす作用はこのハンドラ自身では捕まらない（handleOps は継続だけを包み直す）。
-    return handleOps(this.node(body, inner), clauses, ret);
-  }
-
   /**
-   * $with のノードから部分処理の節表と return を組む（$handle と $do の $with 文で共通）。
-   * 節は $with の位置の環境で閉包になる。
-   * inner は本体を評価する環境で、ローカル作用の宣言（素通しの閉包）だけが足されている
-   * （展開の `$let` は $handle の外側にあるので、節と return 節からは見えない）。
+   * ハンドラの節表と return を組む。節は $with の位置の環境で閉包になる。
+   * ローカル作用の宣言（素通しの閉包の束縛）は脱糖器が本体を包む `$let` にしてあるので、
+   * ここでは節と return だけを見る（宣言は節と return 節からは見えない）。
    */
   private clausesOf(
-    withNode: unknown,
+    node: Extract<KNode, { k: 'handle' }>,
     env: Env,
-  ): { clauses: ReadonlyMap<string, Clause>; ret: (v: Value) => Comp; inner: Env } {
-    if (!isNodeMap(withNode)) throw new EffectfulYamlError('$with requires a mapping of clauses');
-    const locals = localDeclsOf(withNode);
-    const clauses = new Map<string, Clause>();
-    let ret: (v: Value) => Comp = pure;
-    for (const [name, clauseNode] of Object.entries(withNode)) {
-      const kind = classifyClauseName(name);
-      const closure = this.closureOf(clauseNode, env, name);
-      if (kind === 'return') {
-        ret = (v) => this.enter(closure, extendEnv(closure.env, closure.params[0]!, v));
-        continue;
-      }
-      // ローカル作用の節にマッチするのは、素通しの閉包が起こす内部演算である。
-      clauses.set(kind === 'local' ? locals.get(name)!.opName : name, (arg, resume) => {
+  ): { clauses: ReadonlyMap<string, Handler>; ret: (v: Value) => Comp } {
+    const clauses = new Map<string, Handler>();
+    for (const c of node.clauses) {
+      const closure = this.closureOf(c, env);
+      clauses.set(c.op, (arg, resume) => {
         // 節の本体でだけ resume が見える（外側の resume は入れ替わる）。
         // 本体の中で作られた閉包も env ごと resume を捕まえるので、そこからも再開できる。
         const clauseEnv: Env = {
           vars: insert(closure.env.vars, closure.params[0]!, arg),
           resume,
-          path: closure.env.path,
         };
         return this.enter(closure, clauseEnv);
       });
     }
-    let inner = env;
-    for (const [name, decl] of locals) {
-      inner = extendEnv(inner, name, new Closure(decl.params, decl.body, env));
-    }
-    return { clauses, ret, inner };
+    if (node.ret === undefined) return { clauses, ret: pure };
+    const retClosure = this.closureOf({ op: 'return', fn: node.ret }, env);
+    return {
+      clauses,
+      ret: (v) => this.enter(retClosure, extendEnv(retClosure.env, retClosure.params[0]!, v)),
+    };
   }
 
-  private closureOf(node: unknown, env: Env, name: string): Closure {
-    const comp = force(this.node(node, env));
+  private closureOf(c: KClause, env: Env): Closure {
+    const comp = force(this.eval(c.fn, env));
     if (comp.tag !== 'pure' || !isClosure(comp.value)) {
-      throw new EffectfulYamlError(`$with clause '${name}' must be a function ($fn)`);
+      throw new EffectfulYamlError(
+        `$with clause '${clauseDisplayName(c.op)}' must be a function ($fn)`,
+      );
     }
     return comp.value;
   }
-}
-
-/** 束縛のマッピングを文書順の並びにする。形の誤りはエラー（評価器だけが呼ぶ）。 */
-function letEntriesOf(bindings: unknown): (readonly [string, unknown])[] {
-  if (!isNodeMap(bindings)) throw new EffectfulYamlError('$let requires a mapping of bindings');
-  return Object.entries(bindings);
 }
 
 /** $std.state の初期値からセルの記憶を作る（完結形と文形で共通）。 */
@@ -814,13 +634,6 @@ function cellsOf(cells: Value): PMap<Value> {
   let init: PMap<Value> = empty;
   for (const [cell, v] of Object.entries(cells)) init = insert(init, cell, v);
   return init;
-}
-
-/** $into の値。書かれていなければ list。式ではなくキーワードなので生のノードを見る。 */
-function intoOf(node: unknown): 'list' | 'mapping' {
-  if (node === undefined) return 'list';
-  if (node === 'list' || node === 'mapping') return node;
-  throw new EffectfulYamlError(`$into must be 'list' or 'mapping', got: ${JSON.stringify(node)}`);
 }
 
 /**
@@ -943,15 +756,18 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
     }
   }
 
+  // 導出形をカーネルへ展開する。形の誤りはここで報告される。
+  const ast = desugar(doc);
+
   // 評価前の検査（grammar.md「関数値の流れと停止性」「演算」）。自己適用を含みうる文書、
   // ホスト演算の引数に閉包が流れうる文書、実装の無い演算を含む文書を、評価を始める前に拒否する。
-  typecheck(doc, ops);
+  typecheck(ast, ops);
 
   const evaluator = new Evaluator(
     options.params ?? {},
     options.onLog ?? ((v) => console.error(describe(v))),
   );
-  const value = await drive(evaluator.boundary(doc, emptyEnv), ops);
+  const value = await drive(evaluator.eval(ast, emptyEnv), ops);
   assertNoFunctionValue(value);
   return value;
 }

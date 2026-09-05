@@ -13,7 +13,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import { isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, stringify } from 'yaml';
-import { isDollarFormKey } from './forms.js';
+import { isDollarFormKey } from './desugar.js';
 import { isClosure, type Value } from './types.js';
 
 /** 原文の [start, end) を text で差し替える指示。文書順に並び、互いに重ならない。 */

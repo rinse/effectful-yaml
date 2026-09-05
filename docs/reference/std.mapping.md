@@ -20,14 +20,22 @@
 
 ## 展開との関係
 
-`std.mapping` は [std.list](std.list.md) と同じ骨格の `$handle` 展開を持つ。
-`std.each` の節は std.list のものと同型であり、違いは `return` 節と、集めた結果を最終的にマッピングへ組み立てる段だけである。
+`std.mapping` は [std.list](std.list.md) と [$collect](collect.md) の合成である。
 
-- `return` 節は、本体が達した `{key, value}` の値を、std.list と同じく `$collect` が連結できる一要素の列に載せる。
-- 各分岐が残したエントリの列は、`$collect` の `$into: mapping` によって一つのマッピングに組み立てられる。ちょうど二つのキーを持つこと、`key` が文字列であること、キーが重複しないことの検査は `$collect` 自身の契約に含まれるので、展開のハンドラ側には現れない。
+```yaml
+$collect:
+  $std.list: 式
+$with:
+  $fn: e
+  $body:
+  - ${e}
+$into: mapping
+```
 
-具体的な `$handle` のコードは std.list の展開を土台に導けるが、本ページでは掲載しない。
-仕組みを追いたい場合は [std.list](std.list.md) の展開を先に読み、`$into: mapping` の役割は [$collect](collect.md) の規則を参照すること。
+- `$std.list` が選択を処理し、全分岐の `{key, value}` を文書順のリストに集める。
+- `$collect` は各エントリをそのまま流し、`$into: mapping` が一つのマッピングに組み立てる。ちょうど二つのキーを持つこと、`key` が文字列であること、キーが重複しないことの検査は `$collect` 自身の契約に含まれるので、展開には現れない。
+
+選択を処理する `$handle` の骨格を追いたい場合は [std.list](std.list.md) の展開を、組み立ての規則は [$collect](collect.md) を参照すること。
 
 ## 例
 

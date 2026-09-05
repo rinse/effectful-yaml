@@ -2,6 +2,7 @@
  * effectful-yaml の値・環境・計算表現。
  * 仕様: docs/grammar.md（草案 0.8）
  */
+import type { KNode } from './desugar.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 
 /** 評価結果の値。YAML のデータ値に、言語内部の関数値（Closure）を加えたもの。 */
@@ -17,14 +18,14 @@ export type Value =
 /**
  * $fn が作る閉包。YAML データからは決して作れない値なので、
  * データとの混同を避けるためクラス（instanceof で判別可能）にする。
- * body は未評価の YAML ノードを保持する。
+ * body は未評価のカーネル AST を保持する。
  * params は 1 個以上。先頭が次の適用で束縛され、2 個以上残っていれば
  * 適用は残りを待つ閉包を返す（$fn の列の形のカリー化展開に一致する）。
  */
 export class Closure {
   constructor(
     readonly params: readonly string[],
-    readonly body: unknown,
+    readonly body: KNode,
     readonly env: Env,
   ) {}
 }
@@ -33,7 +34,7 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 
 /**
  * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、$handle の節の本体でだけ
- * 束縛される継続 resume の組。木は不変なので、閉包が捕まえた環境は後から変化しない
+ * 束縛される継続 resume の組。失敗位置は AST のノードが持つので環境には入らない。木は不変なので、閉包が捕まえた環境は後から変化しない
  * （拡張は経路だけを作り直し、元の木はそのまま残る）。
  * 読み書きとも最悪 O(log 束縛数)：get は根から降りるだけ、insert の複製は経路上のノードだけ。
  * シャドーイングは同じキーの上書き、resume の入れ替えはフィールドの差し替えで表す。
@@ -41,28 +42,14 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 export interface Env {
   readonly vars: PMap<Value>;
   readonly resume?: (v: Value) => Comp;
-  /**
-   * 評価中の位置（入力文書の中でのデータの位置）。エラーに添える失敗位置の出どころである。
-   * データを降りるときだけ伸び、`$` 式の内側では凍る（`$` のキーは値の位置ではないので）。
-   * 空文字列は文書全体。閉包が捕まえるのは定義位置の path であり、呼び出し位置ではない。
-   */
-  readonly path: string;
 }
 
-export const emptyEnv: Env = { vars: empty, path: '' };
+export const emptyEnv: Env = { vars: empty };
 
 /** 束縛を一つ足した環境。resume は引き継ぐ（$let を挟んでも節の継続は見えたまま）。 */
 export const extendEnv = (env: Env, name: string, value: Value): Env => ({
   vars: insert(env.vars, name, value),
   resume: env.resume,
-  path: env.path,
-});
-
-/** 位置だけを差し替えた環境（データの中を一区画降りるときに使う）。 */
-export const atPath = (env: Env, path: string): Env => ({
-  vars: env.vars,
-  resume: env.resume,
-  path,
 });
 
 export const lookupEnv = (env: Env, name: string): Value | undefined => get(env.vars, name);
