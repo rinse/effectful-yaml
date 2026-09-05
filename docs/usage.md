@@ -6,7 +6,9 @@ effectful-yaml の処理系を TypeScript から呼び出す方法をまとめ�
 ## 入口
 
 入口は `src/index.ts` である。
-パッケージは未公開なので、リポジトリ内から相対パスで import する。
+パッケージは npm には公開していない。
+`npm link` またはローカルパス依存（`package.json` に `"effectful-yaml": "file:../effectful-yaml"` のように指定する）で導入すれば、他のパッケージからも `import { evaluateYaml } from 'effectful-yaml'` と書ける。
+リポジトリ内では `./src/index.js` を相対パスで import してもよい。
 
 - **`evaluateYaml(source, options?)`**：YAML 文字列をパースして評価する。
 - **`evaluate(doc, options?)`**：パース済みの JS 値を評価する。パーサーを差し替えたいときはこちらを使う。

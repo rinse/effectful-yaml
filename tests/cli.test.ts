@@ -2,10 +2,13 @@
  * eff-yaml CLI の run() を偽の入出力で検査する。
  */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { run } from '../src/cli.js';
+
+const pkgVersion = createRequire(import.meta.url)('../package.json').version as string;
 
 interface Captured {
   code: number;
@@ -64,6 +67,67 @@ describe('eff-yaml CLI', () => {
     expect(r.err).toContain('name=value');
   });
 
+  it('--version は eff-yaml とバージョンを標準出力に書く', async () => {
+    const r = await runCli(['--version']);
+    expect(r.code).toBe(0);
+    expect(r.out.startsWith('eff-yaml ')).toBe(true);
+    expect(r.out).toContain(pkgVersion);
+  });
+
+  describe('--ops', () => {
+    let dir: string;
+
+    afterEach(async () => {
+      if (dir) await rm(dir, { recursive: true, force: true });
+    });
+
+    it('モジュールの default export を登録演算として使う', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      await writeFile(opsFile, "export default { 'str.upper': (s) => String(s).toUpperCase() };", 'utf8');
+      const r = await runCli(['--ops', opsFile], 'a: {$str.upper: hello}');
+      expect(r.code).toBe(0);
+      expect(r.out).toBe('a: "HELLO"\n');
+    });
+
+    it('-o と組み合わせるとヘッダに --ops が含まれる', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      const outFile = join(dir, 'out.yaml');
+      await writeFile(opsFile, "export default { 'str.upper': (s) => String(s).toUpperCase() };", 'utf8');
+      const r = await runCli(['--ops', opsFile, '-o', outFile], 'a: {$str.upper: hello}');
+      expect(r.code).toBe(0);
+      const written = await readFile(outFile, 'utf8');
+      expect(written.split('\n')[0]).toContain(` --ops ${opsFile}`);
+    });
+
+    it('存在しないモジュールを指定すると終了コード 1 でエラーになる', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'nope.mjs');
+      const r = await runCli(['--ops', opsFile], 'a: 1');
+      expect(r.code).toBe(1);
+      expect(r.err).not.toBe('');
+    });
+
+    it('default export が配列だと終了コード 1', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'bad.mjs');
+      await writeFile(opsFile, 'export default [1, 2, 3];', 'utf8');
+      const r = await runCli(['--ops', opsFile], 'a: 1');
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('--ops');
+    });
+
+    it('default export の値が関数でないと終了コード 1', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'bad.mjs');
+      await writeFile(opsFile, "export default { 'str.upper': 42 };", 'utf8');
+      const r = await runCli(['--ops', opsFile], 'a: 1');
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('--ops');
+    });
+  });
+
   describe('-o, --output', () => {
     let dir: string;
 
@@ -113,6 +177,19 @@ describe('eff-yaml CLI', () => {
 
     afterEach(async () => {
       if (dir) await rm(dir, { recursive: true, force: true });
+    });
+
+    it('--ops 付きで書いたファイルは --ops 付きの --check が最新と判定する', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      const outFile = join(dir, 'out.yaml');
+      await writeFile(opsFile, "export default { 'str.upper': (s) => String(s).toUpperCase() };", 'utf8');
+      const argv = ['--ops', opsFile, '-o', outFile];
+      await runCli(argv, 'a: {$str.upper: hello}');
+      const r = await runCli([...argv, '--check'], 'a: {$str.upper: hello}');
+      expect(r.code).toBe(0);
+      expect(r.out).toBe('');
+      expect(r.err).toBe('');
     });
 
     it('出力ファイルが最新なら 0 で何も出力しない', async () => {
