@@ -148,9 +148,9 @@ $std.list:
 
 貫流が ListT (State s) に、分岐点で分かれる形が StateT s [] に対応する。
 
-## 文形
+## $in を欠いた $std.state
 
-`$std.state` を `$in` を省いて書くと、`$do` の文として置ける。
+`$std.state` は `$in` を省いて、`$do` の文の位置と、データのキーを持つマッピングの前置きの位置に置ける。
 
 ```yaml
 $std.state: 初期値
@@ -160,9 +160,11 @@ $std.state: 初期値
 
 ```
 {$do: [{$std.state: 初期値}, 残り...]} ≡ {$std.state: 初期値, $in: {$do: [残り...]}}
+{$std.state: 初期値, キー: 値, ...}    ≡ {$std.state: 初期値, $in: {キー: 値, ...}}
 ```
 
-文の位置以外に単独で置いた `$in` なしの `$std.state` はエラーである。
+二つ目は `$std.state` だけを前置きに持つ場合であり、他の前置きと並べたときの展開は [$do](do.md) が定める。
+文でも前置きでもない位置に置いた `$in` なしの `$std.state` はエラーである。
 
 「貫流」と「分岐点で分かれる」の区別は、この文の置き場所でも表現できる。
 `$std.state` 文を `$std.list` を包む外側の `$do` に置けば貫流になり、`$std.list` の引数である内側の `$do` の先頭（選択より前）に置けば分岐点で分かれる。
@@ -188,6 +190,27 @@ $do:
 ```
 
 外側の `$do` に置いた `$std.state` 文が `$std.list` を包み、状態が分岐から分岐へ持ち越される。
+
+前置きに置けば、状態のスコープはそのマッピングの中で閉じる。
+
+```yaml
+$do:
+- $std.set: {n: 100}
+- inner:
+    $std.state: {n: 0}
+    a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
+    b: {$std.get: n}
+  outer: {$std.get: n}
+```
+
+```yaml
+inner:
+  a: 1
+  b: 1
+outer: 100
+```
+
+`inner` の中の `std.set` と `std.get` は前置きが開いたセルに解決され、`outer` は外の状態を読む。
 
 ## 連番の採番
 
@@ -224,5 +247,5 @@ $std.list:
 - [std.get](std.get.md)、[std.set](std.set.md)
 - [std.list](std.list.md)
 - [$handle](handle.md)、[$collect](collect.md)
-- [$do](do.md)（`$in` を省いた文形が展開する先、本体を欠いた二項形の一覧）
-- [$let](let.md)（同じく `$in` を省いて `$do` の文に置ける二項形）
+- [$do](do.md)（`$in` を省いた形が展開する先、本体を欠いた二項形の一覧）
+- [$let](let.md)（同じく `$in` を省いて文と前置きに置ける二項形）
