@@ -2010,6 +2010,29 @@ $with:
     ).resolves.toBe('prefix-fallback');
   });
 
+  it('別の複製の OperationFailure（名前と value が同じ形の Error）も通知として扱う', async () => {
+    const foreign = Object.assign(new Error('no match: h1'), { name: 'OperationFailure', value: 'no match: h1' });
+    const ops = {
+      'site.sel': () => {
+        throw foreign;
+      },
+    };
+    await expect(run('{$std.opt: {$site.sel: h1}, $default: none}', { ops })).resolves.toBe('none');
+    await expect(run('{$site.sel: h1}', { ops })).rejects.toThrow('failure: no match: h1');
+  });
+
+  it('名前が OperationFailure でも value を持たない Error は通知ではなく捕捉できないエラー', async () => {
+    await expect(
+      run('{$std.opt: {$site.sel: h1}}', {
+        ops: {
+          'site.sel': () => {
+            throw Object.assign(new Error('boom'), { name: 'OperationFailure' });
+          },
+        },
+      }),
+    ).rejects.toThrow(/boom/);
+  });
+
   it('OperationFailure でない例外は $std.opt でも捕捉されず reject される', async () => {
     await expect(
       run('{$std.opt: {$site.sel: h1}}', {
