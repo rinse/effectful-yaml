@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.10）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.11）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -190,17 +190,9 @@ $in:
     expected: 41,
   },
   {
-    name: '失敗の捕捉（$handle で std.fail を捕まえて既定値に置き換える）',
+    name: '失敗の捕捉（$with で std.fail を捕まえて既定値に置き換える）',
     yaml: `
 port:
-  $handle:
-    $let:
-      p: {$std.param: port, $default: 0}
-    $in:
-      $if: \${p <= 0 || p > 65535}
-      $then:
-        $std.fail: invalid port \${p}
-      $else: \${p}
   $with:
     std.fail:
       $fn: msg
@@ -208,6 +200,12 @@ port:
         $do:
         - $std.log: \${msg}
         - 5432
+  $let:
+    p: {$std.param: port, $default: 0}
+  $if: \${p <= 0 || p > 65535}
+  $then:
+    $std.fail: invalid port \${p}
+  $else: \${p}
 `,
     expected: { port: 5432 },
     expectedLogs: ['invalid port 0'],
@@ -262,25 +260,25 @@ $std.list:
   {
     name: 'ローカル作用の宣言（打ち切り：caught boom）',
     yaml: `
-$handle:
-  $do:
-  - {$.throw: boom}
-  - never
 $with:
   throw:
     $fn: msg
     $body: caught \${msg}
+$in:
+  $do:
+  - {$.throw: boom}
+  - never
 `,
     expected: 'caught boom',
   },
   {
     name: 'ローカル作用の宣言（入れ子のハンドラは同じ名前でも取り違えない）',
     yaml: `
-$handle:
+$in:
   $do:
   - $let:
       up: \${throw}
-  - $handle:
+  - $in:
       a: {$.throw: x}
       b: {$.up: y}
     $with:
@@ -501,6 +499,40 @@ interface ErrorCase {
 
 const errorCases: readonly ErrorCase[] = [
   {
+    name: '$handle は予約キーではない',
+    yaml: `
+$handle: 1
+$with:
+  std.fail: {$fn: _, $body: 0}
+`,
+    messagePattern: /unreserved \$ key: \$handle/,
+  },
+  {
+    name: '$std.handler の値をそのサンクの本体で再び適用すると自己適用として拒まれる',
+    yaml: `
+$let:
+  h:
+    $std.handler:
+      std.fail: {$fn: _, $body: 0}
+$in:
+  $.h:
+    $fn: _
+    $body: {$.h: {$fn: _, $body: 1}}
+`,
+    messagePattern: /self-application/,
+  },
+  {
+    name: '$std.handler のローカル作用の宣言はサンクから見えない',
+    yaml: `
+$let:
+  h:
+    $std.handler:
+      throw: {$fn: m, $body: "caught \${m}"}
+$in: {$.h: {$fn: _, $body: {$.throw: boom}}}
+`,
+    messagePattern: /undefined reference: throw/,
+  },
+  {
     name: '捕捉されない std.fail は文書全体のエラーになる',
     yaml: `
 $do:
@@ -537,7 +569,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 });
 
 // -----------------------------------------------------------------------------
-// docs/reference/ 用例：カーネル 6（do / let / if / fn / handle / collect）と
+// docs/reference/ 用例：カーネル 6（do / let / if / fn / with / collect）と
 // std 14（std.each ほか）の「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
@@ -621,17 +653,9 @@ $do:
     expected: 81,
   },
   {
-    name: 'handle.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
+    name: 'with.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
     yaml: `
 port:
-  $handle:
-    $do:
-    - $let:
-        p: {$std.param: port, $default: 0}
-    - $if: \${p <= 0}
-      $then:
-        $std.fail: invalid port \${p}
-      $else: \${p}
   $with:
     std.fail:
       $fn: msg
@@ -639,17 +663,19 @@ port:
         $do:
         - $std.log: \${msg}
         - 5432
+  $let:
+    p: {$std.param: port, $default: 0}
+  $if: \${p <= 0}
+  $then:
+    $std.fail: invalid port \${p}
+  $else: \${p}
 `,
     expected: { port: 5432 },
     expectedLogs: ['invalid port 0'],
   },
   {
-    name: 'handle.md の例（ログの計装：捕捉して加工してから呼び直す）',
+    name: 'with.md の例（ログの計装：捕捉して加工してから呼び直す）',
     yaml: `
-$handle:
-  $do:
-  - $std.log: hello
-  - 42
 $with:
   std.log:
     $fn: msg
@@ -657,21 +683,24 @@ $with:
       $do:
       - $std.log: 'app: \${msg}'
       - {$resume: null}
+$do:
+- $std.log: hello
+- 42
 `,
     expected: 42,
     expectedLogs: ['app: hello'],
   },
   {
-    name: 'handle.md の例（ローカル作用の宣言：caught boom）',
+    name: 'with.md の例（ローカル作用の宣言：caught boom）',
     yaml: `
-$handle:
-  $do:
-  - {$.throw: boom}
-  - never
 $with:
   throw:
     $fn: msg
     $body: caught \${msg}
+$in:
+  $do:
+  - {$.throw: boom}
+  - never
 `,
     expected: 'caught boom',
   },
@@ -1048,6 +1077,36 @@ $do:
     - \${i}-\${x}
 `,
     expected: ['0-a', '1-b', '2-c'],
+  },
+  {
+    name: 'std.handler.md の例（一度作ったハンドラの値を二つの本体に掛ける）',
+    yaml: `
+$let:
+  fallback:
+    $std.handler:
+      std.fail: {$fn: _, $body: 0}
+$in:
+  a: {$.fallback: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+  b: {$.fallback: {$fn: _, $body: 7}}
+`,
+    expected: { a: 0, b: 7 },
+  },
+  {
+    name: 'std.handler.md の例（節の本体が定義位置の束縛を捕まえる）',
+    yaml: `
+$let:
+  fallback:
+    $fn: default
+    $body:
+      $std.handler:
+        std.fail: {$fn: _, $body: "\${default}"}
+  zero: {$.fallback: 0}
+  empty: {$.fallback: ""}
+$in:
+  n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+  s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+`,
+    expected: { n: 0, s: '' },
   },
 ];
 

@@ -1,7 +1,7 @@
 /**
- * 検証テスト：docs/grammar.md（草案 0.10）が定める std の派生ハンドラ
+ * 検証テスト：docs/grammar.md（草案 0.11）が定める std の派生ハンドラ
  * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
- * 「$handle と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
+ * 「$with と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
  * 結果と比較する。
  *
  * 仕様（grammar.md「std の派生ハンドラ」節）：
@@ -46,7 +46,7 @@ $do:
 - $let:
     init: ${initFlow}
     run:
-      $handle:${block(body, 8)}
+      $in:${block(body, 8)}
       $with:
         std.get:
           $fn: name
@@ -179,7 +179,7 @@ $do:
 
   it('$std.opt の内側に $std.state を置けば捕まり、逆の入れ子では捕まらない（組み込み、std.get.md）', async () => {
     // 未初期化セルの失敗は $std.state の展開の節の本体（${hits[0]}）が起こすので、
-    // 状態のハンドラより「外側」でしか捕まらない（$handle の規則）。
+    // 状態のハンドラより「外側」でしか捕まらない（$with の規則）。
     await expect(
       run(`
 $std.opt:
@@ -244,7 +244,7 @@ $std.list:
 
 function mappingExpanded(body: string): string {
   return `
-$handle:${block(body, 2)}
+$in:${block(body, 2)}
 $with:
   std.each:
     $fn: xs
@@ -328,7 +328,7 @@ $do:
 
 function optExpanded(body: string): string {
   return `
-$handle:${block(body, 2)}
+$in:${block(body, 2)}
 $with:
   std.fail:
     $fn: _
@@ -339,7 +339,7 @@ $with:
 // 打ち切りの定型 {$std.opt: 式, $default: {$std.where: false}} の展開。
 function cutExpanded(body: string): string {
   return `
-$handle:${block(body, 2)}
+$in:${block(body, 2)}
 $with:
   std.fail:
     $fn: _
@@ -374,7 +374,7 @@ $std.list:
         - {date: d3, code: c3}
   - date: \${row.date}
     code:
-      $handle: \${row.code}
+      $in: \${row.code}
       $with:
         std.fail:
           $fn: _
@@ -403,7 +403,7 @@ $std.first:
   $do:
   - $let:
       row: {$std.each: [{}, {code: c3}]}
-  - $handle: \${row.code}
+  - $in: \${row.code}
     $with:
       std.fail:
         $fn: _
@@ -432,8 +432,8 @@ function firstExpanded(body: string): string {
 $do:
 - $let:
     run:
-      $handle:
-        $handle:${block(body, 10)}
+      $in:
+        $in:${block(body, 10)}
         $with:
           std.each:
             $fn: xs
@@ -738,11 +738,11 @@ $default: fallback
 // -----------------------------------------------------------------------------
 // 8. $do の文形の展開（grammar.md「$do の展開規則」）
 //   {$do: [{$std.state: 初期値}, 残り...]} ≡ {$std.state: 初期値, $in: {$do: [残り...]}}
-//   {$do: [{$with: 節}, 残り...]}          ≡ {$handle: {$do: [残り...]}, $with: 節}
+//   {$do: [{$with: 節}, 残り...]}          ≡ {$in: {$do: [残り...]}, $with: 節}
 // -----------------------------------------------------------------------------
 
 describe('$do の文形の展開との等価性', () => {
-  it('$with 文は残りの文を包む $handle と一致する（値もログの順序も）', async () => {
+  it('$with 文は残りの文を包む $with と一致する（値もログの順序も）', async () => {
     const statement = `
 $do:
 - $with:
@@ -756,7 +756,7 @@ $do:
 - {$std.fail: boom}
 `;
     const expanded = `
-$handle:
+$in:
   $do:
   - $std.log: before
   - {$std.fail: boom}

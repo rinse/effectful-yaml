@@ -1,7 +1,7 @@
 /**
  * 前置きを持つマッピング（頭キー `$let`・`$std.state`・`$with` を持ち、その頭を除いた
  * 残りが本体になる導出形）の動作確認。
- * 仕様: docs/grammar.md（草案 0.10）「前置きを持つマッピング」。
+ * 仕様: docs/grammar.md（草案 0.11）「前置きを持つマッピング」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -205,12 +205,12 @@ $in: {$.f: 1}
     ).rejects.toThrow('undefined reference: a');
   });
 
-  it('$handle があるときの $with はその補助キーで、頭になるのは $let である', async () => {
+  it('$let と $with の頭が並ぶとき、先に書いた $let が外側になり $in は $with の本体である', async () => {
     await expect(
       run(`
 $let:
   x: 1
-$handle: {$.throw: boom}
+$in: {$.throw: boom}
 $with:
   throw: {$fn: m, $body: "caught \${m} \${x}"}
 `),
@@ -394,7 +394,7 @@ $in:
   $std.lookup: {in: {}, key: missing}
 `;
     const expanded = `
-$handle:
+$in:
   $std.lookup: {in: {}, key: missing}
 $with:
   std.fail: {$fn: _, $body: 0}
@@ -536,7 +536,7 @@ v: "\${x}"
 
 describe('前置きとローカル作用', () => {
   it('$with の前置きが宣言したローカル作用は、データのキーから呼べる', async () => {
-    // 節は $resume を呼ばないので、その戻り値が $handle 全体の結果になり、
+    // 節は $resume を呼ばないので、その戻り値がハンドラ全体の結果になり、
     // 呼び出しを包んでいたマッピングの残りは評価されない（節の戻り値がハンドラの継続を置き換える）。
     await expect(
       run(`

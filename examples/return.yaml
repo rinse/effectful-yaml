@@ -14,11 +14,11 @@ $do:
     toList:
       $fn: [f, x]
       $body:
-        $handle: {$.f: "${x}"}
         $with:
           std.fail: {$fn: _, $body: []}
           # std.fail でないものだけ値ハンドラを通る
           return: {$fn: x, $body: ["${x}"]}
+        $in: {$.f: "${x}"}
     # 部分適用
     nonzeroToList: {$.toList: "${nonzero}"}
 - $std.list:

@@ -54,10 +54,10 @@ describe('境界に達した選択', () => {
     await expect(run('{$std.first: {$std.each: [1, 2]}}')).resolves.toBe(1);
   });
 
-  it('$std.each の節を持つ $handle も選択を処理する', async () => {
+  it('$std.each の節を持つ $with も選択を処理する', async () => {
     await expect(
       run(`
-$handle: {$std.each: [1, 2]}
+$in: {$std.each: [1, 2]}
 $with:
   std.each: {$fn: xs, $body: caught}
 `),
@@ -196,7 +196,7 @@ $do:
       run(`
 $let:
   f:
-    $handle: \${throw}
+    $in: \${throw}
     $with:
       throw:
         $fn: msg

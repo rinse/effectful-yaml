@@ -100,7 +100,7 @@ $do:
     // 継続が見えたままであることを確かめる。
     await expect(
       run(`
-$handle:
+$in:
   $std.log: hello
 $with:
   std.log:

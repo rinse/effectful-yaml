@@ -1,16 +1,16 @@
 /**
  * 評価器。
- * 仕様: docs/grammar.md（草案 0.10）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar.md（草案 0.11）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
  *
  * 入力はカーネルの AST（src/desugar.ts）である。導出形はすべて脱糖済みなので、
  * ここで扱うのはカーネルの形と、仕様が「等価な組み込みで最適化してよい」と定める
  * std の派生ハンドラ（$std.list / $std.first / $std.state）だけである。
  *
  * Comp（freer モナド風の計算表現）を組み立てる。
- * ハンドラは Comp → Comp の純粋変換なので、$handle の節は $resume を何度でも呼べる。
+ * ハンドラは Comp → Comp の純粋変換なので、$with の節は $resume を何度でも呼べる。
  *
  * 作用境界は、文書全体と、データの中に現れた最も外側の `$` 式だけである。
- * 境界の内側には、明示のハンドラ（$handle と std の派生ハンドラ）を除いて
+ * 境界の内側には、明示のハンドラ（$with と std の派生ハンドラ）を除いて
  * 作用を堰き止める場所はない。データ構成（リストの要素、`$` キーを持たないマッピングの値）も、
  * 演算の引数も、呼び出しの引数と本体も、$collect の対象と関数本体も、
  * すべて合成であり、作用はそのまま周囲へ合流する。境界の位置は脱糖器が決め、
@@ -173,7 +173,7 @@ const asList = (v: Value): Value[] => v as Value[];
 /**
  * 逐次組み立て（リストの要素、マッピングのエントリ、選択の分岐）を O(1) で積むための
  * 不変の cons リスト。積む向きは末尾追加（新しい要素が head）なので文書順とは逆になる。
- * $handle の多重 $resume で同じ継続が再入しても、cons セルは不変でクロージャが
+ * $with の多重 $resume で同じ継続が再入しても、cons セルは不変でクロージャが
  * 捕まえているだけなので、後から生えた枝が先の枝を汚すことはない
  * （破壊的な push/代入だと共有した配列やオブジェクトを取り合ってしまう）。
  */
@@ -345,7 +345,7 @@ export interface EvaluateOptions {
  *
  * 未渡しを std.fail に翻訳するのは既定ハンドラではなく呼び出し位置である。
  * 既定ハンドラは境界にあるので、そこで失敗を起こしても呼び出し位置を包む
- * $handle（$default の展開）はもう戻ってしまっている。仕様が「$default が
+ * ハンドラ（$default の展開）はもう戻ってしまっている。仕様が「$default が
  * なければ std.fail が境界まで伝播する」と言うとおり、失敗は呼び出し位置で生じる。
  */
 const ABSENT: Value = Object.freeze({});
@@ -484,7 +484,7 @@ class Evaluator {
       case 'resume': {
         const k = resumeOf(env);
         if (k === undefined) {
-          throw new EffectfulYamlError('$resume is only allowed inside a $handle clause');
+          throw new EffectfulYamlError('$resume is only allowed inside a $with clause');
         }
         return bind(this.eval(node.arg, env), k);
       }

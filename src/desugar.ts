@@ -1,6 +1,6 @@
 /**
  * YAML ノードからカーネルの AST への脱糖。
- * 仕様: docs/grammar.md（草案 0.10）「予約キーとカーネル」「$do」「引数名の列と部分適用」
+ * 仕様: docs/grammar.md（草案 0.11）「予約キーとカーネル」「$do」「引数名の列と部分適用」
  * 「$std.where」「ハンドラ」「std の派生ハンドラ」。
  *
  * 仕様は導出形を「カーネルへの展開」で定めるので、展開はここで一度だけ行う。
@@ -9,7 +9,7 @@
  * ノードは二種類の位置を持つ。
  *   - path:  失敗位置。出力の値の中でのその値の場所であり、式の値がそのまま出力の値に
  *            なる経路（データのキーと添字、`$in` の本体、`$do` の最後の文、`$if` の分岐、
- *            `return` の節を持たない `$handle` の本体、`$std.opt` と `$std.param` の
+ *            `return` の節を持たない `$with` の本体、`$std.opt` と `$std.param` の
  *            `$default`）をたどる間だけ伸びる。
  *   - spath: 構文パス。`$` 式の内側へも降りる。関数値の流れの検査のエラー位置と、
  *            ローカル作用の内部演算名に使う。必要とするノード（`$fn`）だけが持つ。
@@ -31,7 +31,7 @@ export interface Binding {
   readonly rhs: KNode;
 }
 
-/** $handle の節。op は演算名（ローカル作用なら内部名 `名前@構文パス`）。 */
+/** `$with` の節。op は演算名（ローカル作用なら内部名 `名前@構文パス`）。 */
 export interface Clause {
   readonly op: string;
   readonly fn: KNode;
@@ -119,7 +119,7 @@ export type KNode =
 // `$` キーの分類と、マッピングの形の判定
 // ---------------------------------------------------------------------------
 
-/** 予約キー（$ を除く）。仕様の 14 個がすべてであり、演算はここに現れない。 */
+/** 予約キー（$ を除く）。仕様の 13 個がすべてであり、演算はここに現れない。 */
 const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'do',
   'let',
@@ -128,7 +128,6 @@ const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'else',
   'fn',
   'body',
-  'handle',
   'with',
   'resume',
   'collect',
@@ -157,7 +156,6 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
-  handle: new Set(['with']),
   collect: new Set(['with', 'into']),
   'std.param': new Set(['default']),
   'std.opt': new Set(['default']),
@@ -167,7 +165,6 @@ const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
 const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
-  handle: new Set(['with']),
   collect: new Set(['with']),
 };
 
@@ -262,11 +259,11 @@ const HEAD_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
 
 /**
  * マッピングの前置きの頭キー。文書順で最初の頭キーであり、残り（そのキーを除いた全部）が
- * その前置きの本体になる。`$with` が頭キーになるのは、同じマッピングに `$handle` も
- * `$collect` も無いときだけである（あればそれらの補助キー）。
+ * その前置きの本体になる。`$with` が頭キーになるのは、同じマッピングに `$collect` が
+ * 無いときだけである（あれば `$collect` の補助キー）。
  */
 function headKeyOf(rawKeys: readonly string[]): string | undefined {
-  const withIsAux = rawKeys.includes('$handle') || rawKeys.includes('$collect');
+  const withIsAux = rawKeys.includes('$collect');
   return rawKeys.find((k) => HEAD_KEYS.has(k) && !(withIsAux && k === '$with'));
 }
 
@@ -315,7 +312,7 @@ function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   if (mainCandidates.length === 0) {
     // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。文の位置かどうかは
     // ここでは分からないので、位置外は Err ノードで拒む。ほかのキーを伴う `$with` は
-    // 前置きの頭か `$handle`・`$collect` の補助キーなので、ここには届かない。
+    // 前置きの頭か `$collect` の補助キーなので、ここには届かない。
     const only = auxCandidates[0];
     if (auxCandidates.length === 1 && only!.c.kind === 'reserved' && only!.c.main === 'with') {
       return { kind: 'reserved', main: 'with', mainRaw: only!.raw, aux: new Map() };
@@ -365,7 +362,7 @@ function classifyClauseName(name: string): 'return' | 'op' | 'local' {
   if (DOTTED.test(name)) return 'op';
   if (IDENT.test(name)) return 'local';
   throw new EffectfulYamlError(
-    `$handle clause name must be an operation name, a bare local name, or 'return', got: ${name}`,
+    `$with clause name must be an operation name, a bare local name, or 'return', got: ${name}`,
   );
 }
 
@@ -543,7 +540,7 @@ function dollarForm(
   }
   const mainRaw = shape.kind === 'op' ? shape.raw : shape.mainRaw;
   const main = (): KNode => expr(node[mainRaw], path, childPath(spath, mainRaw));
-  /** 主キーの値が素通しの本体である形（`$handle`、`$std.opt`）のための脱糖。 */
+  /** 主キーの値が素通しの本体である形（`$std.opt`）のための脱糖。 */
   const mainBody = (): KNode => body(node[mainRaw], path, childPath(spath, mainRaw), open);
   /** 補助キーの部分木。書かれていなければ undefined。 */
   const aux = (name: string): KNode | undefined => {
@@ -593,6 +590,25 @@ function dollarForm(
             },
           ],
         };
+      case 'std.handler': {
+        // {$std.handler: 節} ≡ {$fn: 私的名, $body: {$with: 節, $in: {$.私的名: null}}}
+        // パラメータ名は識別子に使えない `@` を含むので、節の本体の束縛を隠さない。
+        const h = handler(node[mainRaw], path, spath, mainRaw);
+        const thunk = '_@handler';
+        return synthFn(path, childPath(spath, mainRaw), thunk, {
+          k: 'handle',
+          path,
+          body: mkLet(path, h.locals, {
+            k: 'call',
+            path,
+            head: thunk,
+            keys: [],
+            arg: lit(path, null),
+          }),
+          clauses: h.clauses,
+          ...(h.ret === undefined ? {} : { ret: h.ret }),
+        });
+      }
       case 'std.state': {
         // 残りが空の `$std.state`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
         const init = main();
@@ -684,23 +700,13 @@ function dollarForm(
         fn: aux('with')!,
         into: intoOf(node[shape.aux.get('into') ?? '']),
       };
-    case 'handle': {
-      const h = handler(node[shape.aux.get('with')!], path, spath);
-      // return の節は本体の値を作り変えるので、その形の `$handle` の本体は素通しでない。
-      return {
-        k: 'handle',
-        path,
-        body: mkLet(path, h.locals, h.ret === undefined ? mainBody() : main()),
-        clauses: h.clauses,
-        ...(h.ret === undefined ? {} : { ret: h.ret }),
-      };
-    }
     case 'with':
-      // 位置外の単独の `$with`。検査は節をデータとして走査し、評価がここで拒む。
+      // 残りが空の `$with`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
+      // 検査は節をデータとして走査し、評価がここで拒む。
       return {
         k: 'err',
         path,
-        message: '$with without $handle is only allowed as a statement of $do',
+        message: '$with without $in is only allowed as a statement of $do',
         children: [main()],
       };
     case 'resume':
@@ -726,12 +732,13 @@ function letBindings(bindings: unknown, path: string, spath: string): Binding[] 
 }
 
 /**
- * `$with` のノードから節・return・ローカル作用の宣言を組む（`$handle` と `$do` の `$with` 文で共通）。
+ * 節のマッピングから節・return・ローカル作用の宣言を組む（前置きの `$with`、`$do` の `$with` 文、
+ * `$std.handler` で共通）。key はそのマッピングを値に持つキーで、節の構文パスに使う。
  * ローカル作用の宣言は、引数を素通しして内部の演算を呼ぶ関数を本体に束縛する形へ展開する。
  *
- *   {$handle: 本体, $with: {throw: 節}}
- *     ==  {$handle: {$let: {throw: {$fn: x, $body: {$«throw@パス»: ${x}}}}, $in: 本体},
- *          $with: {«throw@パス»: 節}}
+ *   {$with: {throw: 節}, $in: 本体}
+ *     ==  {$with: {«throw@パス»: 節},
+ *          $in: {$let: {throw: {$fn: x, $body: {$«throw@パス»: ${x}}}}, $in: 本体}}
  *
  * 内部演算名には宣言の位置の構文パスを埋めるので位置ごとに一意である。名前に含まれる `@` は
  * 識別子に使えないので、利用者が書いた同じ字面は `$` キーの分類で拒まれる。
@@ -742,11 +749,12 @@ function handler(
   withNode: unknown,
   path: string,
   spath: string,
+  key = '$with',
 ): { clauses: Clause[]; ret?: KNode; locals: Binding[] } {
   if (!isNodeMap(withNode)) {
-    throw new EffectfulYamlError('$with requires a mapping of clauses');
+    throw new EffectfulYamlError(`${key} requires a mapping of clauses`);
   }
-  const withPath = childPath(spath, '$with');
+  const withPath = childPath(spath, key);
   const clauses: Clause[] = [];
   const locals: Binding[] = [];
   let ret: KNode | undefined;
@@ -838,7 +846,7 @@ function statements(
  *
  *   {$let: 束縛} ∪ 残り        ==  {$let: 束縛, $in: 本体}
  *   {$std.state: 初期値} ∪ 残り ==  {$std.state: 初期値, $in: 本体}
- *   {$with: 節} ∪ 残り         ==  {$handle: 本体, $with: 節}
+ *   {$with: 節} ∪ 残り         ==  {$with: 節, $in: 本体}
  *
  * 頭の中身は頭キーの構文パスで脱糖し、残りはマッピング自身の構文パス spath で脱糖する
  * （$let の束縛 f は spath.$let.f、$with のローカル作用の内部名は 名前@spath、

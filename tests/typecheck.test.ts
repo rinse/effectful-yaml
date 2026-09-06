@@ -142,7 +142,7 @@ $with:
   it('ハンドラの節の引数を通る密輸も拒否される（全域の検査）', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $my.op:
     $fn: w
     $body: {$.w: '\${w}'}
@@ -158,7 +158,7 @@ $with:
     // 上のテストと同じ形を、演算名 my.op の代わりにローカル作用の宣言 run で書いたもの。
     await expect(
       run(`
-$handle:
+$in:
   $.run:
     $fn: w
     $body: {$.w: '\${w}'}
@@ -269,7 +269,7 @@ $do:
 $do:
 - $let:
     run:
-      $handle:
+      $in:
         $do:
         - $let: {a: {$my.get: null}}
         - \${a + 1}
@@ -330,7 +330,7 @@ $do:
       run(`
 $do:
 - $let: {f: {$fn: x, $body: '\${x + 1}'}}
-- $handle:
+- $in:
     $my.op: \${f}
   $with:
     my.op:

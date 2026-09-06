@@ -16,7 +16,7 @@ describe('ローカル作用名', () => {
   it('ドットなしの節名は作用を宣言し、本体から $.名前 で呼べる', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $.throw: hi
 $with:
   throw:
@@ -29,11 +29,11 @@ $with:
   it('同じ名前の内側のハンドラは、外側の宣言の呼び出しを捕まえない', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $let:
     t: \${throw}
   $in:
-    $handle:
+    $in:
       $.t: x
     $with:
       throw:
@@ -85,7 +85,7 @@ $do:
       run(`
 $let:
   f:
-    $handle: \${throw}
+    $in: \${throw}
     $with:
       throw:
         $fn: msg
@@ -100,7 +100,7 @@ $in:
     it('節が $resume で再開すると、本体の残りの計算が続けて評価される', async () => {
       await expect(
         run(`
-$handle:
+$in:
   $let:
     v: {$.get: null}
   $in: got \${v}
@@ -115,7 +115,7 @@ $with:
     it('節の本体で $resume を二度呼び、二つの結果を組み合わせられる', async () => {
       await expect(
         run(`
-$handle:
+$in:
   $let:
     v: {$.pick: null}
   $in: \${v + 1}
@@ -137,7 +137,7 @@ $with:
       await expect(
         run(`
 $do:
-- $handle: ok
+- $in: ok
   $with:
     throw:
       $fn: m
@@ -150,7 +150,7 @@ $do:
     it('節の本体の中では宣言した束縛は見えない', async () => {
       await expect(
         run(`
-$handle:
+$in:
   $.throw: hi
 $with:
   throw:
@@ -163,7 +163,7 @@ $with:
     it('return 節の中では宣言した束縛は見えない', async () => {
       await expect(
         run(`
-$handle: hi
+$in: hi
 $with:
   throw:
     $fn: m
@@ -180,8 +180,8 @@ $with:
   it('シャドーイング：入れ子のハンドラが同じ名前を宣言すると、内側の本体の呼び出しは内側の節に届く', async () => {
     await expect(
       run(`
-$handle:
-  $handle:
+$in:
+  $in:
     $.throw: x
   $with:
     throw:
@@ -242,7 +242,7 @@ $do:
   it('混在：ドット付きの節とローカル宣言と return 節を同居させても、すべて機能する', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $let:
       a: {$.bump: 1}
@@ -299,7 +299,7 @@ $do:
   it('閉包を引数に渡すと節がそれを適用できる（ホスト演算とは異なり合法）', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $let:
     inc:
       $fn: x
@@ -317,7 +317,7 @@ $with:
   it('一つの $with に複数のローカル宣言を書くと両方呼べる', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $let:
       a: {$.log2: 10}

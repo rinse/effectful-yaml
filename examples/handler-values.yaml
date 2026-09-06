@@ -1,0 +1,15 @@
+# ハンドラを値として作り、複数の本体に掛ける
+$let:
+  # 失敗を既定値に置き換えるハンドラの値。default は節の本体に捕まる
+  fallback:
+    $fn: default
+    $body:
+      $std.handler:
+        std.fail: {$fn: _, $body: "${default}"}
+  zero: {$.fallback: 0}
+  empty: {$.fallback: ""}
+$in:
+  # 本体はサンクで渡す
+  n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+  s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+  ok: {$.zero: {$fn: _, $body: 7}}

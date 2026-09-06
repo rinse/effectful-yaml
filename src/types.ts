@@ -1,6 +1,6 @@
 /**
  * effectful-yaml の値・環境・計算表現。
- * 仕様: docs/grammar.md（草案 0.10）
+ * 仕様: docs/grammar.md（草案 0.11）
  */
 import type { KNode } from './desugar.js';
 import { empty, get, insert, type PMap } from './pmap.js';
@@ -33,7 +33,7 @@ export class Closure {
 export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 
 /**
- * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、$handle の節の本体でだけ
+ * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、`$with` の節の本体でだけ
  * 束縛される継続 resume の組。失敗位置は AST のノードが持つので環境には入らない。木は不変なので、閉包が捕まえた環境は後から変化しない
  * （拡張は経路だけを作り直し、元の木はそのまま残る）。
  * 読み書きとも最悪 O(log 束縛数)：get は根から降りるだけ、insert の複製は経路上のノードだけ。
@@ -54,13 +54,13 @@ export const extendEnv = (env: Env, name: string, value: Value): Env => ({
 
 export const lookupEnv = (env: Env, name: string): Value | undefined => get(env.vars, name);
 
-/** $handle の節の本体でだけ束縛される継続。 */
+/** `$with` の節の本体でだけ束縛される継続。 */
 export const resumeOf = (env: Env): ((v: Value) => Comp) | undefined => env.resume;
 
 /**
  * freer モナド風の計算表現。
  * 評価器はこの木を返し、ハンドラは Comp → Comp の純粋変換として実装する。
- * resume が純粋クロージャなので、同じ継続を何度でも呼べる（$handle の多重 resume）。
+ * resume が純粋クロージャなので、同じ継続を何度でも呼べる（`$with` の多重 resume）。
  *
  * bind は継続を「呼ばずに」節として積むだけである。これが表現の不変条件を決める。
  *

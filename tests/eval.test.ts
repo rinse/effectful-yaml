@@ -176,7 +176,7 @@ $std.list:
   it('打ち切りは展開のとおり std.each の節が捕捉する', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $std.where: false
   - after
@@ -193,7 +193,7 @@ $with:
     await expect(
       run(`
 $std.list:
-  $handle:
+  $in:
     $do:
     - $std.where: false
     - after
@@ -224,11 +224,11 @@ port: {$std.param: db_port, $default: 5432}
   });
 
   it('未渡しの std.fail は呼び出し位置で起きるので、その場で捕捉できる', async () => {
-    // 失敗が既定ハンドラ（境界）で起きるのだと、呼び出し位置を包む $handle はもう戻っている。
+    // 失敗が既定ハンドラ（境界）で起きるのだと、呼び出し位置を包むハンドラはもう戻っている。
     // $default の展開が成り立つには、失敗が呼び出し位置で生じなければならない。
     await expect(
       run(`
-$handle: {$std.param: nope}
+$in: {$std.param: nope}
 $with:
   std.fail:
     $fn: msg
@@ -239,9 +239,9 @@ $with:
   });
 
   it('{$std.param: 名前, $default: 式} は std.fail 節への展開と等価である', async () => {
-    // 展開: {$std.param: 名前} を $handle で包み、std.fail の節で $default の式を返す。
+    // 展開: {$std.param: 名前} を $with で包み、std.fail の節で $default の式を返す。
     const expanded = `
-$handle: {$std.param: port}
+$in: {$std.param: port}
 $with:
   std.fail:
     $fn: _
@@ -357,7 +357,7 @@ $std.list:
 
   it('未作成のセルの失敗は、状態のハンドラより外側で捕まえられる', async () => {
     // 仕様の展開では、この失敗は $std.state の節の本体（`${hits[0]}`）が起こす。
-    // 節の本体の作用はそのハンドラ自身ではなく外側で処理される（$handle の規則）ので、
+    // 節の本体の作用はそのハンドラ自身ではなく外側で処理される（$with の規則）ので、
     // 捕まえられるのは $std.state を包む側だけである。
     await expect(
       run(`
@@ -703,10 +703,10 @@ $do:
     ).rejects.toThrow(/cannot escape/);
   });
 
-  it('$handle の節は一引数で呼ばれるので、多引数の節は閉包が値になり脱出のエラーに至る', async () => {
+  it('$with の節は一引数で呼ばれるので、多引数の節は閉包が値になり脱出のエラーに至る', async () => {
     await expect(
       run(`
-$handle: {$std.fail: boom}
+$in: {$std.fail: boom}
 $with:
   std.fail:
     $fn: [msg, extra]
@@ -791,14 +791,14 @@ $do:
   });
 });
 
-describe('$handle / $with / $resume', () => {
+describe('$with / $in / $resume', () => {
   it('失敗を捕捉して既定値に置き換える', async () => {
     const logs: Value[] = [];
     await expect(
       run(
         `
 port:
-  $handle:
+  $in:
     $do:
     - $let:
         p: {$std.param: port, $default: 0}
@@ -825,7 +825,7 @@ port:
     await expect(
       run(
         `
-$handle:
+$in:
   $do:
   - $std.log: hello
   - 42
@@ -846,7 +846,7 @@ $with:
   it('$resume の多重呼び出しで $std.list を自作できる', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2]}
@@ -974,10 +974,10 @@ $std.list:
     ).resolves.toEqual({ password: 'value of secret/db/password' });
   });
 
-  it('$handle が節を与えた演算は登録されていなくてよい', async () => {
+  it('$with が節を与えた演算は登録されていなくてよい', async () => {
     await expect(
       run(`
-$handle: {$vault.read: db/password}
+$in: {$vault.read: db/password}
 $with:
   vault.read:
     $fn: key
@@ -1160,7 +1160,7 @@ $into: mapping
     // collect という名前の節を持つハンドラを置いても、$collect は演算ではないので素通りする。
     await expect(
       run(`
-$handle:
+$in:
   $collect: [1, 2]
   $with:
     $fn: x
@@ -1237,7 +1237,7 @@ describe('第一階の標準演算', () => {
     // 評価器に特例を作らず、事前登録された演算として同じ経路を通る。
     await expect(
       run(`
-$handle: {$std.range: 3}
+$in: {$std.range: 3}
 $with:
   std.range:
     $fn: n
@@ -1251,7 +1251,7 @@ $with:
     // std の演算に限らず、任意の登録演算の名前で差し替えられることを示す。
     await expect(
       run(`
-$handle: {$str.upper: abc}
+$in: {$str.upper: abc}
 $with:
   str.upper:
     $fn: s
@@ -1306,10 +1306,10 @@ $std.list:
     ).resolves.toEqual([1, 3]);
   });
 
-  it('$handle で捕まえれば任意の値に翻訳できる', async () => {
+  it('$with で捕まえれば任意の値に翻訳できる', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $let: {r: {}}
   - \${r.b}
@@ -1368,7 +1368,7 @@ $std.first:
     expect(logs).toEqual(['evaluated 1']);
   });
 
-  it('$std.opt は $handle の std.fail 節（null を返す）への展開と等価である', async () => {
+  it('$std.opt は $with の std.fail 節（null を返す）への展開と等価である', async () => {
     const body = `
   $do:
   - $let: {r: {}}
@@ -1376,7 +1376,7 @@ $std.first:
 `;
     const sugar = await run(`$std.opt:${body}`);
     const expanded = await run(`
-$handle:${body}
+$in:${body}
 $with:
   std.fail:
     $fn: _
@@ -1387,7 +1387,7 @@ $with:
   });
 
   it('打ち切りの定型の $default が起こす where は、ハンドラの外側で処理される', async () => {
-    // 展開: $handle の std.fail 節が {$std.where: false} を起こす。節の本体の作用は
+    // 展開: $with の std.fail 節が {$std.where: false} を起こす。節の本体の作用は
     // このハンドラでは処理されないので、包囲する $std.list の分岐ごと打ち切られる。
     const body = `
     $do:
@@ -1398,7 +1398,7 @@ $with:
     const sugar = await run(`$std.list:\n  $std.opt:${body}  $default: {$std.where: false}\n`);
     const expanded = await run(`
 $std.list:
-  $handle:${body}
+  $in:${body}
   $with:
     std.fail:
       $fn: _
@@ -1688,10 +1688,10 @@ $std.list:
     });
   });
 
-  it('$handle の std.merge 節は発火しない（組み込みの経路を通るため、節が値を返しても素通しになる）', async () => {
+  it('$with の std.merge 節は発火しない（組み込みの経路を通るため、節が値を返しても素通しになる）', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $std.merge:
   - {a: 1}
   - {b: 2}
@@ -1720,7 +1720,7 @@ describe('$resume（節の本体で作られた閉包から）', () => {
   it('節の本体の閉包からも、その節の起動に対応する継続を再開できる', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $std.get: n
 $with:
   std.get:
@@ -1746,7 +1746,7 @@ $with:
 $do:
 - $let:
     f:
-      $handle:
+      $in:
         $do:
         - $let:
             v: {$std.get: acc}
@@ -1786,7 +1786,7 @@ $do:
     - \${y}
 `;
     const expanded = await run(`
-$handle:${body}
+$in:${body}
 $with:
   std.each:
     $fn: xs
@@ -1813,7 +1813,7 @@ $with:
   it('閉包経由でも多重再開できる（$std.list を自作する）', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2]}
@@ -1870,7 +1870,7 @@ describe('予約キーと名前空間', () => {
       /\$std\.state without \$in is only allowed as a statement of \$do/,
     );
     await expect(run('{$with: {std.fail: {$fn: m, $body: x}}}')).rejects.toThrow(
-      /\$with without \$handle is only allowed as a statement of \$do/,
+      /\$with without \$in is only allowed as a statement of \$do/,
     );
   });
 
@@ -1883,12 +1883,12 @@ describe('予約キーと名前空間', () => {
     );
   });
 
-  it('$handle の節名は演算名か裸のローカル名か return でなければならない', async () => {
+  it('$with の節名は演算名か裸のローカル名か return でなければならない', async () => {
     // 裸の名前はローカル作用の宣言なので、誤りなのは `$` 始まりと壊れたドット区切りである。
     for (const name of ['$fail', 'a..b']) {
       await expect(
         run(`
-$handle: 1
+$in: 1
 $with:
   ${JSON.stringify(name)}:
     $fn: m
@@ -1903,7 +1903,7 @@ $with:
   it('節に挙げた演算は登録が要らない（事前検査はどの節にも現れない演算だけを拒む）', async () => {
     await expect(
       run(`
-$handle: {$vault.read: db/password}
+$in: {$vault.read: db/password}
 $with:
   vault.read:
     $fn: key
@@ -1918,7 +1918,7 @@ $with:
   it('std の演算は登録演算と同じ演算パイプラインを通る（節で差し替えられる）', async () => {
     await expect(
       run(`
-$handle:
+$in:
   $do:
   - $std.set: {n: 1}
   - {$std.get: n}
@@ -1984,11 +1984,11 @@ $std.list:
     ).resolves.toEqual(['a', 'c']);
   });
 
-  it('$handle の std.fail 節が $resume で呼び出し位置に代替値を返し、続く計算に反映される', async () => {
+  it('$with の std.fail 節が $resume で呼び出し位置に代替値を返し、続く計算に反映される', async () => {
     await expect(
       run(
         `
-$handle:
+$in:
   $do:
   - $let:
       v:
@@ -2261,7 +2261,7 @@ $do:
   it('文の位置の外ではエラー', async () => {
     await expect(
       run('{$do: [{$let: {x: {$with: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
-    ).rejects.toThrow(/\$with without \$handle is only allowed as a statement of \$do/);
+    ).rejects.toThrow(/\$with without \$in is only allowed as a statement of \$do/);
     await expect(run('{$do: [{$let: {x: {$std.state: {n: 0}}}}, 1]}')).rejects.toThrow(
       /\$std\.state without \$in is only allowed as a statement of \$do/,
     );
@@ -2496,7 +2496,7 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
       run(`
 a:
   b:
-    $handle: {$std.fail: boom}
+    $in: {$std.fail: boom}
     $with: {std.fail: {$fn: m, $body: "caught \${m}"}}
 `),
     ).resolves.toEqual({ a: { b: 'caught boom' } });
@@ -2598,11 +2598,11 @@ describe('位置が凍る経路', () => {
     );
   });
 
-  it('return の節を持つ $handle の本体は凍る', async () => {
+  it('return の節を持つ $with の本体は凍る', async () => {
     await expect(
       run(`
 k:
-  $handle:
+  $in:
     a: {$std.range: x}
   $with:
     return: {$fn: v, $body: "\${v}"}

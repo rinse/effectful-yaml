@@ -42,6 +42,10 @@ describe('examples', () => {
     expect(logs).toEqual(['[WARN] Error!']);
   });
 
+  it('handler-values.yaml は $std.handler の値を引数で調整して複数の本体に掛ける', async () => {
+    await expect(runExample('handler-values.yaml')).resolves.toEqual({ n: 0, s: '', ok: 7 });
+  });
+
   it('list-operations.yaml は map / filter / flatMap / firstItem を固定する', async () => {
     await expect(runExample('list-operations.yaml')).resolves.toEqual({
       map: [2, 3, 4],
