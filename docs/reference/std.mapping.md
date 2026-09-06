@@ -35,7 +35,7 @@ $into: mapping
 - `$std.list` が選択を処理し、全分岐の `{key, value}` を文書順のリストに集める。
 - `$collect` は各エントリをそのまま流し、`$into: mapping` が一つのマッピングに組み立てる。ちょうど二つのキーを持つこと、`key` が文字列であること、キーが重複しないことの検査は `$collect` 自身の契約に含まれるので、展開には現れない。
 
-選択を処理する `$handle` の骨格を追いたい場合は [std.list](std.list.md) の展開を、組み立ての規則は [$collect](collect.md) を参照すること。
+選択を処理する `$with` の骨格を追いたい場合は [std.list](std.list.md) の展開を、組み立ての規則は [$collect](collect.md) を参照すること。
 
 ## 例
 

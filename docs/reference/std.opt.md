@@ -32,11 +32,11 @@ $default: 既定値の式
 
 ```yaml
 # {$std.opt: 式, $default: 既定値の式} の展開。失敗を既定値に変える。
-$handle: 式
 $with:
   std.fail:
     $fn: _
     $body: 既定値の式
+$in: 式
 ```
 
 `std.fail` の節が `$resume` を呼ばずに既定値の式へ達するので、失敗した時点で本体は打ち切られ、既定値がハンドラ全体の値になる。
@@ -86,7 +86,7 @@ pre: ''
 `spec` に `pre` が無いので、パスアクセス `${spec.pre}` が `std.fail` を起こし、`$std.opt` がそれを空文字列に翻訳する。
 
 `$default` に `{$std.where: false}` を置くと、失敗した分岐を包囲する選択から黙って外せる。
-展開では `$default` の式が `std.fail` の節の本体になるので、その打ち切り（`$std.where` の展開が起こす `std.each`）はこの `$std.opt` 自身ではなく外側で処理され（[$handle](handle.md) の規則）、包囲する選択の分岐ごと打ち切られる。
+展開では `$default` の式が `std.fail` の節の本体になるので、その打ち切り（`$std.where` の展開が起こす `std.each`）はこの `$std.opt` 自身ではなく外側で処理され（[$with](with.md) の規則）、包囲する選択の分岐ごと打ち切られる。
 打ち切りは選択なので、この形は選択のハンドラの内側で使う。
 
 ```yaml
@@ -116,4 +116,4 @@ $std.list:
 - [std.fail](std.fail.md)
 - [std.param](std.param.md)（`$default` の先行例。同じ遅延位置に従う）
 - [std.where](std.where.md)（`$default: {$std.where: false}` の定型で分岐の打ち切りに使う）
-- [$handle](handle.md)
+- [$with](with.md)

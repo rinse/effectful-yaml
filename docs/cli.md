@@ -63,7 +63,7 @@ eff-yaml config.eyaml --ops ./ops.mjs
 
 関数は同期・非同期のどちらでもよい。
 データ起因の失敗（見つからない、一致しない）は `OperationFailure` を投げて通知する。
-処理系はこれを呼び出し位置の `std.fail` に翻訳するので、文書側の `$std.opt` や `$handle` で捕捉できる（[処理系の利用](usage.md)の「登録演算の失敗」）。
+処理系はこれを呼び出し位置の `std.fail` に翻訳するので、文書側の `$std.opt` や `$with` で捕捉できる（[処理系の利用](usage.md)の「登録演算の失敗」）。
 モジュールから `OperationFailure` を import するには、`npm link` かローカルパス依存で `effectful-yaml` を解決できるようにしておく。
 
 ```js

@@ -29,15 +29,15 @@ $default: 式
 ## 展開
 
 `$default` はハンドラの語彙で説明できる。
-`{$std.param: 名前, $default: 式}` は、`{$std.param: 名前}` を `$handle` で包み、`std.fail` の節で `$default` の式を返す形への展開と等価である。
+`{$std.param: 名前, $default: 式}` は、`{$std.param: 名前}` を `std.fail` の節を持つ `$with` で包み、節が `$default` の式を返す形への展開と等価である。
 
 ```yaml
 # {$std.param: 名前, $default: 式} の展開
-$handle: {$std.param: 名前}
 $with:
   std.fail:
     $fn: _
     $body: 式
+$in: {$std.param: 名前}
 ```
 
 パラメータが渡されていないときの値が `$default` の式になり、`$default` を省いたときに `std.fail` がそのまま伝播するのはこの展開から従う。
@@ -59,5 +59,5 @@ port: 5432
 ## 関連
 
 - [std.get](std.get.md)（読み出し専用でない状態が必要なとき）
-- [std.fail](std.fail.md)、[$handle](handle.md)（`$default` の展開が使う機構）
+- [std.fail](std.fail.md)、[$with](with.md)（`$default` の展開が使う機構）
 - [言語仕様の評価モデル](../grammar.md)（既定ハンドラ）

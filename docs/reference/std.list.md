@@ -21,11 +21,10 @@
 
 ## 展開
 
-`$std.list` はカーネルの構文ではなく、`$handle` と `$collect` への次の展開で意味論が定まる。
+`$std.list` はカーネルの構文ではなく、`$with` と `$collect` への次の展開で意味論が定まる。
 実装は等価な組み込みで最適化してよいが、観測できる振る舞い（値、作用、ログの順序）はこの展開と一致しなければならない。
 
 ```yaml
-$handle: 本体
 $with:
   std.each:
     $fn: xs
@@ -39,11 +38,12 @@ $with:
     $fn: x
     $body:
     - ${x}
+$in: 本体
 ```
 
 ハンドラは深いので、各 `$resume` の値は残りの計算を同じハンドラで処理し尽くしたリストであり、`$collect` がそれらを連結する。
 `std.each` の節は `$collect` で候補を回り、各候補について `$with` 関数（節の本体が作った閉包）の中で `$resume: ${x}` を呼ぶ。
-この呼び出しは、[$handle](handle.md) が定める「節の中の閉包から `$resume` を呼べる」規則の具体例である。
+この呼び出しは、[$with](with.md) が定める「節の中の閉包から `$resume` を呼べる」規則の具体例である。
 [$std.where](std.where.md) の打ち切りは、展開により空の `$std.each` として現れ、`std.each` の節が 0 個の候補を畳んで空リストを返すので、専用の節は要らない。
 `return` 節は、本体が演算を起こさず値 `x` に達した末端を要素 1 のリスト `[x]` に包む。
 内側に選択がなければ `return` 節だけが働き、全体は要素 1 のリストになる。
@@ -70,4 +70,4 @@ sizes: [10, 20, 30]
 - [std.first](std.first.md)（全分岐でなく最初の成功だけが要るとき）
 - [std.each](std.each.md)、[std.where](std.where.md)
 - [std.state](std.state.md)（選択と状態の関係）
-- [$handle](handle.md)、[$collect](collect.md)（展開が使う機構）
+- [$with](with.md)、[$collect](collect.md)（展開が使う機構）

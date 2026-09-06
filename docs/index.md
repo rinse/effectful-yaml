@@ -4,7 +4,7 @@ effectful-yaml のドキュメントの索引である。
 
 ## 仕様
 
-- [言語仕様（草案 0.10）](grammar.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
+- [言語仕様（草案 0.11）](grammar.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
 - [理論的背景](theory.md)：規範ではない解説。Moggi の λc・Haskell の do 記法・Koka の直接スタイルとの対応。
 - [設計の経緯](history.md)：規範ではない記録。判断の理由と退けた代替案、草案間の変更、今後の課題。
 
@@ -39,7 +39,7 @@ effectful-yaml のドキュメントの索引である。
 | キー | ページ | 概要 |
 |---|---|---|
 | `$collect` `$with` `$into` | [collect.md](reference/collect.md) | 畳み込みの構文。構造を回って一つの構造に組み立てる |
-| `$handle` `$with` `$resume` | [handle.md](reference/handle.md) | 利用者定義ハンドラ、ローカル作用の宣言 |
+| `$with` `$in` `$resume` | [with.md](reference/with.md) | 利用者定義ハンドラ、ローカル作用の宣言 |
 
 ### std：作用を起こす演算
 
@@ -85,7 +85,8 @@ effectful-yaml のドキュメントの索引である。
 | `$std.first` | `std.each` `std.fail` | [std.first.md](reference/std.first.md) | 最初に成功した分岐の値 |
 | `$std.state` `$in` | `std.get` `std.set` | [std.state.md](reference/std.state.md) | 状態のスコープ |
 | `$std.opt` | `std.fail` | [std.opt.md](reference/std.opt.md) | 失敗を既定値（省略時 null）に翻訳する |
+| `$std.handler` | 節に書いた演算 | [std.handler.md](reference/std.handler.md) | 節から一級のハンドラ値を作る |
 
-派生ハンドラの意味論はすべて `$handle` と `$collect` への展開で定まる。
+派生ハンドラの意味論はすべて `$with` と `$collect` への展開で定まる。
 `std.list.md`、`std.state.md`、`std.opt.md` はその展開をそのまま掲載する。
 `std.mapping.md` は `std.list.md` との展開の違いを文章で説明し、`std.first.md` は展開の概形を示す。
