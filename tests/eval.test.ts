@@ -2265,10 +2265,6 @@ $do:
     await expect(run('{$do: [{$let: {x: {$std.state: {n: 0}}}}, 1]}')).rejects.toThrow(
       /\$std\.state without \$in is only allowed as a statement of \$do/,
     );
-    // $with にほかのキーが同居する形は、主キーの無い孤児のまま。
-    await expect(run('{$with: {std.fail: {$fn: _, $body: 0}}, $in: 1}')).rejects.toThrow(
-      /auxiliary \$ key without a main key: \$with, \$in/,
-    );
   });
 
 });

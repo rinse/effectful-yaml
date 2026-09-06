@@ -1,6 +1,6 @@
 /**
  * YAML ノードからカーネルの AST への脱糖。
- * 仕様: docs/grammar.md（草案 0.9）「予約キーとカーネル」「$do」「引数名の列と部分適用」
+ * 仕様: docs/grammar.md（草案 0.10）「予約キーとカーネル」「$do」「引数名の列と部分適用」
  * 「$std.where」「ハンドラ」「std の派生ハンドラ」。
  *
  * 仕様は導出形を「カーネルへの展開」で定めるので、展開はここで一度だけ行う。
@@ -150,25 +150,20 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
- * `$in` は `$let` のほかに `$std.state` が、`$default` は `$std.param` と `$std.opt` が
- * 使うので、予約キーだけでなく演算の名前でも引ける表にする。
- * `$let` と `$std.state` の `$in` が必須でないのは、`$do` の文の位置でだけ省略できるからである。
+ * `$default` は演算 `$std.param` と `$std.opt` が使うので、予約キーだけでなく演算の名前でも
+ * 引ける表にする。`$in` は前置きの本体であり、go() が頭キーとともに先に取り分けるので
+ * ここには載らない。
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
-  let: new Set(['in']),
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
   handle: new Set(['with']),
   collect: new Set(['with', 'into']),
-  'std.state': new Set(['in']),
   'std.param': new Set(['default']),
   'std.opt': new Set(['default']),
 };
 
-/**
- * 主キーのうち、必須の補助キー（省略するとエラー）。
- * `$let` と `$std.state` の `$in` はここに無い（文の位置では省略が正しい形である）。
- */
+/** 主キーのうち、必須の補助キー（省略するとエラー）。 */
 const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
   fn: new Set(['body']),
@@ -262,32 +257,41 @@ function displayName(k: DollarKeyKind): string {
   return `$${k.kind === 'op' ? k.name : k.main}`;
 }
 
-/** 前置きとして許される三つの生キー（本体を欠いた二項形）。 */
-const PRELUDE_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
+/** 前置きの頭キーの生キー三つ。`$` キーは書かれたままの字面で見る（`$$let` は該当しない）。 */
+const HEAD_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
 
 /**
- * マッピングの生キーの並びが前置き（本体を欠いた二項形を一つ以上、データのキーを
- * 一つ以上持つ形）であれば、その `$` キーを文書順の配列で返す。`$` キーは書かれたままの
- * 字面で見るので、`$$let` のようなエスケープは該当しない。
- * go() が analyzeMapping より先にこれを呼んで前置きを取り分けるので、`$in` など
- * 前置き以外の `$` キーが混ざったマッピングは前置きと判定されない。
- * 保持レンダラ（src/preserve.ts）も、原文のマッピングが前置きかどうかをこれで判定する。
+ * マッピングの前置きの頭キー。文書順で最初の頭キーであり、残り（そのキーを除いた全部）が
+ * その前置きの本体になる。`$with` が頭キーになるのは、同じマッピングに `$handle` も
+ * `$collect` も無いときだけである（あればそれらの補助キー）。
  */
-export function preludeKeysOf(rawKeys: readonly string[]): readonly string[] | undefined {
+function headKeyOf(rawKeys: readonly string[]): string | undefined {
+  const withIsAux = rawKeys.includes('$handle') || rawKeys.includes('$collect');
+  return rawKeys.find((k) => HEAD_KEYS.has(k) && !(withIsAux && k === '$with'));
+}
+
+/**
+ * 残りがデータであるブロック形式の前置きを持つマッピングの、頭キーを文書順の配列で返す。
+ * 保持レンダラ（src/preserve.ts）が対を取り除く規則の判定であり、脱糖の判定
+ * （headKeyOf が頭を一つ取り、残りは何であってもよい）とは別物である。
+ * `$` キーがすべて頭キーで、データのキーが一つ以上あるときだけ、頭をすべて取り除いた残りが
+ * データのマッピングになる。
+ */
+export function headKeysWithDataRest(rawKeys: readonly string[]): readonly string[] | undefined {
   const dollarKeys = rawKeys.filter(isDollarFormKey);
   if (dollarKeys.length === 0 || dollarKeys.length === rawKeys.length) return undefined;
-  return dollarKeys.every((k) => PRELUDE_KEYS.has(k)) ? dollarKeys : undefined;
+  return dollarKeys.every((k) => HEAD_KEYS.has(k)) ? dollarKeys : undefined;
 }
 
 /**
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
- * 前置きは go() がこれより先に取り分けるので、ここに `$` キーとデータのキーが
+ * 前置きの頭は go() がこれより先に取り分けるので、ここに届くのは主形か、
+ * 頭キー一つだけのマッピング（残りが空）である。`$` キーとデータのキーが
  * 混在して届いたときは常にエラーである。
  * - `$` キーが一つも無ければ plain。
  * - `$` キーとデータのキーが混在していればエラー。
  * - `$` キーだけなら、主キーちょうど一つと、その主キーが許す補助キーだけを許す。
- * - 補助キーを許すのは予約キー（`$in` を取る `$let` を含む）のほか、`$in` を取る
- *   `$std.state` と `$default` を取る `$std.param` と `$std.opt` だけ。
+ * - 補助キーを許すのは予約キーのほか、`$default` を取る `$std.param` と `$std.opt` だけ。
  *   レキシカル呼び出しは補助キーを取らない。
  */
 function analyzeMapping(rawKeys: readonly string[]): MappingShape {
@@ -309,8 +313,9 @@ function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   );
 
   if (mainCandidates.length === 0) {
-    // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。ほかのキーを伴えば
-    // 孤児である。文の位置かどうかはここでは分からないので、位置外は Err ノードで拒む。
+    // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。文の位置かどうかは
+    // ここでは分からないので、位置外は Err ノードで拒む。ほかのキーを伴う `$with` は
+    // 前置きの頭か `$handle`・`$collect` の補助キーなので、ここには届かない。
     const only = auxCandidates[0];
     if (auxCandidates.length === 1 && only!.c.kind === 'reserved' && only!.c.main === 'with') {
       return { kind: 'reserved', main: 'with', mainRaw: only!.raw, aux: new Map() };
@@ -431,8 +436,8 @@ function intoOf(node: unknown): 'list' | 'mapping' {
 }
 
 /**
- * `$do` の「文形」。残りの文を本体に取る形である。
- * `$in` を伴う $let と $std.state は完結した式なので文形ではない。
+ * `$do` の「文形」。残りの文を本体に取る形であり、頭キーだけからなるマッピングである。
+ * 残りを持つ前置きは本体をその残りに取るので、文としては完結した式である。
  */
 type StatementForm =
   | { readonly kind: 'let'; readonly bindings: unknown }
@@ -441,7 +446,10 @@ type StatementForm =
 
 function statementFormOf(stmt: unknown): StatementForm | undefined {
   if (!isNodeMap(stmt)) return undefined;
-  const shape = analyzeMapping(Object.keys(stmt));
+  const rawKeys = Object.keys(stmt);
+  // 残りを持つ前置きは、その残りを本体に取る完結した式である。
+  if (rawKeys.length > 1 && headKeyOf(rawKeys) !== undefined) return undefined;
+  const shape = analyzeMapping(rawKeys);
   if (shape.kind === 'op') {
     if (shape.name !== 'std.state' || shape.aux.has('in')) return undefined;
     return { kind: 'state', init: stmt[shape.raw] };
@@ -476,10 +484,10 @@ function go(node: unknown, path: string, spath: string, inData: boolean, open: b
     throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
   }
   const rawKeys = Object.keys(node);
-  const preludeKeys = preludeKeysOf(rawKeys);
-  if (preludeKeys !== undefined) {
-    const plainKeys = rawKeys.filter((k) => !isDollarFormKey(k));
-    const form = preludeStatements(node, preludeKeys, plainKeys, path, spath, open);
+  // 頭キーがあり、残り（そのキーを除いた全部）が空でなければ前置きを持つマッピング。
+  const head = rawKeys.length > 1 ? headKeyOf(rawKeys) : undefined;
+  if (head !== undefined) {
+    const form = prelude(node, head, rawKeys, path, spath, open);
     return inData ? { k: 'boundary', path, body: form } : form;
   }
   const shape = analyzeMapping(rawKeys);
@@ -542,7 +550,7 @@ function dollarForm(
     const raw = shape.aux.get(name);
     return raw === undefined ? undefined : expr(node[raw], path, childPath(spath, raw));
   };
-  /** 素通しの補助キー（`$in`、`$then`、`$else`、`$default`）の部分木。 */
+  /** 素通しの補助キー（`$then`、`$else`、`$default`）の部分木。 */
   const auxBody = (name: string): KNode | undefined => {
     const raw = shape.aux.get(name);
     return raw === undefined ? undefined : body(node[raw], path, childPath(spath, raw), open);
@@ -586,9 +594,8 @@ function dollarForm(
           ],
         };
       case 'std.state': {
+        // 残りが空の `$std.state`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
         const init = main();
-        const inBody = auxBody('in');
-        if (inBody !== undefined) return { k: 'state', path, init, body: inBody };
         return {
           k: 'err',
           path,
@@ -643,9 +650,8 @@ function dollarForm(
       return statements(arg, 0, path, (i) => `${doPath}[${i}]`, open);
     }
     case 'let': {
+      // 残りが空の `$let`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
       const bindings = letBindings(node[mainRaw], path, childPath(spath, mainRaw));
-      const inBody = auxBody('in');
-      if (inBody !== undefined) return mkLet(path, bindings, inBody);
       return {
         k: 'err',
         path,
@@ -773,13 +779,11 @@ function handler(
 }
 
 /**
- * 文の並びを脱糖する。`$do` の文の並びと、マッピングの前置きが並べる文の並びの
- * 両方から呼ばれる。展開のとおり、束縛文と値を捨てる文は一つの `$let` の束縛列に畳み、
- * `$with` 文と `$std.state` 文だけが残りの文を本体に取る入れ子を作る。
+ * `$do` の文の並びを脱糖する。展開のとおり、束縛文と値を捨てる文は一つの `$let` の
+ * 束縛列に畳み、`$with` 文と `$std.state` 文だけが残りの文を本体に取る入れ子を作る。
  * 文の数だけ入れ子を作らないので、走査も評価も文の数でスタックを積まない。
  *
- * spathOf は i 番目の文の構文パスを返す。`$do` の文は `$do[i]` を刻むが、
- * 前置きの文はすべてマッピング自身の構文パスを共有する（詳細は preludeStatements）。
+ * spathOf は i 番目の文の構文パス（`$do[i]`）を返す。
  *
  * 値が全体の値になるのは最後の文だけなので、素通しの open を引き継ぐのもそこだけである。
  * 残りの文を本体に取る形（`$with` 文と `$std.state` 文）では、その本体が最後の文を含む。
@@ -829,25 +833,49 @@ function statements(
 }
 
 /**
- * マッピングの前置き（本体を欠いた二項形を一つ以上、データのキーを一つ以上持つ形）を
- * $do の文の並びへ展開する。$ キーはそれぞれ単一キーのマッピングの文にし、データのキーは
- * 一つにまとめたマッピングの文にして、$ キーが先・データのキーが最後という文書順で
- * statements() に渡す（データのキーとの元の相対位置は問わない）。
- * 前置きの文はどれも `$do[i]` を刻まず、マッピング自身の構文パス spath を共有する
+ * 前置きを持つマッピングの脱糖。頭キーを一段だけ展開し、残りのキーからなるマッピングを
+ * その本体にする。残りが `$in` ただ一つなら、その値が本体である。
+ *
+ *   {$let: 束縛} ∪ 残り        ==  {$let: 束縛, $in: 本体}
+ *   {$std.state: 初期値} ∪ 残り ==  {$std.state: 初期値, $in: 本体}
+ *   {$with: 節} ∪ 残り         ==  {$handle: 本体, $with: 節}
+ *
+ * 頭の中身は頭キーの構文パスで脱糖し、残りはマッピング自身の構文パス spath で脱糖する
  * （$let の束縛 f は spath.$let.f、$with のローカル作用の内部名は 名前@spath、
- * データのキー k は spath.k になる）。
+ * データのキー k は spath.k、$in の本体は spath.$in になる）。
+ * 頭は自分の値を持たないので、本体は素通しである（`return` の節を持つ `$with` だけは、
+ * 本体の値を作り変えるので凍る）。残りが頭キーを持てば、その脱糖が次の一段になる。
  */
-function preludeStatements(
+function prelude(
   node: NodeMap,
-  dollarKeys: readonly string[],
-  plainKeys: readonly string[],
+  head: string,
+  rawKeys: readonly string[],
   path: string,
   spath: string,
   open: boolean,
 ): KNode {
-  const stmts: unknown[] = dollarKeys.map((k) => ({ [k]: node[k] }));
-  stmts.push(Object.fromEntries(plainKeys.map((k) => [k, node[k]])));
-  return statements(stmts, 0, path, () => spath, open);
+  const restKeys = rawKeys.filter((k) => k !== head);
+  const inOnly = restKeys.length === 1 && restKeys[0] === '$in';
+  const mkBody = (o: boolean): KNode =>
+    inOnly
+      ? body(node['$in'], path, childPath(spath, '$in'), o)
+      : body(Object.fromEntries(restKeys.map((k) => [k, node[k]])), path, spath, o);
+
+  if (head === '$let') {
+    return mkLet(path, letBindings(node[head], path, childPath(spath, head)), mkBody(open));
+  }
+  if (head === '$std.state') {
+    const init = expr(node[head], path, childPath(spath, head));
+    return { k: 'state', path, init, body: mkBody(open) };
+  }
+  const h = handler(node[head], path, spath);
+  return {
+    k: 'handle',
+    path,
+    body: mkLet(path, h.locals, mkBody(open && h.ret === undefined)),
+    clauses: h.clauses,
+    ...(h.ret === undefined ? {} : { ret: h.ret }),
+  };
 }
 
 /** 文書を脱糖する。文書全体が一つの作用境界であり、その値がそのまま出力になる。 */

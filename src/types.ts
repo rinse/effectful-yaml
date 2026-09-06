@@ -1,6 +1,6 @@
 /**
  * effectful-yaml の値・環境・計算表現。
- * 仕様: docs/grammar.md（草案 0.9）
+ * 仕様: docs/grammar.md（草案 0.10）
  */
 import type { KNode } from './desugar.js';
 import { empty, get, insert, type PMap } from './pmap.js';

@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.9）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.10）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -367,6 +367,63 @@ $do:
   outer: {$std.get: n}
 `,
     expected: { inner: { a: 1, b: 1 }, outer: 100 },
+  },
+  {
+    name: '前置きを持つマッピング（残りが $if）',
+    yaml: `
+$std.list:
+  $let:
+    i0: {$std.each: {$std.range: 15}}
+    i: \${i0 + 1}
+  $if: \${i % 15 == 0}
+  $then: fizzbuzz
+  $else:
+    $if: \${i % 3 == 0}
+    $then: fizz
+    $else:
+      $if: \${i % 5 == 0}
+      $then: buzz
+      $else: "\${i}"
+`,
+    expected: [
+      1, 2, 'fizz', 4, 'buzz', 'fizz', 7, 8, 'fizz', 'buzz', 11, 'fizz', 13, 14, 'fizzbuzz',
+    ],
+  },
+  {
+    name: '前置きを持つマッピング（$with の頭と $in の本体）',
+    yaml: `
+$with:
+  std.fail: {$fn: _, $body: 0}
+$in:
+  $std.lookup: {in: {}, key: missing}
+`,
+    expected: 0,
+  },
+  {
+    name: '前置きを持つマッピング（頭が二つと $in）',
+    yaml: `
+$let:
+  start: 40
+$std.state: {n: "\${start}"}
+$in:
+  $do:
+  - $let:
+      n: {$std.get: n}
+  - $std.set: {n: "\${n + 2}"}
+  - $std.get: n
+`,
+    expected: 42,
+  },
+  {
+    name: '前置きを持つマッピング（残りが演算）',
+    yaml: `
+$let:
+  obj: {x: 10, y: 100}
+$std.lookup:
+  key: x
+  in: \${obj}
+`,
+    expected: 10,
   },
 ];
 
