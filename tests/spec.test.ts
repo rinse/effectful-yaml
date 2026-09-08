@@ -295,7 +295,7 @@ $with:
     expected: { a: 'inner x', b: 'outer y' },
   },
   {
-    name: '$do の $with 文（残りの文にハンドラを被せる）',
+    name: '$do の $with の前置き（残りの文にハンドラを被せる）',
     yaml: `
 $do:
 - $with:
@@ -305,7 +305,7 @@ $do:
     expected: 0,
   },
   {
-    name: '$do の $std.state 文（残りの文に記憶を通す）',
+    name: '$do の $std.state の前置き（残りの文に記憶を通す）',
     yaml: `
 $do:
 - $std.state: {n: 0}
@@ -1053,7 +1053,7 @@ log_level:
     expected: { log_level: 'info' },
   },
   {
-    name: 'std.state.md の例（$std.state 文で選択に記憶を貫流させる）',
+    name: 'std.state.md の例（$std.state の前置きで選択に記憶を貫流させる）',
     yaml: `
 $do:
 - $std.state: {i: 0}

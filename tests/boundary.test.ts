@@ -208,8 +208,8 @@ $in:
   });
 });
 
-describe('$do の文形と節の名前', () => {
-  it('$with 文の節に挙げた登録演算は、後続の文に現れても事前検査を通る', async () => {
+describe('$do の前置きと節の名前', () => {
+  it('$with の前置きの節に挙げた登録演算は、後続の文に現れても事前検査を通る', async () => {
     await expect(
       run(`
 $do:
@@ -220,7 +220,7 @@ $do:
     ).resolves.toBe('stub');
   });
 
-  it('$with 文の節が選択を処理すれば、選択は境界へ達しない', async () => {
+  it('$with の前置きの節が選択を処理すれば、選択は境界へ達しない', async () => {
     await expect(
       run(`
 $do:
@@ -231,7 +231,7 @@ $do:
     ).resolves.toBe('first');
   });
 
-  it('文形の文があっても、残りの文の演算は数え落とされない', async () => {
+  it('前置きの文があっても、残りの文の演算は数え落とされない', async () => {
     for (const form of ['$std.state: {n: 0}', '$with: {other.op: {$fn: m, $body: x}}']) {
       const calls: Value[] = [];
       await expect(
@@ -249,7 +249,7 @@ $do:
     }
   });
 
-  it('文形が足す演算（節の本体と $std.state の初期値）も数える', async () => {
+  it('前置きが足す演算（節の本体と $std.state の初期値）も数える', async () => {
     for (const form of [
       '$std.state: {n: {$vault.read: seed}}',
       '$with: {other.op: {$fn: m, $body: {$vault.read: seed}}}',

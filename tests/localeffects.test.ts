@@ -195,8 +195,8 @@ $with:
     ).resolves.toBe('inner x');
   });
 
-  describe('$do の $with 文', () => {
-    it('束縛は $with 文より後の文から見える', async () => {
+  describe('$do の $with の前置き', () => {
+    it('束縛は $with の前置きより後の文から見える', async () => {
       await expect(
         run(`
 $do:
@@ -209,7 +209,7 @@ $do:
       ).resolves.toBe('caught boom');
     });
 
-    it('束縛は $with 文より前の文からは見えない', async () => {
+    it('束縛は $with の前置きより前の文からは見えない', async () => {
       await expect(
         run(`
 $do:
@@ -223,7 +223,7 @@ $do:
       ).rejects.toThrow('undefined reference: throw');
     });
 
-    it('$ で始まる節名は $do の $with 文でもエラーになる', async () => {
+    it('$ で始まる節名は $do の $with の前置きでもエラーになる', async () => {
       await expect(
         run(`
 $do:

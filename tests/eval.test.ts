@@ -2157,8 +2157,8 @@ $do:
   });
 });
 
-describe('$do の文形（$with 文 / $std.state 文）', () => {
-  it('先の $with 文ほど外側のハンドラになる（近い方が勝つ）', async () => {
+describe('$do の文に置いた前置き（$with と $std.state）', () => {
+  it('先の $with の前置きほど外側のハンドラになる（近い方が勝つ）', async () => {
     await expect(
       run(`
 $do:
@@ -2171,7 +2171,7 @@ $do:
     ).resolves.toBe('inner');
   });
 
-  it('節の本体が起こす作用は自分では捕まらず、外側の $with 文が処理する', async () => {
+  it('節の本体が起こす作用は自分では捕まらず、外側の $with の前置きが処理する', async () => {
     await expect(
       run(`
 $do:
@@ -2202,7 +2202,7 @@ $do:
     ).resolves.toBe('fallback');
   });
 
-  it('$resume する節を $with 文で仕掛けると、後続の文の演算を横取りできる', async () => {
+  it('$resume する節を $with の前置きで仕掛けると、後続の文の演算を横取りできる', async () => {
     const logs: Value[] = [];
     await expect(
       run(
@@ -2221,7 +2221,7 @@ $do:
     expect(logs).toEqual([]);
   });
 
-  it('末尾に置いた文形の値は null（$with 文は return 節を通る）', async () => {
+  it('末尾に置いた前置きの本体は null（$with の前置きは return 節を通る）', async () => {
     await expect(run('{$do: [{$with: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
     await expect(run('{$do: [{$std.state: {n: 0}}]}')).resolves.toBe(null);
     await expect(

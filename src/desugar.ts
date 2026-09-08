@@ -433,15 +433,15 @@ function intoOf(node: unknown): 'list' | 'mapping' {
 }
 
 /**
- * `$do` の「文形」。残りの文を本体に取る形であり、頭キーだけからなるマッピングである。
+ * `$do` の文に置いた前置き。頭キーだけからなるマッピングであり、残りの文を本体に取る。
  * 残りを持つ前置きは本体をその残りに取るので、文としては完結した式である。
  */
-type StatementForm =
+type StatementPrelude =
   | { readonly kind: 'let'; readonly bindings: unknown }
   | { readonly kind: 'state'; readonly init: unknown }
   | { readonly kind: 'with'; readonly clauses: unknown };
 
-function statementFormOf(stmt: unknown): StatementForm | undefined {
+function statementPreludeOf(stmt: unknown): StatementPrelude | undefined {
   if (!isNodeMap(stmt)) return undefined;
   const rawKeys = Object.keys(stmt);
   // 残りを持つ前置きは、その残りを本体に取る完結した式である。
@@ -807,7 +807,7 @@ function statements(
   for (let i = from; i < stmts.length; i++) {
     const stmt = stmts[i];
     const sp = spathOf(i);
-    const form = statementFormOf(stmt);
+    const form = statementPreludeOf(stmt);
     if (form !== undefined) {
       if (form.kind === 'let') {
         bindings.push(...letBindings(form.bindings, path, childPath(sp, '$let')));
