@@ -784,7 +784,7 @@ $do:
     ).rejects.toThrow(/a\.self is not a function/);
   });
 
-  it('空区画・添字は invalid lexical call name（広げた正規表現が過大に許さないこと）', async () => {
+  it('空区画・添字は invalid lexical call name（名前は 名前(.名前)* に限る）', async () => {
     await expect(run('$..a: 1')).rejects.toThrow(/invalid lexical call name/);
     await expect(run('$.a.: 1')).rejects.toThrow(/invalid lexical call name/);
     await expect(run('$.a[0]: 1')).rejects.toThrow(/invalid lexical call name/);
@@ -893,7 +893,7 @@ $std.list:
 });
 
 describe('境界に達した選択', () => {
-  it('選ばれなかった分岐の選択は起きない（$else 側なら値は単値のまま）', async () => {
+  it('選ばれなかった分岐の選択は起きない（$else 側が選ばれれば値は 42）', async () => {
     await expect(
       run(
         `
@@ -1228,8 +1228,8 @@ describe('第一階の標準演算', () => {
     }
   });
 
-  it('第一階の演算は作用ではあるが選択ではないので、境界は単値のまま', async () => {
-    // リストは std.range 自身の値であり、境界が分岐を集めた結果ではない。
+  it('第一階の演算は選択を起こさないので、ハンドラ無しで境界に置ける', async () => {
+    // 値のリストは std.range 自身の値である。
     await expect(run('a: {$std.range: 3}')).resolves.toEqual({ a: [0, 1, 2] });
   });
 
@@ -1262,7 +1262,7 @@ $with:
 });
 
 describe('欠落の失敗作用化', () => {
-  it('存在しないキーのパスアクセスは std.fail を起こす（メッセージは維持）', async () => {
+  it('存在しないキーのパスアクセスは std.fail を起こす（メッセージは missing key）', async () => {
     await expect(
       run(`
 $do:
@@ -1682,7 +1682,7 @@ $std.list:
     ]);
   });
 
-  it('純粋な引数だけの $std.merge は境界で単値のまま（リスト化されない）', async () => {
+  it('選択を含まない $std.merge はハンドラ無しで境界に置ける', async () => {
     await expect(run('a: {$std.merge: [{x: 1}, {y: 2}]}')).resolves.toEqual({
       a: { x: 1, y: 2 },
     });
@@ -1844,19 +1844,13 @@ $with:
 
 describe('予約キーと名前空間', () => {
   it('予約されていないドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
-    const names = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state'];
+    const names = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state', 'op', 'pipe', 'through'];
     for (const name of names) {
       await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
     }
   });
 
-  it('削除した $op $pipe $through も「予約されていない $ キー」のエラーになる', async () => {
-    for (const name of ['op', 'pipe', 'through']) {
-      await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
-    }
-  });
-
-  it('$in と $default は std の演算の補助キーとしてだけ有効', async () => {
+  it('$in と $default は、それを取る主キーに付随するときだけ有効', async () => {
     await expect(run('{$in: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
     await expect(run('{$default: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
     await expect(run('{$do: [], $in: 1}')).rejects.toThrow(/\$do does not accept \$in/);
@@ -2239,7 +2233,7 @@ $do:
     ).resolves.toBe('wrapped');
   });
 
-  it('$std.state 文は残りの文に記憶を通す（$in を伴う完結形は残りの文に及ばない）', async () => {
+  it('$std.state の前置きは残りの文に記憶を通し、$in を伴う二項形は残りの文に及ばない', async () => {
     await expect(
       run(`
 $do:
@@ -2403,7 +2397,7 @@ $into: mapping
     expect(await Promise.resolve(r)).toEqual({ toJSON: 'hijacked', then: 't', a: 1 });
   });
 
-  // --- 値：関数値族（ユーザー言及の「関数でメソッドを書き換える」核心） ---
+  // --- 値：関数値族（メソッド名の位置に閉包を置いても値に残せない） ---
   it('閉包はどの位置からも文書の値へ脱出できない', async () => {
     const msg = /a function value cannot escape into the document value/;
     // トップレベル
@@ -2525,7 +2519,7 @@ a:
     expect(e.message).toContain('(at a.b[0])');
   });
 
-  // ponytail: 位置は出力の値の中の場所なので、最後の文そのものが失敗すればその値は
+  // 位置は出力の値の中の場所なので、最後の文そのものが失敗すればその値は
   // 出力全体であり、位置は空になる（`$do[1]` のような構文のキーは位置に現れない）。
   it('$do の最後の文そのものが失敗すると位置は空になる', async () => {
     await expect(run('$do:\n- a\n- {$std.range: x}')).rejects.toThrow(

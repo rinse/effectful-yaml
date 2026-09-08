@@ -1,8 +1,8 @@
 /**
  * ローカル作用名の動作確認。
- * 基本形・偶然の捕捉なし・$.return の予約・偽造名の拒否・脱出に加え、$resume・スコープの
- * 不可視・シャドーイング・$do の $with 文・節の混在・return 束縛の合法性・閉包の引数・
- * 複数宣言まで一通り固定する。
+ * 基本形、偶然の捕捉なし、$.return の予約、偽造名の拒否、脱出、$resume、スコープの不可視、
+ * シャドーイング、$do の $with の前置き、節の混在、return 束縛の合法性、閉包の引数、
+ * 複数宣言を固定する。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';

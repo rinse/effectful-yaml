@@ -19,8 +19,7 @@ const SELF_APP = /self-application detected/;
 
 describe('自己適用の拒否', () => {
   it('Ω 項（f f を f に適用）は評価前に拒否され、発散しない', async () => {
-    // examples/unfinite-loop.yaml にあった実演。評価器はトランポリンなのでスタックも溢れず
-    // 回り続けてしまう形であり、検査だけが止められる。
+    // 評価器はトランポリンなのでスタックは溢れず回り続けてしまう形であり、検査だけが止められる。
     const logs: Value[] = [];
     await expect(
       run(

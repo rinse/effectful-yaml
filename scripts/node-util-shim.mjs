@@ -1,13 +1,9 @@
 /**
  * ブラウザ向けバンドル用の node:util シム。
- * src/preserve.ts が isDeepStrictEqual を使うが、preserve.ts 自体は
- * src/index.ts からの再エクスポート経由でバンドルの依存グラフに載る
- * （entry.ts は renderPreserving を使わないが、静的な再エクスポートなので
- * esbuild は preserve.ts を解決しないとバンドルできない）。実際には
- * entry.ts から renderPreserving を辿る経路が無いため、この関数の本体は
- * 現状 tree-shaking で出力から消える（＝ここでの正しさは import 解決を
- * 通すためだけに効いており、今のところ実行時には走らない）。将来
- * entry.ts が renderPreserving を再エクスポートした場合に初めて生きる。
+ * src/index.ts が preserve.ts（isDeepStrictEqual を使う）を再エクスポートするので、
+ * esbuild は node:util を解決しないとバンドルできない。playground/entry.ts は
+ * renderPreserving を再エクスポートしないので、この関数はバンドルからは
+ * tree-shaking で消える。
  *
  * ponytail: JSON 相当の値（Value 型: 文字列・数値・真偽・null・配列・
  * プレーンオブジェクト）だけを比較できれば十分なので、Node の完全な

@@ -16,7 +16,7 @@ const run = (src: string, options?: EvaluateOptions): Promise<Value> =>
 // -----------------------------------------------------------------------------
 
 describe('前置きの受け入れ', () => {
-  it('$let の前置き：パラメータの既定値と分岐（用例 A）', async () => {
+  it('$let の前置き：パラメータの既定値と分岐', async () => {
     const yaml = `
 $let:
   registry: ghcr.io/acme
@@ -40,7 +40,7 @@ replicas:
     });
   });
 
-  it('$with の前置き：局所ハンドラで未渡しパラメータを null にする（用例 B）', async () => {
+  it('$with の前置き：局所ハンドラで未渡しパラメータを null にする', async () => {
     await expect(
       run(
         `
@@ -55,7 +55,7 @@ database:
     ).resolves.toEqual({ database: { host: 'db', port: null } });
   });
 
-  it('合成位置の $let の前置き：$std.each の選択が包囲する $std.list に届く（用例 C）', async () => {
+  it('合成位置の $let の前置き：$std.each の選択が包囲する $std.list に届く', async () => {
     await expect(
       run(`
 $std.list:
@@ -66,7 +66,7 @@ $std.list:
     ).resolves.toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('$std.state の前置き：状態のスコープがマッピングの中で閉じる（用例 D）', async () => {
+  it('$std.state の前置き：状態のスコープがマッピングの中で閉じる', async () => {
     await expect(
       run(`
 $do:
@@ -94,7 +94,7 @@ missing: {$std.param: nope}
     ).resolves.toEqual({ seed: 41, missing: 41 });
   });
 
-  it('残りが $if の前置き：fizzbuzz が平らなリストになる（用例 E）', async () => {
+  it('残りが $if の前置き：fizzbuzz が平らなリストになる', async () => {
     await expect(
       run(`
 $std.list:
@@ -116,7 +116,7 @@ $std.list:
     ]);
   });
 
-  it('$with の頭と $in の本体（用例 F）', async () => {
+  it('$with の頭と $in の本体', async () => {
     await expect(
       run(`
 $with:
@@ -127,7 +127,7 @@ $in:
     ).resolves.toBe(0);
   });
 
-  it('頭が二つと $in：$std.state の初期値は先に書いた $let の束縛を見る（用例 G）', async () => {
+  it('頭が二つと $in：$std.state の初期値は先に書いた $let の束縛を見る', async () => {
     await expect(
       run(`
 $let:
@@ -143,7 +143,7 @@ $in:
     ).resolves.toBe(42);
   });
 
-  it('残りが演算の前置き（用例 H）', async () => {
+  it('残りが演算の前置き', async () => {
     await expect(
       run(`
 $let:
@@ -219,11 +219,11 @@ $with:
 });
 
 // -----------------------------------------------------------------------------
-// 展開との等価性（前置き ≡ 手で書いた $do）
+// 展開との等価性（前置き ≡ $in に本体を書いた二項形）
 // -----------------------------------------------------------------------------
 
 describe('前置きの展開との等価性', () => {
-  it('用例 A', async () => {
+  it('$let の前置き：パラメータの既定値と分岐', async () => {
     const prelude = `
 $let:
   registry: ghcr.io/acme
@@ -236,11 +236,11 @@ replicas:
   $else: 1
 `;
     const expanded = `
-$do:
-- $let:
-    registry: ghcr.io/acme
-    env: {$std.param: env, $default: dev}
-- name: api
+$let:
+  registry: ghcr.io/acme
+  env: {$std.param: env, $default: dev}
+$in:
+  name: api
   image: \${registry}/api:\${env}
   replicas:
     $if: \${env == 'prod'}
@@ -252,7 +252,7 @@ $do:
     expect(a).toEqual({ name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 });
   });
 
-  it('用例 B（$with を含むのでログの順序も比べる）', async () => {
+  it('$with の前置き：局所ハンドラで未渡しパラメータを null にする（ログの順序も比べる）', async () => {
     const prelude = `
 database:
   $with:
@@ -262,10 +262,10 @@ database:
 `;
     const expanded = `
 database:
-  $do:
-  - $with:
-      std.fail: {$fn: _, $body: {$resume: null}}
-  - host: {$std.param: db_host}
+  $with:
+    std.fail: {$fn: _, $body: {$resume: null}}
+  $in:
+    host: {$std.param: db_host}
     port: {$std.param: db_port}
 `;
     const options: EvaluateOptions = { params: { db_host: 'db' } };
@@ -278,7 +278,7 @@ database:
     expect(preludeLogs).toEqual(expandedLogs);
   });
 
-  it('用例 C', async () => {
+  it('合成位置の $let の前置き：$std.each の選択が包囲する $std.list に届く', async () => {
     const prelude = `
 $std.list:
   $let:
@@ -287,17 +287,17 @@ $std.list:
 `;
     const expanded = `
 $std.list:
-  $do:
-  - $let:
-      x: {$std.each: [1, 2]}
-  - v: \${x}
+  $let:
+    x: {$std.each: [1, 2]}
+  $in:
+    v: \${x}
 `;
     const a = await run(prelude);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('用例 D', async () => {
+  it('$std.state の前置き：状態のスコープがマッピングの中で閉じる', async () => {
     const prelude = `
 $do:
 - $std.set: {n: 100}
@@ -311,9 +311,9 @@ $do:
 $do:
 - $std.set: {n: 100}
 - inner:
-    $do:
-    - $std.state: {n: 0}
-    - a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
+    $std.state: {n: 0}
+    $in:
+      a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
       b: {$std.get: n}
   outer: {$std.get: n}
 `;
@@ -333,21 +333,23 @@ seed: {$std.get: n}
 missing: {$std.param: nope}
 `;
     const expanded = `
-$do:
-- $let:
-    base: 41
-- $std.state: {n: "\${base}"}
-- $with:
-    std.fail: {$fn: _, $body: {$resume: "\${base}"}}
-- seed: {$std.get: n}
-  missing: {$std.param: nope}
+$let:
+  base: 41
+$in:
+  $std.state: {n: "\${base}"}
+  $in:
+    $with:
+      std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+    $in:
+      seed: {$std.get: n}
+      missing: {$std.param: nope}
 `;
     const a = await run(prelude);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual({ seed: 41, missing: 41 });
   });
 
-  it('用例 E', async () => {
+  it('残りが $if の前置き', async () => {
     const prelude = `
 $std.list:
   $let:
@@ -386,7 +388,7 @@ $std.list:
     ]);
   });
 
-  it('用例 F', async () => {
+  it('$with の頭と $in の本体', async () => {
     const prelude = `
 $with:
   std.fail: {$fn: _, $body: 0}
@@ -404,7 +406,7 @@ $with:
     expect(a).toBe(0);
   });
 
-  it('用例 G', async () => {
+  it('頭が二つと $in', async () => {
     const prelude = `
 $let:
   start: 40
@@ -423,7 +425,7 @@ $in:
     expect(a).toBe(40);
   });
 
-  it('用例 H', async () => {
+  it('残りが演算の前置き', async () => {
     const prelude = `
 $let:
   obj: {x: 10, y: 100}
@@ -584,7 +586,7 @@ $in:
 // -----------------------------------------------------------------------------
 
 describe('前置きと自己適用の検査', () => {
-  it('自己適用のエラー位置は前置きマッピングの構文パスになる（$do[0].$let.f ではない）', async () => {
+  it('自己適用のエラー位置は、書いたとおりの構文パス $let.f になる', async () => {
     await expect(
       run(`
 $let:

@@ -499,15 +499,6 @@ interface ErrorCase {
 
 const errorCases: readonly ErrorCase[] = [
   {
-    name: '$handle は予約キーではない',
-    yaml: `
-$handle: 1
-$with:
-  std.fail: {$fn: _, $body: 0}
-`,
-    messagePattern: /unreserved \$ key: \$handle/,
-  },
-  {
     name: '$std.handler の値をそのサンクの本体で再び適用すると自己適用として拒まれる',
     yaml: `
 $let:
@@ -569,8 +560,8 @@ describe('grammar.md 用例（エラーになる）', () => {
 });
 
 // -----------------------------------------------------------------------------
-// docs/reference/ 用例：カーネル 6（do / let / if / fn / with / collect）と
-// std 14（std.each ほか）の「例」節にある実行可能な用例。
+// docs/reference/ 用例：カーネル（do / let / if / fn / with / collect）と std の各ページの
+// 「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------

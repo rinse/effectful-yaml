@@ -1,7 +1,7 @@
 /**
  * 規模に対する耐性。
  * - 「大きな文書」: 表現（Comp）が深さを JS のスタックへ漏らさない（RangeError にならない）。
- * - 「逐次組み立ての計算量」: collectChoice の each 節と compose のリスト/マッピングが
+ * - 「逐次組み立ての計算量」: collectChoice の each 節とリスト/マッピングのリテラルの評価が
  *   要素を O(1) で積み、分岐数・要素数に対して線形で終わる。
  */
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 
 describe('大きな文書', () => {
   it('$std.list の中の $std.each が 8000 分岐しても溢れない', async () => {
-    // 8000 要素のデータリスト（compose の逐次組み立て）と、8000 分岐の畳み込みの両方を踏む。
+    // 8000 要素のデータリストの逐次組み立てと、8000 分岐の畳み込みの両方を踏む。
     await expect(evaluate({ '$std.list': { '$std.each': range(8000) } })).resolves.toEqual(range(8000));
   });
 
@@ -72,7 +72,7 @@ describe('逐次組み立ての計算量', () => {
   }, 5000);
 
   it('10 万要素のデータリストのリテラルが妥当な時間で終わる', async () => {
-    // 要素に補間式を持たせ、compose が interpolate（評価経路）を実際に通ることを確認する。
+    // 要素に補間式を持たせ、リストの評価が interpolate（評価経路）を実際に通ることを確認する。
     const list = range(100000).map((i) => `\${${i} + 1}`);
     await expect(evaluate(list)).resolves.toEqual(range(100000).map((i) => i + 1));
   }, 5000);

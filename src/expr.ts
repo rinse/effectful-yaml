@@ -4,7 +4,7 @@
  *
  * この式言語に作用は無い。Value と Env だけを相手にする純粋な関数として実装する。
  * 作用を起こしうるのはパスの部分性だけで、それも MissingPathError を投げるにとどめ、
- * std.fail への翻訳は評価器（eval.ts の compose）が行う。
+ * std.fail への翻訳は評価器（eval.ts の `str` ノードの評価）が行う。
  */
 import { EffectfulYamlError, isClosure, lookupEnv, type Env, type Value } from './types.js';
 

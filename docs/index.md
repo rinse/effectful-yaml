@@ -15,7 +15,7 @@ effectful-yaml のドキュメントの索引である。
 
 ## リファレンス
 
-言語が予約するドットなしのキーは 14 個である。
+言語が予約するドットなしのキーは 13 個である。
 `$then` のような補助キーは、従属する主キーのページで扱う。
 これとは別に、`std.` 名前空間の演算と、その上に定義される std の派生ハンドラを主キーごとのページにまとめる。
 `std.` 名前空間そのものは予約されているが、`std.each` のような個々の名前は予約キーではなく、演算・導出形・派生ハンドラとして定義された名前である。
@@ -25,7 +25,7 @@ effectful-yaml のドキュメントの索引である。
 | キー | ページ | 概要 |
 |---|---|---|
 | `$let` `$in` | [let.md](reference/let.md) | 束縛と逐次のカーネル構文（bind 相当を兼ねる） |
-| `$do` | [do.md](reference/do.md) | 文の並び。`$let` への展開で定まる導出形 |
+| `$do` | [do.md](reference/do.md) | 文の並び。`$let`・`$std.state`・`$with` への展開で定まる導出形 |
 | `$if` `$then` `$else` | [if.md](reference/if.md) | 条件分岐 |
 
 ### 予約キー：関数
@@ -88,5 +88,4 @@ effectful-yaml のドキュメントの索引である。
 | `$std.handler` | 節に書いた演算 | [std.handler.md](reference/std.handler.md) | 節から一級のハンドラ値を作る |
 
 派生ハンドラの意味論はすべて `$with` と `$collect` への展開で定まる。
-`std.list.md`、`std.state.md`、`std.opt.md` はその展開をそのまま掲載する。
-`std.mapping.md` は `std.list.md` との展開の違いを文章で説明し、`std.first.md` は展開の概形を示す。
+各ページはその展開を掲載する。`std.first.md` だけは紙面に収まらないので展開の概形を示す。

@@ -96,7 +96,7 @@ export type KNode =
       readonly into: 'list' | 'mapping';
     }
   | { readonly k: 'resume'; readonly path: string; readonly arg: KNode }
-  /** `$std.state`（完結形と文形）。仕様が許す等価な組み込み。 */
+  /** `$std.state`。二項形も前置きもこのノードになる。仕様が許す等価な組み込み。 */
   | { readonly k: 'state'; readonly path: string; readonly init: KNode; readonly body: KNode }
   /** `$std.first`。仕様が許す等価な組み込み。 */
   | { readonly k: 'first'; readonly path: string; readonly body: KNode }
@@ -448,12 +448,12 @@ function statementFormOf(stmt: unknown): StatementForm | undefined {
   if (rawKeys.length > 1 && headKeyOf(rawKeys) !== undefined) return undefined;
   const shape = analyzeMapping(rawKeys);
   if (shape.kind === 'op') {
-    if (shape.name !== 'std.state' || shape.aux.has('in')) return undefined;
+    if (shape.name !== 'std.state') return undefined;
     return { kind: 'state', init: stmt[shape.raw] };
   }
   if (shape.kind !== 'reserved') return undefined;
   if (shape.main === 'with') return { kind: 'with', clauses: stmt[shape.mainRaw] };
-  if (shape.main !== 'let' || shape.aux.has('in')) return undefined;
+  if (shape.main !== 'let') return undefined;
   return { kind: 'let', bindings: stmt[shape.mainRaw] };
 }
 

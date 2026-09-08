@@ -114,6 +114,6 @@ $std.list:
 ## 関連
 
 - [std.fail](std.fail.md)
-- [std.param](std.param.md)（`$default` の先行例。同じ遅延位置に従う）
+- [std.param](std.param.md)（同じ遅延位置と展開を持つ `$default`）
 - [std.where](std.where.md)（`$default: {$std.where: false}` の定型で分岐の打ち切りに使う）
 - [$with](with.md)

@@ -270,7 +270,7 @@ function collectFirst(comp: Comp): Comp {
  */
 function handleState(comp: Comp, init: PMap<Value>): Comp {
   // 記憶は再帰ではなくループの変数として持ち回る（文の数だけ入れ子にならないように）。
-  // 記憶も環境と同じ永続平衡木である。$set ごとの全コピーだと書き込み回数 x セル数で
+  // 記憶も環境と同じ永続平衡木である。std.set ごとの全コピーだと書き込み回数 x セル数で
   // 二乗になるが、木なら書き込みごとに O(log セル数)。セルの値は Value（undefined を
   // 含まない）ので、get の undefined は「未作成」の合図として使える。
   const rec = (c0: Comp, s0: PMap<Value>): Comp => {
@@ -331,11 +331,11 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
 // ---------------------------------------------------------------------------
 
 export interface EvaluateOptions {
-  /** 起動時パラメータ（$param が読む）。 */
+  /** 起動時パラメータ（$std.param が読む）。 */
   params?: Record<string, Value>;
   /** 登録演算。名前はドット入り（vault.read 等）。ホスト関数は非同期でもよい。 */
   ops?: Record<string, (arg: Value) => Value | Promise<Value>>;
-  /** $log の既定の受け皿。 */
+  /** $std.log の既定の受け皿。 */
   onLog?: (value: Value) => void;
 }
 
@@ -343,7 +343,7 @@ export interface EvaluateOptions {
  * 既定のパラメータハンドラが「渡されていない」を伝える番兵。
  * 同一性でだけ判定し、文書からは作れない。
  *
- * 未渡しを std.fail に翻訳するのは既定ハンドラではなく呼び出し位置である。
+ * 未渡しの std.fail は呼び出し位置で起こす。
  * 既定ハンドラは境界にあるので、そこで失敗を起こしても呼び出し位置を包む
  * ハンドラ（$default の展開）はもう戻ってしまっている。仕様が「$default が
  * なければ std.fail が境界まで伝播する」と言うとおり、失敗は呼び出し位置で生じる。
@@ -627,7 +627,7 @@ class Evaluator {
   }
 }
 
-/** $std.state の初期値からセルの記憶を作る（完結形と文形で共通）。 */
+/** $std.state の初期値からセルの記憶を作る。 */
 function cellsOf(cells: Value): PMap<Value> {
   if (!isValueMap(cells)) {
     throw new EffectfulYamlError(`$std.state requires a mapping of cells, got: ${describe(cells)}`);

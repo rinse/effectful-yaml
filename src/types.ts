@@ -34,7 +34,7 @@ export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 
 /**
  * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、`$with` の節の本体でだけ
- * 束縛される継続 resume の組。失敗位置は AST のノードが持つので環境には入らない。木は不変なので、閉包が捕まえた環境は後から変化しない
+ * 束縛される継続 resume の組。木は不変なので、閉包が捕まえた環境は後から変化しない
  * （拡張は経路だけを作り直し、元の木はそのまま残る）。
  * 読み書きとも最悪 O(log 束縛数)：get は根から降りるだけ、insert の複製は経路上のノードだけ。
  * シャドーイングは同じキーの上書き、resume の入れ替えはフィールドの差し替えで表す。
@@ -137,7 +137,7 @@ export function force(c: Comp): Forced {
   }
 }
 
-/** 言語仕様の「エラー」。fail 作用（$fail）とは別物で、ハンドラでは捕捉できない。 */
+/** 言語仕様の「エラー」。失敗作用（std.fail）とは別物で、ハンドラでは捕捉できない。 */
 export class EffectfulYamlError extends Error {
   /** 失敗した値の文書内の位置（`server.hosts[2]`）。文書全体や位置を辿れない経路では undefined。 */
   path?: string;

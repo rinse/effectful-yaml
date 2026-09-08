@@ -1,6 +1,6 @@
 /**
  * eff-yaml CLI の本体。
- * 入出力を注入できるよう run() に切り出し、プロセスへの接続は bin.ts が行う。
+ * run() は入出力を引数で受け取り、プロセスへの接続は bin.ts が行う。
  */
 import { parseArgs } from 'node:util';
 import { readFile, writeFile } from 'node:fs/promises';
