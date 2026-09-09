@@ -72,18 +72,36 @@ $std.list:
     ],
   },
   {
-    name: '打ち切りつきの選択（$std.where によるリスト内包表記）',
+    name: '打ち切りつきの選択（$std.for と $std.where によるリスト内包表記）',
     yaml: `
 $std.list:
   $do:
-  - $let:
-      x: {$std.each: [1, 2, 3]}
-      y: {$std.each: [1, 2, 3]}
+  - $std.for:
+      x: [1, 2, 3]
+      y: [1, 2, 3]
   - $std.where: \${x < y}
   - - \${x}
     - \${y}
 `,
     expected: [[1, 2], [1, 3], [2, 3]],
+  },
+  {
+    name: '選択の束縛（$let の表を $std.for で組み替える）',
+    yaml: `
+$let:
+  forms:
+    "a{id}": [x, y]
+    "b{id}": [z]
+$std.mapping:
+  $std.for:
+    entry: \${forms}
+    label: \${entry.value}
+  key: \${label}
+  value:
+    id: \${entry.key}
+`,
+    expected: { x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } },
+    expectedKeyOrder: ['x', 'y', 'z'],
   },
   {
     name: 'パラメータと条件分岐',
@@ -762,13 +780,59 @@ $std.list:
     expected: ['web', 'db'],
   },
   {
+    name: 'std.for.md の例（表の組み替え：後の束縛が先の束縛のエントリを見る）',
+    yaml: `
+$let:
+  forms:
+    "a{id}": [x, y]
+    "b{id}": [z]
+$std.mapping:
+  $std.for:
+    entry: \${forms}
+    label: \${entry.value}
+  key: \${label}
+  value:
+    id: \${entry.key}
+`,
+    expected: { x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } },
+    expectedKeyOrder: ['x', 'y', 'z'],
+  },
+  {
+    name: 'std.for.md の例（$do の文に置いて $std.where と並べるリスト内包表記）',
+    yaml: `
+$std.list:
+  $do:
+  - $std.for:
+      x: [1, 2, 3]
+      y: [1, 2, 3]
+  - $std.where: \${x < y}
+  - - \${x}
+    - \${y}
+`,
+    expected: [[1, 2], [1, 3], [2, 3]],
+  },
+  {
+    name: 'std.for.md の例（マッピングのキーに置いて残りのデータを本体にする）',
+    yaml: `
+$std.list:
+  $std.for:
+    x: [1, 2]
+  n: \${x}
+  sq: \${x * x}
+`,
+    expected: [
+      { n: 1, sq: 1 },
+      { n: 2, sq: 4 },
+    ],
+  },
+  {
     name: 'std.where.md の例（リスト内包表記のガード）',
     yaml: `
 $std.list:
   $do:
-  - $let:
-      x: {$std.each: [1, 2, 3]}
-      y: {$std.each: [1, 2, 3]}
+  - $std.for:
+      x: [1, 2, 3]
+      y: [1, 2, 3]
   - $std.where: \${x < y}
   - - \${x}
     - \${y}
