@@ -1,7 +1,7 @@
 /**
  * ローカル作用名の動作確認。
  * 基本形、偶然の捕捉なし、$.return の予約、偽造名の拒否、脱出、$resume、スコープの不可視、
- * シャドーイング、$do の $with の前置き、節の混在、return 束縛の合法性、閉包の引数、
+ * シャドーイング、$do の文に置いた $with、節の混在、return 束縛の合法性、閉包の引数、
  * 複数宣言を固定する。
  */
 import { parse } from 'yaml';
@@ -195,8 +195,8 @@ $with:
     ).resolves.toBe('inner x');
   });
 
-  describe('$do の $with の前置き', () => {
-    it('束縛は $with の前置きより後の文から見える', async () => {
+  describe('$do の文に置いた $with', () => {
+    it('束縛は $in を省いた $with より後の文から見える', async () => {
       await expect(
         run(`
 $do:
@@ -209,7 +209,7 @@ $do:
       ).resolves.toBe('caught boom');
     });
 
-    it('束縛は $with の前置きより前の文からは見えない', async () => {
+    it('束縛は $in を省いた $with より前の文からは見えない', async () => {
       await expect(
         run(`
 $do:
@@ -223,7 +223,7 @@ $do:
       ).rejects.toThrow('undefined reference: throw');
     });
 
-    it('$ で始まる節名は $do の $with の前置きでもエラーになる', async () => {
+    it('$ で始まる節名は $do の文に置いた $with でもエラーになる', async () => {
       await expect(
         run(`
 $do:

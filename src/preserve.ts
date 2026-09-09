@@ -9,7 +9,7 @@
  * 選択は、島の外である限りすべて原文のまま残る。
  *
  * 島の内側には踏み込まない（内側のコメントは失われる）。例外は残りがデータである
- * ブロック形式の前置きを持つマッピングで、頭の `$` の対だけを取り除いてデータのキーの
+ * 文脈の導入を伴うブロック形式のマッピングで、頭の `$` の対だけを取り除いてデータのキーの
  * 内側へ降りる。
  * `$in` や `$do` の本体は字下げを変えずに原文から取り出せないので、これらは島のまま置き換える。
  * スプライシングができない・結果が合わない場合は常に stringify(result) に退化する。
@@ -100,16 +100,16 @@ function walk(
   if (isMap(node)) {
     // 生キー。$ 形になれるのは文字列のキーだけなので、それ以外はデータのキーとして扱う。
     const rawKeys = node.items.map((p) => rawKey(p.key) ?? '');
-    // 規則 2: 残りがデータであるブロック形式の前置きを持つマッピングは、頭の `$` の対を
+    // 規則 2: 文脈の導入を伴うブロック形式のマッピングで残りがデータであるものは、頭の `$` の対を
     // 取り除き、残るデータの対を結果のエントリと i 番目どうしで対応させて内側へ降りる。
-    // 残りが主形の前置きと、フロー形式の前置きは、規則 3 の島に落とす。
-    const prelude = headKeysWithDataRest(rawKeys);
-    if (prelude !== undefined && !inFlow && node.flow !== true && isValueMap(value)) {
+    // 残りが主形のものと、フロー形式のものは、規則 3 の島に落とす。
+    const heads = headKeysWithDataRest(rawKeys);
+    if (heads !== undefined && !inFlow && node.flow !== true && isValueMap(value)) {
       const entries = Object.entries(value);
       const drops = node.items.map((p, i) =>
         isDollarFormKey(rawKeys[i]!) ? dropPair(source, p) : null,
       );
-      if (!drops.includes(undefined) && node.items.length - prelude.length === entries.length) {
+      if (!drops.includes(undefined) && node.items.length - heads.length === entries.length) {
         let n = 0;
         node.items.forEach((pair, i) => {
           const drop = drops[i];
@@ -149,7 +149,7 @@ function walk(
 }
 
 /**
- * 前置きの頭の `$` の対を原文から取り除く指示。キーの行の先頭から値ノードの終端までを消す。
+ * 文脈を導入する頭の `$` の対を原文から取り除く指示。キーの行の先頭から値ノードの終端までを消す。
  * 行頭から消すのは、残した字下げが次の行と繋がってその対を一段深くしてしまうからである。
  * 終端に range[2] を使うので、その対の行内コメントと行末の改行まで一緒に消える。
  * 取り除けるのは、レンジを持ち、キーの前が字下げだけの対に限る。`- $let: 束縛` のように

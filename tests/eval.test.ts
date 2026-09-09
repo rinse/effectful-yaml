@@ -2157,8 +2157,8 @@ $do:
   });
 });
 
-describe('$do の文に置いた前置き（$with と $std.state）', () => {
-  it('先の $with の前置きほど外側のハンドラになる（近い方が勝つ）', async () => {
+describe('$do の文に置いた文脈の導入（$with と $std.state）', () => {
+  it('先に置いた $with ほど外側のハンドラになる（近い方が勝つ）', async () => {
     await expect(
       run(`
 $do:
@@ -2171,7 +2171,7 @@ $do:
     ).resolves.toBe('inner');
   });
 
-  it('節の本体が起こす作用は自分では捕まらず、外側の $with の前置きが処理する', async () => {
+  it('節の本体が起こす作用は自分では捕まらず、外側の $in を省いた $with が処理する', async () => {
     await expect(
       run(`
 $do:
@@ -2202,7 +2202,7 @@ $do:
     ).resolves.toBe('fallback');
   });
 
-  it('$resume する節を $with の前置きで仕掛けると、後続の文の演算を横取りできる', async () => {
+  it('$resume する節を $in を省いた $with で仕掛けると、後続の文の演算を横取りできる', async () => {
     const logs: Value[] = [];
     await expect(
       run(
@@ -2221,7 +2221,7 @@ $do:
     expect(logs).toEqual([]);
   });
 
-  it('末尾に置いた前置きの本体は null（$with の前置きは return 節を通る）', async () => {
+  it('末尾に置いた文脈の導入の本体は null（$with は return 節を通る）', async () => {
     await expect(run('{$do: [{$with: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
     await expect(run('{$do: [{$std.state: {n: 0}}]}')).resolves.toBe(null);
     await expect(
@@ -2233,7 +2233,7 @@ $do:
     ).resolves.toBe('wrapped');
   });
 
-  it('$std.state の前置きは残りの文に記憶を通し、$in を伴う二項形は残りの文に及ばない', async () => {
+  it('$in を省いた $std.state は残りの文に記憶を通し、$in を書いた $std.state は残りの文に及ばない', async () => {
     await expect(
       run(`
 $do:
@@ -2572,7 +2572,7 @@ describe('位置が素通しになる経路', () => {
     ).rejects.toThrow('(at a.b)');
   });
 
-  it('前置きを持つマッピングのデータのキーで位置が伸びる', async () => {
+  it('文脈の導入を伴うマッピングのデータのキーで位置が伸びる', async () => {
     await expect(run('$let: {x: 1}\nserver:\n  hosts: [a, {$std.range: q}]')).rejects.toThrow(
       '(at server.hosts[1])',
     );

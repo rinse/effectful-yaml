@@ -1,7 +1,7 @@
 /**
- * 前置きを持つマッピング（頭キー `$let`・`$std.state`・`$with` を持ち、その頭を除いた
+ * 文脈の導入を伴うマッピング（頭キー `$let`・`$std.state`・`$with` を持ち、その頭を除いた
  * 残りが本体になる導出形）の動作確認。
- * 仕様: docs/grammar.md（草案 0.11）「前置きを持つマッピング」。
+ * 仕様: docs/grammar.md（草案 0.11）「文脈の導入を伴うマッピング」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -15,8 +15,8 @@ const run = (src: string, options?: EvaluateOptions): Promise<Value> =>
 // 受け入れ（grammar.md 用例）
 // -----------------------------------------------------------------------------
 
-describe('前置きの受け入れ', () => {
-  it('$let の前置き：パラメータの既定値と分岐', async () => {
+describe('文脈の導入の受け入れ', () => {
+  it('$in を省いた $let：パラメータの既定値と分岐', async () => {
     const yaml = `
 $let:
   registry: ghcr.io/acme
@@ -40,7 +40,7 @@ replicas:
     });
   });
 
-  it('$with の前置き：局所ハンドラで未渡しパラメータを null にする', async () => {
+  it('$in を省いた $with：局所ハンドラで未渡しパラメータを null にする', async () => {
     await expect(
       run(
         `
@@ -55,7 +55,7 @@ database:
     ).resolves.toEqual({ database: { host: 'db', port: null } });
   });
 
-  it('合成位置の $let の前置き：$std.each の選択が包囲する $std.list に届く', async () => {
+  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する $std.list に届く', async () => {
     await expect(
       run(`
 $std.list:
@@ -66,7 +66,7 @@ $std.list:
     ).resolves.toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('$std.state の前置き：状態のスコープがマッピングの中で閉じる', async () => {
+  it('$in を省いた $std.state：状態のスコープがマッピングの中で閉じる', async () => {
     await expect(
       run(`
 $do:
@@ -80,7 +80,7 @@ $do:
     ).resolves.toEqual({ inner: { a: 1, b: 1 }, outer: 100 });
   });
 
-  it('三つの前置きを揃えて置く形', async () => {
+  it('三つの頭を揃えて置く形', async () => {
     await expect(
       run(`
 $let:
@@ -94,7 +94,7 @@ missing: {$std.param: nope}
     ).resolves.toEqual({ seed: 41, missing: 41 });
   });
 
-  it('残りが $if の前置き：fizzbuzz が平らなリストになる', async () => {
+  it('残りが $if の文脈の導入：fizzbuzz が平らなリストになる', async () => {
     await expect(
       run(`
 $std.list:
@@ -143,7 +143,7 @@ $in:
     ).resolves.toBe(42);
   });
 
-  it('残りが演算の前置き', async () => {
+  it('残りが演算の文脈の導入', async () => {
     await expect(
       run(`
 $let:
@@ -219,12 +219,12 @@ $with:
 });
 
 // -----------------------------------------------------------------------------
-// 展開との等価性（前置き ≡ $in に本体を書いた二項形）
+// 展開との等価性（文脈の導入 ≡ $in に本体を書いた形）
 // -----------------------------------------------------------------------------
 
-describe('前置きの展開との等価性', () => {
-  it('$let の前置き：パラメータの既定値と分岐', async () => {
-    const prelude = `
+describe('文脈の導入の展開との等価性', () => {
+  it('$in を省いた $let：パラメータの既定値と分岐', async () => {
+    const omitted = `
 $let:
   registry: ghcr.io/acme
   env: {$std.param: env, $default: dev}
@@ -247,13 +247,13 @@ $in:
     $then: 3
     $else: 1
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual({ name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 });
   });
 
-  it('$with の前置き：局所ハンドラで未渡しパラメータを null にする（ログの順序も比べる）', async () => {
-    const prelude = `
+  it('$in を省いた $with：局所ハンドラで未渡しパラメータを null にする（ログの順序も比べる）', async () => {
+    const omitted = `
 database:
   $with:
     std.fail: {$fn: _, $body: {$resume: null}}
@@ -269,17 +269,17 @@ database:
     port: {$std.param: db_port}
 `;
     const options: EvaluateOptions = { params: { db_host: 'db' } };
-    const preludeLogs: Value[] = [];
+    const omittedLogs: Value[] = [];
     const expandedLogs: Value[] = [];
-    const a = await run(prelude, { ...options, onLog: (v) => preludeLogs.push(v) });
+    const a = await run(omitted, { ...options, onLog: (v) => omittedLogs.push(v) });
     const b = await run(expanded, { ...options, onLog: (v) => expandedLogs.push(v) });
     expect(a).toEqual(b);
     expect(a).toEqual({ database: { host: 'db', port: null } });
-    expect(preludeLogs).toEqual(expandedLogs);
+    expect(omittedLogs).toEqual(expandedLogs);
   });
 
-  it('合成位置の $let の前置き：$std.each の選択が包囲する $std.list に届く', async () => {
-    const prelude = `
+  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する $std.list に届く', async () => {
+    const omitted = `
 $std.list:
   $let:
     x: {$std.each: [1, 2]}
@@ -292,13 +292,13 @@ $std.list:
   $in:
     v: \${x}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('$std.state の前置き：状態のスコープがマッピングの中で閉じる', async () => {
-    const prelude = `
+  it('$in を省いた $std.state：状態のスコープがマッピングの中で閉じる', async () => {
+    const omitted = `
 $do:
 - $std.set: {n: 100}
 - inner:
@@ -317,13 +317,13 @@ $do:
       b: {$std.get: n}
   outer: {$std.get: n}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual({ inner: { a: 1, b: 1 }, outer: 100 });
   });
 
-  it('三つの前置きを揃えて置く形', async () => {
-    const prelude = `
+  it('三つの頭を揃えて置く形', async () => {
+    const omitted = `
 $let:
   base: 41
 $std.state: {n: "\${base}"}
@@ -344,13 +344,13 @@ $in:
       seed: {$std.get: n}
       missing: {$std.param: nope}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual({ seed: 41, missing: 41 });
   });
 
-  it('残りが $if の前置き', async () => {
-    const prelude = `
+  it('残りが $if の文脈の導入', async () => {
+    const omitted = `
 $std.list:
   $let:
     i0: {$std.each: {$std.range: 15}}
@@ -381,7 +381,7 @@ $std.list:
         $then: buzz
         $else: "\${i}"
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toEqual([
       1, 2, 'fizz', 4, 'buzz', 'fizz', 7, 8, 'fizz', 'buzz', 11, 'fizz', 13, 14, 'fizzbuzz',
@@ -389,7 +389,7 @@ $std.list:
   });
 
   it('$with の頭と $in の本体', async () => {
-    const prelude = `
+    const omitted = `
 $with:
   std.fail: {$fn: _, $body: 0}
 $in:
@@ -401,13 +401,13 @@ $in:
 $with:
   std.fail: {$fn: _, $body: 0}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toBe(0);
   });
 
   it('頭が二つと $in', async () => {
-    const prelude = `
+    const omitted = `
 $let:
   start: 40
 $std.state: {n: "\${start}"}
@@ -420,13 +420,13 @@ $in:
   $std.state: {n: "\${start}"}
   $in: {$std.get: n}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toBe(40);
   });
 
-  it('残りが演算の前置き', async () => {
-    const prelude = `
+  it('残りが演算の文脈の導入', async () => {
+    const omitted = `
 $let:
   obj: {x: 10, y: 100}
 $std.lookup:
@@ -441,7 +441,7 @@ $in:
     key: x
     in: \${obj}
 `;
-    const a = await run(prelude);
+    const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toBe(10);
   });
@@ -451,7 +451,7 @@ $in:
 // 並びとスコープ
 // -----------------------------------------------------------------------------
 
-describe('前置きの並びとスコープ', () => {
+describe('文脈の導入の並びとスコープ', () => {
   it('$let の後に置いた $with はその束縛を見る', async () => {
     await expect(
       run(`
@@ -491,7 +491,7 @@ v: "\${x}"
     ).resolves.toEqual({ name: 'api', v: 1 });
   });
 
-  it('入れ子：外の前置きの束縛は内側のマッピングの前置きの右辺とデータから見える', async () => {
+  it('入れ子：外で導入した束縛は内側のマッピングの頭の右辺とデータから見える', async () => {
     await expect(
       run(`
 $let:
@@ -509,8 +509,8 @@ inner:
 // データ位置の境界
 // -----------------------------------------------------------------------------
 
-describe('前置きとデータ位置の境界', () => {
-  it('前置きが作る境界は、データのキーの間で共有される', async () => {
+describe('文脈の導入とデータ位置の境界', () => {
+  it('文脈の導入が作る境界は、データのキーの間で共有される', async () => {
     await expect(
       run(`
 $let:
@@ -521,7 +521,7 @@ b: {$std.get: n}
     ).resolves.toEqual({ a: null, b: 1 });
   });
 
-  it('データ位置の前置きは境界そのものなので、選択のハンドラが無ければ拒否される', async () => {
+  it('データ位置の文脈の導入は境界そのものなので、選択のハンドラが無ければ拒否される', async () => {
     await expect(
       run(`
 $let:
@@ -536,8 +536,8 @@ v: "\${x}"
 // ローカル作用
 // -----------------------------------------------------------------------------
 
-describe('前置きとローカル作用', () => {
-  it('$with の前置きが宣言したローカル作用は、データのキーから呼べる', async () => {
+describe('文脈の導入とローカル作用', () => {
+  it('$in を省いた $with が宣言したローカル作用は、データのキーから呼べる', async () => {
     // 節は $resume を呼ばないので、その戻り値がハンドラ全体の結果になり、
     // 呼び出しを包んでいたマッピングの残りは評価されない（節の戻り値がハンドラの継続を置き換える）。
     await expect(
@@ -551,7 +551,7 @@ a: {$.throw: boom}
     ).resolves.toBe('caught boom');
   });
 
-  it('$with の前置きが束縛した素通しの関数を $let で外へ持ち出して呼ぶと脱出のエラーになり、宣言位置は前置きマッピングの構文パスになる', async () => {
+  it('$in を省いた $with が束縛した素通しの関数を $let で外へ持ち出して呼ぶと脱出のエラーになり、宣言位置は文脈の導入を伴うマッピングの構文パスになる', async () => {
     await expect(
       run(`
 $let:
@@ -585,7 +585,7 @@ $in:
 // 自己適用の検査
 // -----------------------------------------------------------------------------
 
-describe('前置きと自己適用の検査', () => {
+describe('文脈の導入と自己適用の検査', () => {
   it('自己適用のエラー位置は、書いたとおりの構文パス $let.f になる', async () => {
     await expect(
       run(`
@@ -617,7 +617,7 @@ describe('$ キーとデータのキーの混在', () => {
   });
 });
 
-describe('残りが空の前置き', () => {
+describe('残りが空の頭', () => {
   it('頭だけのマッピングは $do の文の位置でだけ書ける', async () => {
     await expect(run('{$let: {b: 1}}')).rejects.toThrow(
       '$let without $in is only allowed as a statement of $do',
@@ -629,8 +629,8 @@ describe('残りが空の前置き', () => {
 // $do の文の位置
 // -----------------------------------------------------------------------------
 
-describe('前置きを持つマッピングは $do の完結した文', () => {
-  it('残りを持つ前置きの値は、最後の文でなければ捨てられる', async () => {
+describe('文脈の導入を伴うマッピングは $do の完結した文', () => {
+  it('残りを持つ頭の値は、最後の文でなければ捨てられる', async () => {
     await expect(
       run(`
 $do:
@@ -663,7 +663,7 @@ $do:
 // 失敗位置
 // -----------------------------------------------------------------------------
 
-describe('前置きの本体は素通し', () => {
+describe('文脈の導入の本体は素通し', () => {
   it('残りが $if なら、位置は選ばれた分岐で伸びる', async () => {
     await expect(
       run('$let: {x: 1}\n$if: true\n$then:\n  a: {$std.range: q}\n$else: null'),

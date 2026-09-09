@@ -143,8 +143,8 @@ effectful-yaml の `$let` が bind 相当を兼ねるのは、この設計の踏
 
 ハンドラ側の対応は次のとおりである。
 節に付く語は `handler`（節の並びから一級のハンドラ値を作る構成子）であり、effectful-yaml では `$std.handler` がこれにあたる。
-用例の `with` はハンドラの構文ではなく、その行の関数へブロックの残りをクロージャとして渡す Koka の汎用の糖衣であり、`with handler { 節 }` にブロックの残りが続く形は、前置きの `$with` に残りが続く形と同じである。
-二項形 `{$with: 節, $in: 本体}` は、ハンドラ値を計算に適用する `handle(action){ 節 }` に対応する。
+用例の `with` はハンドラの構文ではなく、その行の関数へブロックの残りをクロージャとして渡す Koka の汎用の糖衣であり、`with handler { 節 }` にブロックの残りが続く形は、`$in` を省いた `$with` に残りが続く形と同じである。
+`{$with: 節, $in: 本体}` の形は、ハンドラ値を計算に適用する `handle(action){ 節 }` に対応する。
 `with` が節を導く割り当ては、文献の handling 式 `handle M with H`（Plotkin–Pretnar）や Eff・Unison の構文とも一致する。
 
 理論の系譜で言えば、Moggi のモナドの後、Plotkin と Power が「演算がモナドを生成する」という代数的作用の見方を与え、Plotkin と Pretnar がその演算を処理するハンドラを与えた。

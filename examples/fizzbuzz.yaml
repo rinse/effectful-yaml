@@ -1,4 +1,4 @@
-# $let の前置きが選んだ数を、残りの $if が振り分ける
+# $let が導入した数を、残りの $if が振り分ける
 $std.list:
   $let:
     i0: {$std.each: {$std.range: 15}}

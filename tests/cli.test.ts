@@ -41,7 +41,7 @@ describe('eff-yaml CLI', () => {
     expect(r.err).toBe('');
   });
 
-  it('前置きの $ キーは出力から消え、データのキーのコメントは残る', async () => {
+  it('頭の $ キーは出力から消え、データのキーのコメントは残る', async () => {
     const r = await runCli([], '$let:\n  greeting: hello\nmessage: ${greeting}   # 挨拶\n');
     expect(r.code).toBe(0);
     expect(r.out).toBe('message: hello   # 挨拶\n');

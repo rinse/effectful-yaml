@@ -295,7 +295,7 @@ $with:
     expected: { a: 'inner x', b: 'outer y' },
   },
   {
-    name: '$do の $with の前置き（残りの文にハンドラを被せる）',
+    name: '$do の文に置いた $with（残りの文にハンドラを被せる）',
     yaml: `
 $do:
 - $with:
@@ -305,7 +305,7 @@ $do:
     expected: 0,
   },
   {
-    name: '$do の $std.state の前置き（残りの文に記憶を通す）',
+    name: '$do の文に置いた $std.state（残りの文に記憶を通す）',
     yaml: `
 $do:
 - $std.state: {n: 0}
@@ -317,7 +317,7 @@ $do:
     expected: 42,
   },
   {
-    name: '前置きを持つマッピング（$let の前置き）',
+    name: '文脈の導入を伴うマッピング（$in を省いた $let）',
     yaml: `
 $let:
   registry: ghcr.io/acme
@@ -332,7 +332,7 @@ replicas:
     expected: { name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 },
   },
   {
-    name: '前置きを持つマッピング（$with の前置き）',
+    name: '文脈の導入を伴うマッピング（$in を省いた $with）',
     yaml: `
 database:
   $with:
@@ -344,7 +344,7 @@ database:
     expected: { database: { host: 'db', port: null } },
   },
   {
-    name: '前置きを持つマッピング（合成位置の $let の前置き）',
+    name: '文脈の導入を伴うマッピング（合成位置で文脈を導入する $let）',
     yaml: `
 $std.list:
   $let:
@@ -354,7 +354,7 @@ $std.list:
     expected: [{ v: 1 }, { v: 2 }],
   },
   {
-    name: '前置きを持つマッピング（$std.state の前置き）',
+    name: '文脈の導入を伴うマッピング（$in を省いた $std.state）',
     yaml: `
 $do:
 - $std.set: {n: 100}
@@ -367,7 +367,7 @@ $do:
     expected: { inner: { a: 1, b: 1 }, outer: 100 },
   },
   {
-    name: '前置きを持つマッピング（残りが $if）',
+    name: '文脈の導入を伴うマッピング（残りが $if）',
     yaml: `
 $std.list:
   $let:
@@ -388,7 +388,7 @@ $std.list:
     ],
   },
   {
-    name: '前置きを持つマッピング（$with の頭と $in の本体）',
+    name: '文脈の導入を伴うマッピング（$with の頭と $in の本体）',
     yaml: `
 $with:
   std.fail: {$fn: _, $body: 0}
@@ -398,7 +398,7 @@ $in:
     expected: 0,
   },
   {
-    name: '前置きを持つマッピング（頭が二つと $in）',
+    name: '文脈の導入を伴うマッピング（頭が二つと $in）',
     yaml: `
 $let:
   start: 40
@@ -413,7 +413,7 @@ $in:
     expected: 42,
   },
   {
-    name: '前置きを持つマッピング（残りが演算）',
+    name: '文脈の導入を伴うマッピング（残りが演算）',
     yaml: `
 $let:
   obj: {x: 10, y: 100}
@@ -1053,7 +1053,7 @@ log_level:
     expected: { log_level: 'info' },
   },
   {
-    name: 'std.state.md の例（$std.state の前置きで選択に記憶を貫流させる）',
+    name: 'std.state.md の例（$in を省いた $std.state で選択に記憶を貫流させる）',
     yaml: `
 $do:
 - $std.state: {i: 0}

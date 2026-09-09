@@ -96,7 +96,7 @@ export type KNode =
       readonly into: 'list' | 'mapping';
     }
   | { readonly k: 'resume'; readonly path: string; readonly arg: KNode }
-  /** `$std.state`。二項形も前置きもこのノードになる。仕様が許す等価な組み込み。 */
+  /** `$std.state`。`$in` を書いた形も省いた形もこのノードになる。仕様が許す等価な組み込み。 */
   | { readonly k: 'state'; readonly path: string; readonly init: KNode; readonly body: KNode }
   /** `$std.first`。仕様が許す等価な組み込み。 */
   | { readonly k: 'first'; readonly path: string; readonly body: KNode }
@@ -150,7 +150,7 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set([
 /**
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
  * `$default` は演算 `$std.param` と `$std.opt` が使うので、予約キーだけでなく演算の名前でも
- * 引ける表にする。`$in` は前置きの本体であり、go() が頭キーとともに先に取り分けるので
+ * 引ける表にする。`$in` は文脈を導入する頭の本体であり、go() が頭キーとともに先に取り分けるので
  * ここには載らない。
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -254,12 +254,12 @@ function displayName(k: DollarKeyKind): string {
   return `$${k.kind === 'op' ? k.name : k.main}`;
 }
 
-/** 前置きの頭キーの生キー三つ。`$` キーは書かれたままの字面で見る（`$$let` は該当しない）。 */
+/** 文脈を導入する頭キーの生キー三つ。`$` キーは書かれたままの字面で見る（`$$let` は該当しない）。 */
 const HEAD_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
 
 /**
- * マッピングの前置きの頭キー。文書順で最初の頭キーであり、残り（そのキーを除いた全部）が
- * その前置きの本体になる。`$with` が頭キーになるのは、同じマッピングに `$collect` が
+ * マッピングに文脈を導入する頭キー。文書順で最初の頭キーであり、残り（そのキーを除いた全部）が
+ * その本体になる。`$with` が頭キーになるのは、同じマッピングに `$collect` が
  * 無いときだけである（あれば `$collect` の補助キー）。
  */
 function headKeyOf(rawKeys: readonly string[]): string | undefined {
@@ -268,7 +268,7 @@ function headKeyOf(rawKeys: readonly string[]): string | undefined {
 }
 
 /**
- * 残りがデータであるブロック形式の前置きを持つマッピングの、頭キーを文書順の配列で返す。
+ * 文脈の導入を伴うブロック形式のマッピングで残りがデータであるものの、頭キーを文書順の配列で返す。
  * 保持レンダラ（src/preserve.ts）が対を取り除く規則の判定であり、脱糖の判定
  * （headKeyOf が頭を一つ取り、残りは何であってもよい）とは別物である。
  * `$` キーがすべて頭キーで、データのキーが一つ以上あるときだけ、頭をすべて取り除いた残りが
@@ -282,7 +282,7 @@ export function headKeysWithDataRest(rawKeys: readonly string[]): readonly strin
 
 /**
  * マッピングの生キー（YAML から読んだままの文字列）の並びから形を決める。
- * 前置きの頭は go() がこれより先に取り分けるので、ここに届くのは主形か、
+ * 文脈を導入する頭は go() がこれより先に取り分けるので、ここに届くのは主形か、
  * 頭キー一つだけのマッピング（残りが空）である。`$` キーとデータのキーが
  * 混在して届いたときは常にエラーである。
  * - `$` キーが一つも無ければ plain。
@@ -312,7 +312,7 @@ function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   if (mainCandidates.length === 0) {
     // 単独の `$with` は `$do` の文（残りの文へハンドラを被せる）。文の位置かどうかは
     // ここでは分からないので、位置外は Err ノードで拒む。ほかのキーを伴う `$with` は
-    // 前置きの頭か `$collect` の補助キーなので、ここには届かない。
+    // 文脈を導入する頭か `$collect` の補助キーなので、ここには届かない。
     const only = auxCandidates[0];
     if (auxCandidates.length === 1 && only!.c.kind === 'reserved' && only!.c.main === 'with') {
       return { kind: 'reserved', main: 'with', mainRaw: only!.raw, aux: new Map() };
@@ -433,18 +433,18 @@ function intoOf(node: unknown): 'list' | 'mapping' {
 }
 
 /**
- * `$do` の文に置いた前置き。頭キーだけからなるマッピングであり、残りの文を本体に取る。
- * 残りを持つ前置きは本体をその残りに取るので、文としては完結した式である。
+ * `$do` の文に置いた文脈の導入。頭キーだけからなるマッピングであり、残りの文を本体に取る。
+ * 残りを持つ頭は本体をその残りに取るので、文としては完結した式である。
  */
-type StatementPrelude =
+type ContextIntro =
   | { readonly kind: 'let'; readonly bindings: unknown }
   | { readonly kind: 'state'; readonly init: unknown }
   | { readonly kind: 'with'; readonly clauses: unknown };
 
-function statementPreludeOf(stmt: unknown): StatementPrelude | undefined {
+function contextIntroOf(stmt: unknown): ContextIntro | undefined {
   if (!isNodeMap(stmt)) return undefined;
   const rawKeys = Object.keys(stmt);
-  // 残りを持つ前置きは、その残りを本体に取る完結した式である。
+  // 残りを持つ頭は、その残りを本体に取る完結した式である。
   if (rawKeys.length > 1 && headKeyOf(rawKeys) !== undefined) return undefined;
   const shape = analyzeMapping(rawKeys);
   if (shape.kind === 'op') {
@@ -481,10 +481,10 @@ function go(node: unknown, path: string, spath: string, inData: boolean, open: b
     throw new EffectfulYamlError(`unsupported node: ${String(node)}`);
   }
   const rawKeys = Object.keys(node);
-  // 頭キーがあり、残り（そのキーを除いた全部）が空でなければ前置きを持つマッピング。
+  // 頭キーがあり、残り（そのキーを除いた全部）が空でなければ文脈の導入を伴うマッピング。
   const head = rawKeys.length > 1 ? headKeyOf(rawKeys) : undefined;
   if (head !== undefined) {
-    const form = prelude(node, head, rawKeys, path, spath, open);
+    const form = desugarContextIntro(node, head, rawKeys, path, spath, open);
     return inData ? { k: 'boundary', path, body: form } : form;
   }
   const shape = analyzeMapping(rawKeys);
@@ -610,7 +610,7 @@ function dollarForm(
         });
       }
       case 'std.state': {
-        // 残りが空の `$std.state`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
+        // 残りが空の `$std.state`。文の位置でだけ書ける（残りがあれば go() が文脈の導入として先に取り分ける）。
         const init = main();
         return {
           k: 'err',
@@ -666,7 +666,7 @@ function dollarForm(
       return statements(arg, 0, path, (i) => `${doPath}[${i}]`, open);
     }
     case 'let': {
-      // 残りが空の `$let`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
+      // 残りが空の `$let`。文の位置でだけ書ける（残りがあれば go() が文脈の導入として先に取り分ける）。
       const bindings = letBindings(node[mainRaw], path, childPath(spath, mainRaw));
       return {
         k: 'err',
@@ -701,7 +701,7 @@ function dollarForm(
         into: intoOf(node[shape.aux.get('into') ?? '']),
       };
     case 'with':
-      // 残りが空の `$with`。文の位置でだけ書ける（残りがあれば go() が前置きとして先に取り分ける）。
+      // 残りが空の `$with`。文の位置でだけ書ける（残りがあれば go() が文脈の導入として先に取り分ける）。
       // 検査は節をデータとして走査し、評価がここで拒む。
       return {
         k: 'err',
@@ -732,7 +732,7 @@ function letBindings(bindings: unknown, path: string, spath: string): Binding[] 
 }
 
 /**
- * 節のマッピングから節・return・ローカル作用の宣言を組む（前置きの `$with`、`$do` の `$with` 文、
+ * 節のマッピングから節・return・ローカル作用の宣言を組む（マッピングのキーに置いた `$with`、`$do` の文に置いた `$with`、
  * `$std.handler` で共通）。key はそのマッピングを値に持つキーで、節の構文パスに使う。
  * ローカル作用の宣言は、引数を素通しして内部の演算を呼ぶ関数を本体に束縛する形へ展開する。
  *
@@ -807,7 +807,7 @@ function statements(
   for (let i = from; i < stmts.length; i++) {
     const stmt = stmts[i];
     const sp = spathOf(i);
-    const form = statementPreludeOf(stmt);
+    const form = contextIntroOf(stmt);
     if (form !== undefined) {
       if (form.kind === 'let') {
         bindings.push(...letBindings(form.bindings, path, childPath(sp, '$let')));
@@ -841,7 +841,7 @@ function statements(
 }
 
 /**
- * 前置きを持つマッピングの脱糖。頭キーを一段だけ展開し、残りのキーからなるマッピングを
+ * 文脈の導入を伴うマッピングの脱糖。頭キーを一段だけ展開し、残りのキーからなるマッピングを
  * その本体にする。残りが `$in` ただ一つなら、その値が本体である。
  *
  *   {$let: 束縛} ∪ 残り        ==  {$let: 束縛, $in: 本体}
@@ -854,7 +854,7 @@ function statements(
  * 頭は自分の値を持たないので、本体は素通しである（`return` の節を持つ `$with` だけは、
  * 本体の値を作り変えるので凍る）。残りが頭キーを持てば、その脱糖が次の一段になる。
  */
-function prelude(
+function desugarContextIntro(
   node: NodeMap,
   head: string,
   rawKeys: readonly string[],
