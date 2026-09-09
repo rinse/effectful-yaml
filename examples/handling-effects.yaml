@@ -25,10 +25,27 @@ handling-system-defined-effects:
       $fn: xs
       $body:
         $std.list:
-          $let:
-            x: {$std.each: "${xs}"}
+          $std.for:
+            x: ${xs}
           $in:
             $resume: ${x * 2}
   key1: Hello!
   key2: {$std.each: [1, 2, 3]}
+  key3: World!
+
+# $std.for は $let と $std.each への展開なので、std.each の節がそのまま処理する
+handling-for:
+  $with:
+    std.each:
+      $fn: xs
+      $body:
+        $std.list:
+          $std.for:
+            x: ${xs}
+          $in:
+            $resume: ${x * 2}
+  $std.for:
+    n: [1, 2, 3]
+  key1: Hello!
+  key2: ${n}
   key3: World!

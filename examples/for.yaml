@@ -1,0 +1,60 @@
+# $std.for は選択の束縛を導入する頭。
+# {$std.for: {x: 式}} は {$let: {x: {$std.each: 式}}} への展開で定まる。
+
+# リストに対する map
+map:
+  $std.list:
+    $std.for:
+      x: [1, 2, 3]
+    $in: ${x + 1}
+
+# リストに対する flatMap。後の束縛の右辺から先の束縛が見える。
+flatMap:
+  $std.list:
+    $std.for:
+      x: [1, 2, 3]
+      y: ["${x}", "${x}"]
+    $in: ${y}
+
+# $do の文に置き、$std.where と並べるとリスト内包表記になる
+comprehension:
+  $std.list:
+    $do:
+    - $std.for:
+        x: [1, 2, 3]
+        y: [1, 2, 3]
+    - $std.where: ${x < y}
+    - - ${x}
+      - ${y}
+
+# 形ごとのラベルの表を、ラベルごとの形に組み替える。
+# $let で束縛したデータの要素を $std.for で選び、$std.mapping が集め直す。
+flip-table:
+  $let:
+    forms:
+      "a{id}": [x, y]
+      "b{id}": [z]
+  $std.mapping:
+    $std.for:
+      entry: ${forms}
+      label: ${entry.value}
+    key: ${label}
+    value:
+      id: ${entry.key}
+
+# $std.first の下では、条件を満たす最初の分岐で止まる
+first-match:
+  $std.first:
+    $do:
+    - $std.for:
+        svc: [{name: web, port: 80}, {name: db, port: 5432}, {name: cache, port: 6379}]
+    - $std.where: ${svc.port > 1000}
+    - ${svc.name}
+
+# マッピングのキーに置けば、残りのデータのキーが本体になる
+records:
+  $std.list:
+    $std.for:
+      x: [1, 2]
+    n: ${x}
+    sq: ${x * x}

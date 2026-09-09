@@ -38,8 +38,32 @@ describe('examples', () => {
         { key1: 'Hello!', key2: 4, key3: 'World!' },
         { key1: 'Hello!', key2: 6, key3: 'World!' },
       ],
+      // $std.for の展開が起こす std.each も同じ節が受けるので、束縛 n は倍にされる。
+      'handling-for': [
+        { key1: 'Hello!', key2: 2, key3: 'World!' },
+        { key1: 'Hello!', key2: 4, key3: 'World!' },
+        { key1: 'Hello!', key2: 6, key3: 'World!' },
+      ],
     });
     expect(logs).toEqual(['[WARN] Error!']);
+  });
+
+  it('for.yaml は $std.for の map / flatMap / 内包表記 / 表の組み替え / 最初の一致を固定する', async () => {
+    await expect(runExample('for.yaml')).resolves.toEqual({
+      map: [2, 3, 4],
+      flatMap: [1, 1, 2, 2, 3, 3],
+      comprehension: [
+        [1, 2],
+        [1, 3],
+        [2, 3],
+      ],
+      'flip-table': { x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } },
+      'first-match': 'db',
+      records: [
+        { n: 1, sq: 1 },
+        { n: 2, sq: 4 },
+      ],
+    });
   });
 
   it('handler-values.yaml は $std.handler の値を引数で調整して複数の本体に掛ける', async () => {
