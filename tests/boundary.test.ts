@@ -35,10 +35,16 @@ describe('境界に達した選択', () => {
     expect(e.path).toBe('a.b');
   });
 
-  it('$std.where の打ち切りも、展開の std.each がそのまま境界へ達する', async () => {
+  it('$std.where の打ち切りも、展開の std.each がそのまま境界へ達し、文言は書いた形 $std.where を名乗る', async () => {
     const e = await failure('a:\n  b: {$std.where: false}\n');
-    expect(e.message).toContain(UNHANDLED);
+    expect(e.message).toContain('unhandled choice: $std.where reached the boundary');
     expect(e.path).toBe('a.b');
+  });
+
+  it('$std.for の選択が境界へ達すると、文言は書いた形と束縛名を名乗る', async () => {
+    const e = await failure('a:\n  $std.for: {x: [1, 2]}\n  v: ${x}\n');
+    expect(e.message).toContain("unhandled choice: $std.for 'x' reached the boundary");
+    expect(e.path).toBe('a');
   });
 
   it('文書全体が境界のときは位置が付かない', async () => {

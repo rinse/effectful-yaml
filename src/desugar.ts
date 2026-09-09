@@ -80,7 +80,14 @@ export type KNode =
       readonly keys: readonly string[];
       readonly arg: KNode;
     }
-  | { readonly k: 'op'; readonly path: string; readonly name: string; readonly arg: KNode }
+  /** what はエラー文言で演算を指す名前。導出形の展開が置いた演算だけが持ち、利用者が書いた形を名乗る。 */
+  | {
+      readonly k: 'op';
+      readonly path: string;
+      readonly name: string;
+      readonly arg: KNode;
+      readonly what?: string;
+    }
   | {
       readonly k: 'handle';
       readonly path: string;
@@ -656,7 +663,7 @@ function dollarForm(
           what: '$std.where',
           cond: main(),
           then: lit(path, null),
-          else: { k: 'op', path, name: 'std.each', arg: lit(path, []) },
+          else: { k: 'op', path, name: 'std.each', arg: lit(path, []), what: '$std.where' },
         };
       default:
         return { k: 'op', path, name: shape.name, arg: main() };
@@ -758,7 +765,13 @@ function forBindings(bindings: unknown, path: string, spath: string): Binding[] 
     }
     return {
       name,
-      rhs: { k: 'op', path, name: 'std.each', arg: expr(rhs, path, childPath(spath, name)) },
+      rhs: {
+        k: 'op',
+        path,
+        name: 'std.each',
+        arg: expr(rhs, path, childPath(spath, name)),
+        what: `$std.for '${name}'`,
+      },
     };
   });
 }

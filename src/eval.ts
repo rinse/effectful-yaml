@@ -140,7 +140,7 @@ function mergeComp(arg: Value): Comp {
 // ---------------------------------------------------------------------------
 
 /** 演算の節。resume は「残りの計算（同じハンドラが効き続ける）」。 */
-type Handler = (arg: Value, resume: (v: Value) => Comp) => Comp;
+type Handler = (arg: Value, resume: (v: Value) => Comp, what: string) => Comp;
 
 /**
  * 部分処理の汎用コンビネータ。
@@ -162,8 +162,16 @@ function handleOps(
     // raise された std.fail も同じ形で包み直す。rec を通すことで、raise された std.fail を
     // このハンドラ自身の節（たとえば $std.opt の std.fail 節）が捕捉できる。
     const nextRaise = (v: Value): Comp => bind(pure(null), () => rec(c.raise(v)));
-    if (clause !== undefined) return clause(c.arg, next);
-    return { tag: 'op', name: c.name, arg: c.arg, resume: next, raise: nextRaise, path: c.path };
+    if (clause !== undefined) return clause(c.arg, next, c.what);
+    return {
+      tag: 'op',
+      name: c.name,
+      arg: c.arg,
+      resume: next,
+      raise: nextRaise,
+      path: c.path,
+      what: c.what,
+    };
   };
   return rec(comp);
 }
@@ -223,8 +231,8 @@ function collectChoice(comp: Comp): Comp {
     new Map<string, Handler>([
       [
         'std.each',
-        (arg, k) => {
-          const items = entriesOf(arg, '$std.each');
+        (arg, k, what) => {
+          const items = entriesOf(arg, what);
           const go = (i: number, chunks: Cons<readonly Value[]> | null): Comp =>
             i >= items.length
               ? pure(flattenChunks(chunks))
@@ -248,8 +256,8 @@ function collectFirst(comp: Comp): Comp {
     new Map<string, Handler>([
       [
         'std.each',
-        (arg, k) => {
-          const items = entriesOf(arg, '$std.each');
+        (arg, k, what) => {
+          const items = entriesOf(arg, what);
           const go = (i: number): Comp =>
             i >= items.length
               ? pure([])
@@ -296,6 +304,7 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
             raise: (x) => rec(m.raise(x), here),
             // 失敗位置は読み出しを起こした $std.get の位置である。
             path: m.path,
+            what: '$std.fail',
           };
         }
         c = force(c.resume(v));
@@ -320,6 +329,7 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
         resume: (v) => rec(m.resume(v), here),
         raise: (v) => rec(m.raise(v), here),
         path: m.path,
+        what: m.what,
       };
     }
   };
@@ -527,7 +537,7 @@ class Evaluator {
         return bindAt(node.path, this.eval(node.arg, env), mergeComp);
       default:
         // 演算の引数は値渡しだが合成である。引数の評価で起きた作用は堰き止めない。
-        return bind(this.eval(node.arg, env), (v) => perform(node.name, v, node.path));
+        return bind(this.eval(node.arg, env), (v) => perform(node.name, v, node.path, node.what));
     }
   }
 
@@ -712,7 +722,7 @@ async function drive(
     if (c.name === 'std.each') {
       throw attachPath(
         new EffectfulYamlError(
-          'unhandled choice: $std.each reached the boundary without a handler; ' +
+          `unhandled choice: ${c.what} reached the boundary without a handler; ` +
             'wrap the computation in $std.list, $std.first or $std.mapping',
         ),
         c.path,

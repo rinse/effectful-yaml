@@ -85,6 +85,11 @@ export type Comp =
        * ハンドラに捕まった演算では捨てられる（捕まった失敗は値なので位置を持たない）。
        */
       readonly path?: string;
+      /**
+       * エラー文言で演算を指す名前。既定は `$演算名` であり、導出形の展開が置いた演算は
+       * 利用者が書いた形（`$std.for 'x'`、`$std.where`）を名乗る。位置と同じく組み立て時に決まる。
+       */
+      readonly what: string;
     }
   | { readonly tag: 'bind'; readonly comp: Comp; readonly fn: (v: Value) => Comp };
 
@@ -93,13 +98,14 @@ export type Forced = Extract<Comp, { tag: 'pure' | 'op' }>;
 
 export const pure = (value: Value): Comp => ({ tag: 'pure', value });
 
-export const perform = (name: string, arg: Value, path?: string): Comp => ({
+export const perform = (name: string, arg: Value, path?: string, what = `$${name}`): Comp => ({
   tag: 'op',
   name,
   arg,
   resume: pure,
   raise: (v) => perform('std.fail', v, path),
   path,
+  what,
 });
 
 export const bind = (c: Comp, f: (v: Value) => Comp): Comp => ({ tag: 'bind', comp: c, fn: f });
@@ -131,6 +137,7 @@ export function force(c: Comp): Forced {
         resume: (v) => bind(m.resume(v), outer.fn),
         raise: (v) => bind(m.raise(v), outer.fn),
         path: m.path,
+        what: m.what,
       };
     }
     cur = { tag: 'bind', comp: m.comp, fn: (v) => bind(m.fn(v), outer.fn) };
