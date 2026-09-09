@@ -36,9 +36,9 @@
 ```yaml
 $std.list:
   $do:
-  - $let:
-      x: {$std.each: [1, 2, 3]}
-      y: {$std.each: [1, 2, 3]}
+  - $std.for:
+      x: [1, 2, 3]
+      y: [1, 2, 3]
   - $std.where: ${x < y}
   - - ${x}
     - ${y}
@@ -51,6 +51,7 @@ $std.list:
 ## 関連
 
 - [std.each](std.each.md)（展開が使う選択の演算）
+- [std.for](std.for.md)（同じく選択の作用に属する導出形。選択の束縛を導入する頭）
 - [std.fail](std.fail.md)（打ち切りと失敗の違い）
 - [std.mapping](std.mapping.md)（エントリの条件付き省略）
 - [$if](if.md)（打ち切りでなく値の分岐が必要なとき）

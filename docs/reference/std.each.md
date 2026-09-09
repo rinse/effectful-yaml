@@ -19,7 +19,7 @@ list モナドの bind に相当し、ブロックを要素の数だけ分岐さ
 - `$std.each: ${xs}` のように、データ駆動の反復が書ける。
 - 空のリストやマッピングは分岐 0 本を意味し、その分岐は打ち切りになる。`$std.where` の打ち切りはこの規則への展開で定まる。
 - 選択を値にするのはハンドラである。`$std.list` `$std.mapping` `$std.first`、または `std.each` の節を持つ `$with` の内側で使う。どのハンドラにも捕まらずに作用境界へ達した選択はエラーになる。
-- 典型的には `$let` の右辺に置き、`x: {$std.each: [a, b, c]}` を「a、b、c のそれぞれを x として」と読む。
+- 選ばれた要素に名前を付けるのは頭 [$std.for](std.for.md) であり、`$std.for: {x: [a, b, c]}` を「a、b、c のそれぞれを x として」と読む。その展開が `$let` の右辺に置いた `x: {$std.each: [a, b, c]}` である。
 
 ## 例
 
@@ -52,6 +52,7 @@ $std.list:
 
 ## 関連
 
+- [std.for](std.for.md)（選択に名前を束縛する頭。`$let` と `$std.each` への展開で定まる導出形）
 - [std.where](std.where.md)（空の `$std.each` への展開で定まる打ち切り）
 - [std.list](std.list.md)、[std.mapping](std.mapping.md)、[std.first](std.first.md)（選択を処理するハンドラ）
 - [$collect](collect.md)（選択の展開が使う畳み込みの構文）

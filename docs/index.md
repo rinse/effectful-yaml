@@ -4,7 +4,7 @@ effectful-yaml のドキュメントの索引である。
 
 ## 仕様
 
-- [言語仕様（草案 0.11）](grammar.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
+- [言語仕様（草案 0.12）](grammar.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
 - [理論的背景](theory.md)：規範ではない解説。Moggi の λc・Haskell の do 記法・Koka の直接スタイルとの対応。
 - [設計の経緯](history.md)：規範ではない記録。判断の理由と退けた代替案、草案間の変更、今後の課題。
 
@@ -25,7 +25,7 @@ effectful-yaml のドキュメントの索引である。
 | キー | ページ | 概要 |
 |---|---|---|
 | `$let` `$in` | [let.md](reference/let.md) | 束縛と逐次のカーネル構文（bind 相当を兼ねる） |
-| `$do` | [do.md](reference/do.md) | 文の並び。`$let`・`$std.state`・`$with` への展開で定まる導出形 |
+| `$do` | [do.md](reference/do.md) | 文の並び。`$let`・`$std.for`・`$std.state`・`$with` への展開で定まる導出形 |
 | `$if` `$then` `$else` | [if.md](reference/if.md) | 条件分岐 |
 
 ### 予約キー：関数
@@ -52,11 +52,12 @@ effectful-yaml のドキュメントの索引である。
 | `std.log` | ログ | [std.log.md](reference/std.log.md) | ログ出力 |
 | `std.fail` | 失敗 | [std.fail.md](reference/std.fail.md) | 計算の失敗（データ起因の部分性も同じ作用になる） |
 
-### std：打ち切りの導出形
+### std：選択の導出形
 
 | 名前 | ページ | 概要 |
 |---|---|---|
 | `std.where` | [std.where.md](reference/std.where.md) | 分岐の打ち切り。`$if` と空の `$std.each` への展開で定まる導出形であり、演算ではない |
+| `std.for` | [std.for.md](reference/std.for.md) | 選択の束縛を導入する頭。`$let` と `$std.each` への展開で定まる導出形であり、演算ではない |
 
 ### std：計算したキーの照会
 
@@ -87,5 +88,6 @@ effectful-yaml のドキュメントの索引である。
 | `$std.opt` | `std.fail` | [std.opt.md](reference/std.opt.md) | 失敗を既定値（省略時 null）に翻訳する |
 | `$std.handler` | 節に書いた演算 | [std.handler.md](reference/std.handler.md) | 節から一級のハンドラ値を作る |
 
-派生ハンドラの意味論はすべて `$with` と `$collect` への展開で定まる。
+派生ハンドラと導出形の意味論は、すべてカーネルの形への展開で定まる。
+`$do`、`std.where`、`std.for`、`std.handler` のほか、意味を展開で定める演算 `std.lookup` と `std.merge` も同じである。
 各ページはその展開を掲載する。`std.first.md` だけは紙面に収まらないので展開の概形を示す。

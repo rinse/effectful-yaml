@@ -236,5 +236,5 @@ $do:
 - [std.list](std.list.md)（選択に特化した派生ハンドラと、その展開）
 - [$collect](collect.md)
 - [$do](do.md)（`$in` を省いた `$with` を置ける文の位置）
-- [$let](let.md)（同じく `$in` を省いて文脈を導入できる形）
+- [$let](let.md)、[$std.for](std.for.md)（同じく `$in` を省いて文脈を導入できる形）
 - [言語仕様のハンドラの節と文脈の導入の節](../grammar.md)

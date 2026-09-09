@@ -97,5 +97,6 @@ $std.lookup:
 - [言語仕様の文脈の導入の節](../grammar.md)
 - [std.each](std.each.md)（右辺での選択が bind に相当する）
 - [$fn](fn.md)
+- [$std.for](std.for.md)（選択の束縛を導入する頭。`$let` と `$std.each` への展開で定まる導出形）
 - [$std.state](std.state.md)（同じく `$in` を省いて文脈を導入できる形）
 - [$with](with.md)（同じく `$in` を省いて文脈を導入できる形）
