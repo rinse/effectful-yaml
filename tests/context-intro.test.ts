@@ -1,7 +1,7 @@
 /**
- * 文脈の導入を伴うマッピング（頭キー `$let`・`$std.state`・`$with` を持ち、その頭を除いた
+ * 文脈の導入を伴うマッピング（頭キー `$let`・`$std.state`・`$with`・`$std.for` を持ち、その頭を除いた
  * 残りが本体になる導出形）の動作確認。
- * 仕様: docs/grammar.md（草案 0.11）「文脈の導入を伴うマッピング」。
+ * 仕様: docs/grammar.md（草案 0.12）「文脈の導入を伴うマッピング」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -215,6 +215,96 @@ $with:
   throw: {$fn: m, $body: "caught \${m} \${x}"}
 `),
     ).resolves.toBe('caught boom 1');
+  });
+
+  it('マッピングのキーに置いた $std.for：後の束縛が先の束縛を見て表を組み替える', async () => {
+    const result = await run(`
+$let:
+  forms:
+    "a{id}": [x, y]
+    "b{id}": [z]
+$std.mapping:
+  $std.for:
+    entry: \${forms}
+    label: \${entry.value}
+  key: \${label}
+  value:
+    id: \${entry.key}
+`);
+    expect(result).toEqual({ x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } });
+    expect(Object.keys(result as object)).toEqual(['x', 'y', 'z']);
+  });
+
+  it('$in を伴う $std.for：$std.list の下で複数の束縛が総当たりになる', async () => {
+    await expect(
+      run(`
+$std.list:
+  $std.for:
+    x: [1, 2]
+    y: [10, 20]
+  $in: \${x}-\${y}
+`),
+    ).resolves.toEqual(['1-10', '1-20', '2-10', '2-20']);
+  });
+
+  it('$do の文に置いた $std.for と $std.where で組を絞り込む', async () => {
+    await expect(
+      run(`
+$std.list:
+  $do:
+  - $std.for:
+      x: [1, 2, 3]
+      y: [1, 2, 3]
+  - $std.where: \${x < y}
+  - - \${x}
+    - \${y}
+`),
+    ).resolves.toEqual([
+      [1, 2],
+      [1, 3],
+      [2, 3],
+    ]);
+  });
+
+  it('$std.for を $let より先に書くと、$let の右辺が選ばれた要素を見る', async () => {
+    await expect(
+      run(`
+$std.list:
+  $std.for:
+    x: [1, 2]
+  $let:
+    y: \${x + 1}
+  v: \${y}
+`),
+    ).resolves.toEqual([{ v: 2 }, { v: 3 }]);
+  });
+
+  it('束縛名にドットは使えない', async () => {
+    await expect(run('{$std.for: {"a.b": 1}, $in: null}')).rejects.toThrow(
+      '$std.for binding name must not contain a dot: a.b',
+    );
+  });
+
+  it('束縛がマッピングでなければエラー', async () => {
+    await expect(run('{$std.for: [1], $in: null}')).rejects.toThrow(
+      '$std.for requires a mapping of bindings',
+    );
+  });
+
+  it('$in の無い $std.for を $do の外に置くとエラー', async () => {
+    await expect(run('{$std.for: {x: [1]}}')).rejects.toThrow(
+      '$std.for without $in is only allowed as a statement of $do',
+    );
+  });
+
+  it('データ位置の $std.for は境界そのものなので、選択のハンドラが無ければ拒否される', async () => {
+    await expect(
+      run(`
+$std.for:
+  x: [1, 2]
+v: "\${x}"
+`),
+    ).rejects.toThrow(/unhandled choice/);
   });
 });
 
@@ -444,6 +534,53 @@ $in:
     const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
     expect(a).toBe(10);
+  });
+
+  it('$std.for は束縛を std.each で包んだ $let と一致する', async () => {
+    const forHead = `
+$std.list:
+  $std.for:
+    x: [1, 2]
+    y: [10, 20]
+  $in: \${x}-\${y}
+`;
+    const expanded = `
+$std.list:
+  $let:
+    x: {$std.each: [1, 2]}
+    y: {$std.each: [10, 20]}
+  $in: \${x}-\${y}
+`;
+    const a = await run(forHead);
+    expect(a).toEqual(await run(expanded));
+    expect(a).toEqual(['1-10', '1-20', '2-10', '2-20']);
+  });
+
+  it('$std.for は束縛を std.each で包んだ $let と一致する（ログの順序も比べる）', async () => {
+    const forHead = `
+$std.list:
+  $do:
+  - $std.for:
+      x: [1, 2]
+  - $std.log: \${x}
+  - \${x}
+`;
+    const expanded = `
+$std.list:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2]}
+  - $std.log: \${x}
+  - \${x}
+`;
+    const forLogs: Value[] = [];
+    const expandedLogs: Value[] = [];
+    const a = await run(forHead, { onLog: (v) => forLogs.push(v) });
+    const b = await run(expanded, { onLog: (v) => expandedLogs.push(v) });
+    expect(a).toEqual(b);
+    expect(a).toEqual([1, 2]);
+    expect(forLogs).toEqual(expandedLogs);
+    expect(forLogs).toEqual([1, 2]);
   });
 });
 

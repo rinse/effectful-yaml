@@ -155,6 +155,17 @@ image: ghcr.io/acme/api
 `);
   });
 
+  it('$std.for の頭も、$std.each の節を持つ $with より内側なら残るのはデータのキーだけ', async () => {
+    const src = `$with:
+  std.each: {$fn: xs, $body: {$resume: "\${xs[0]}"}}
+$std.for:
+  x: [1]
+a: \${x}   # 行内
+`;
+    await expect(render(src)).resolves.toBe(`a: 1   # 行内
+`);
+  });
+
   it('三つの頭を並べても、残るのはデータのキーだけ', async () => {
     const src = `$let:
   base: 41

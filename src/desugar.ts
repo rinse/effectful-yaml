@@ -1,7 +1,7 @@
 /**
  * YAML ノードからカーネルの AST への脱糖。
- * 仕様: docs/grammar.md（草案 0.11）「予約キーとカーネル」「$do」「引数名の列と部分適用」
- * 「$std.where」「ハンドラ」「std の派生ハンドラ」。
+ * 仕様: docs/grammar.md（草案 0.12）「予約キーとカーネル」「$do」「引数名の列と部分適用」
+ * 「$std.where」「$std.for」「ハンドラ」「std の派生ハンドラ」。
  *
  * 仕様は導出形を「カーネルへの展開」で定めるので、展開はここで一度だけ行う。
  * 評価前の検査（typecheck.ts）も評価器（eval.ts）も、この AST だけを歩く。
@@ -254,8 +254,8 @@ function displayName(k: DollarKeyKind): string {
   return `$${k.kind === 'op' ? k.name : k.main}`;
 }
 
-/** 文脈を導入する頭キーの生キー三つ。`$` キーは書かれたままの字面で見る（`$$let` は該当しない）。 */
-const HEAD_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with']);
+/** 文脈を導入する頭キーの生キー四つ。`$` キーは書かれたままの字面で見る（`$$let` は該当しない）。 */
+const HEAD_KEYS: ReadonlySet<string> = new Set(['$let', '$std.state', '$with', '$std.for']);
 
 /**
  * マッピングに文脈を導入する頭キー。文書順で最初の頭キーであり、残り（そのキーを除いた全部）が
@@ -438,6 +438,7 @@ function intoOf(node: unknown): 'list' | 'mapping' {
  */
 type ContextIntro =
   | { readonly kind: 'let'; readonly bindings: unknown }
+  | { readonly kind: 'for'; readonly bindings: unknown }
   | { readonly kind: 'state'; readonly init: unknown }
   | { readonly kind: 'with'; readonly clauses: unknown };
 
@@ -448,8 +449,9 @@ function contextIntroOf(stmt: unknown): ContextIntro | undefined {
   if (rawKeys.length > 1 && headKeyOf(rawKeys) !== undefined) return undefined;
   const shape = analyzeMapping(rawKeys);
   if (shape.kind === 'op') {
-    if (shape.name !== 'std.state') return undefined;
-    return { kind: 'state', init: stmt[shape.raw] };
+    if (shape.name === 'std.state') return { kind: 'state', init: stmt[shape.raw] };
+    if (shape.name === 'std.for') return { kind: 'for', bindings: stmt[shape.raw] };
+    return undefined;
   }
   if (shape.kind !== 'reserved') return undefined;
   if (shape.main === 'with') return { kind: 'with', clauses: stmt[shape.mainRaw] };
@@ -619,6 +621,16 @@ function dollarForm(
           children: [{ k: 'state', path, init, body: lit(path, null) }],
         };
       }
+      case 'std.for': {
+        // 残りが空の `$std.for`。文の位置でだけ書ける（残りがあれば go() が文脈の導入として先に取り分ける）。
+        const bindings = forBindings(node[mainRaw], path, childPath(spath, mainRaw));
+        return {
+          k: 'err',
+          path,
+          message: '$std.for without $in is only allowed as a statement of $do',
+          children: [mkLet(path, bindings, lit(path, null))],
+        };
+      }
       case 'std.param': {
         // 未渡しを std.fail に翻訳するのは呼び出し位置（評価器の op の節）である。
         const read: KNode = { k: 'op', path, name: 'std.param', arg: main() };
@@ -732,6 +744,26 @@ function letBindings(bindings: unknown, path: string, spath: string): Binding[] 
 }
 
 /**
+ * `$std.for` の束縛のマッピングを文書順の並びにする。`$let` と同じ検査（マッピングであること、
+ * 束縛名にドットを含まないこと）を課すが、各右辺は `std.each` の演算で包む。これにより
+ * `$std.for` は選択を導入する束縛の並びになり、後の束縛は先の束縛が選んだ要素を見る。
+ */
+function forBindings(bindings: unknown, path: string, spath: string): Binding[] {
+  if (!isNodeMap(bindings)) {
+    throw new EffectfulYamlError('$std.for requires a mapping of bindings');
+  }
+  return Object.entries(bindings).map(([name, rhs]) => {
+    if (name.includes('.')) {
+      throw new EffectfulYamlError(`$std.for binding name must not contain a dot: ${name}`);
+    }
+    return {
+      name,
+      rhs: { k: 'op', path, name: 'std.each', arg: expr(rhs, path, childPath(spath, name)) },
+    };
+  });
+}
+
+/**
  * 節のマッピングから節・return・ローカル作用の宣言を組む（マッピングのキーに置いた `$with`、`$do` の文に置いた `$with`、
  * `$std.handler` で共通）。key はそのマッピングを値に持つキーで、節の構文パスに使う。
  * ローカル作用の宣言は、引数を素通しして内部の演算を呼ぶ関数を本体に束縛する形へ展開する。
@@ -787,8 +819,8 @@ function handler(
 }
 
 /**
- * `$do` の文の並びを脱糖する。展開のとおり、束縛文と値を捨てる文は一つの `$let` の
- * 束縛列に畳み、`$with` 文と `$std.state` 文だけが残りの文を本体に取る入れ子を作る。
+ * `$do` の文の並びを脱糖する。展開のとおり、束縛文（`$let` 文と `$std.for` 文）と値を捨てる文は
+ * 一つの `$let` の束縛列に畳み、`$with` 文と `$std.state` 文だけが残りの文を本体に取る入れ子を作る。
  * 文の数だけ入れ子を作らないので、走査も評価も文の数でスタックを積まない。
  *
  * spathOf は i 番目の文の構文パス（`$do[i]`）を返す。
@@ -811,6 +843,10 @@ function statements(
     if (form !== undefined) {
       if (form.kind === 'let') {
         bindings.push(...letBindings(form.bindings, path, childPath(sp, '$let')));
+        continue;
+      }
+      if (form.kind === 'for') {
+        bindings.push(...forBindings(form.bindings, path, childPath(sp, '$std.for')));
         continue;
       }
       if (form.kind === 'state') {
@@ -847,10 +883,12 @@ function statements(
  *   {$let: 束縛} ∪ 残り        ==  {$let: 束縛, $in: 本体}
  *   {$std.state: 初期値} ∪ 残り ==  {$std.state: 初期値, $in: 本体}
  *   {$with: 節} ∪ 残り         ==  {$with: 節, $in: 本体}
+ *   {$std.for: 束縛} ∪ 残り     ==  {$std.for: 束縛, $in: 本体}
  *
  * 頭の中身は頭キーの構文パスで脱糖し、残りはマッピング自身の構文パス spath で脱糖する
- * （$let の束縛 f は spath.$let.f、$with のローカル作用の内部名は 名前@spath、
- * データのキー k は spath.k、$in の本体は spath.$in になる）。
+ * （$let の束縛 f は spath.$let.f、$std.for の束縛 f は spath.$std.for.f、
+ * $with のローカル作用の内部名は 名前@spath、データのキー k は spath.k、
+ * $in の本体は spath.$in になる）。
  * 頭は自分の値を持たないので、本体は素通しである（`return` の節を持つ `$with` だけは、
  * 本体の値を作り変えるので凍る）。残りが頭キーを持てば、その脱糖が次の一段になる。
  */
@@ -871,6 +909,9 @@ function desugarContextIntro(
 
   if (head === '$let') {
     return mkLet(path, letBindings(node[head], path, childPath(spath, head)), mkBody(open));
+  }
+  if (head === '$std.for') {
+    return mkLet(path, forBindings(node[head], path, childPath(spath, head)), mkBody(open));
   }
   if (head === '$std.state') {
     const init = expr(node[head], path, childPath(spath, head));

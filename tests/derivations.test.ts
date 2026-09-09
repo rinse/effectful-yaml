@@ -1,5 +1,5 @@
 /**
- * 検証テスト：docs/grammar.md（草案 0.11）が定める std の派生ハンドラ
+ * 検証テスト：docs/grammar.md（草案 0.12）が定める std の派生ハンドラ
  * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
  * 「$with と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
  * 結果と比較する。
@@ -867,5 +867,38 @@ $in:
     expect(Object.keys(builtin as object)).toEqual(Object.keys(expanded as object));
     expect(builtin).toEqual({ b: 9, a: 1, keep: 'base', c: 3 });
     expect(Object.keys(builtin as object)).toEqual(['b', 'a', 'keep', 'c']);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// 11. $std.for の展開（grammar.md「文脈の導入」節、std.for は束縛の右辺を std.each で包む）
+//   {$std.for: 束縛} ∪ 残り ≡ {$let: {束縛の各右辺を std.each で包んだもの}} ∪ 残り
+// -----------------------------------------------------------------------------
+
+describe('$std.for の展開との等価性', () => {
+  it('後の束縛が先の束縛の選んだ要素を見る（entry/label の flatMap）が一致する', async () => {
+    const sugar = await run(`
+$std.list:
+  $let:
+    forms:
+      a: [1, 2]
+      b: [3]
+  $std.for:
+    entry: \${forms}
+    label: \${entry.value}
+  $in: \${entry.key}\${label}
+`);
+    const expanded = await run(`
+$std.list:
+  $let:
+    forms:
+      a: [1, 2]
+      b: [3]
+    entry: {$std.each: "\${forms}"}
+    label: {$std.each: "\${entry.value}"}
+  $in: \${entry.key}\${label}
+`);
+    expect(sugar).toEqual(expanded);
+    expect(sugar).toEqual(['a1', 'a2', 'b3']);
   });
 });
