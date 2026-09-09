@@ -18,11 +18,10 @@ $do:
           std.fail: {$fn: _, $body: []}
           # std.fail でないものだけ値ハンドラを通る
           return: {$fn: x, $body: ["${x}"]}
-        $in: {$.f: "${x}"}
+        $.f: "${x}"
     # 部分適用
     nonzeroToList: {$.toList: "${nonzero}"}
 - $std.list:
     $let:
       x: {$std.each: [100, 0, 101]}
-    $in:
-      $.nonzeroToList: ${x}
+    $.nonzeroToList: ${x}

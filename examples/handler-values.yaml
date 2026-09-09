@@ -8,8 +8,7 @@ $let:
         std.fail: {$fn: _, $body: "${default}"}
   zero: {$.fallback: 0}
   empty: {$.fallback: ""}
-$in:
-  # 本体はサンクで渡す
-  n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-  s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-  ok: {$.zero: {$fn: _, $body: 7}}
+# 本体はサンクで渡す
+n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
+ok: {$.zero: {$fn: _, $body: 7}}

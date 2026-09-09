@@ -16,9 +16,9 @@ catch-uninitialized-cell-error:
 
 # std.state で $std.get, $std.set のスコープを明示する。
 # 状態の初期値も与えられる。
+# 状態のスコープはそれ以後の文全体となる。
 nested-states:
   $std.state: {x: hello, y: world, z: beautiful}
-  $in:
   - $std.get: x
   - $std.state: {x: bonjour, y: monde}
     $in:
@@ -28,8 +28,7 @@ nested-states:
         - $std.get: y
   - $std.get: y
 
-# $do の中では $in なしで状態ハンドラを宣言できる。
-# 状態のスコープはそれ以後の文全体となる。
+# $do 文の中でも使える
 with-do:
   $do:
   - $std.state:
