@@ -37,6 +37,39 @@ $into: mapping
 
 選択を処理する `$with` の骨格を追いたい場合は [std.list](std.list.md) の展開を、組み立ての規則は [$collect](collect.md) を参照すること。
 
+## 関数による実装
+
+展開の節の形をそのまま関数にしたものである。
+本体はサンクで渡す。
+
+```yaml
+$let:
+  mapping:
+    $fn: body
+    $body:
+      $collect:
+        $std.list: {$.body: null}
+      $with:
+        $fn: e
+        $body:
+        - ${e}
+      $into: mapping
+$in:
+  $.mapping:
+    $fn: _
+    $body:
+      $do:
+      - $std.for:
+          e: {web: 80, db: 5432}
+      - key: svc-${e.key}
+        value: ${e.value}
+```
+
+```yaml
+svc-web: 80
+svc-db: 5432
+```
+
 ## 例
 
 ```yaml

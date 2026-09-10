@@ -79,6 +79,90 @@ $in:
 42
 ```
 
+## 関数による実装
+
+展開の全体を関数にしたものである。
+初期値と本体（サンク）を順に受け取り、本体をハンドラで包んで得た状態変換関数を初期値に適用する。
+状態はエントリの列であり、`$collect` はマッピングもエントリの列として回るので、初期値のマッピングをそのまま最初の状態にできる。
+`std.set` の節は、書かれたマッピングのエントリを列の先頭に足す。
+`std.get` の節は名前の一致するエントリを先頭から集めるので、`${hits[0]}` は最新の値になり、セルが未初期化ならちょうど `std.fail` を起こす。
+
+```yaml
+$let:
+  state:
+    $fn: [init, body]
+    $body:
+      $do:
+      - $let:
+          run:
+            $with:
+              std.get:
+                $fn: name
+                $body:
+                  $fn: s
+                  $body:
+                    $do:
+                    - $let:
+                        hits:
+                          $collect: ${s}
+                          $with:
+                            $fn: e
+                            $body:
+                              $if: ${e.key == name}
+                              $then:
+                              - ${e.value}
+                              $else: []
+                        k:
+                          $resume: ${hits[0]}
+                    - $.k: ${s}
+              std.set:
+                $fn: m
+                $body:
+                  $fn: s
+                  $body:
+                    $do:
+                    - $let:
+                        s2:
+                          $collect:
+                          - ${m}
+                          - ${s}
+                          $with:
+                            $fn: part
+                            $body:
+                              $collect: ${part}
+                              $with:
+                                $fn: e
+                                $body:
+                                - ${e}
+                        k:
+                          $resume: null
+                    - $.k: ${s2}
+              return:
+                $fn: x
+                $body:
+                  $fn: s
+                  $body: ${x}
+            $in: {$.body: null}
+      - $.run: ${init}
+$in:
+  $let:
+    counter: {$.state: {n: 40}}
+  $in:
+    $.counter:
+      $fn: _
+      $body:
+        $do:
+        - $let:
+            n: {$std.get: n}
+        - $std.set:
+            n: ${n + 2}
+        - $std.get: n
+```
+
+```yaml
+42
+```
+
 ## スコープの隔離
 
 内側の `$std.state` は外の状態に触れない作業領域になる。

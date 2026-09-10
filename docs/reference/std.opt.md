@@ -42,6 +42,39 @@ $in: 式
 `std.fail` の節が `$resume` を呼ばずに既定値の式へ達するので、失敗した時点で本体は打ち切られ、既定値がハンドラ全体の値になる。
 `$default` を省いた `{$std.opt: 式}` は `$default: null` と等価であり、この展開の `$body` が `null` になる。
 
+## 関数による実装
+
+展開の節を `$std.handler` に書けば、`$std.opt` と同じ働きをするハンドラの値が作れる。
+`$default` は失敗したときだけ評価される遅延位置なので、既定値もサンクで渡す。
+既定値を先に与えた部分適用が、その既定値を持つ `$std.opt` にあたる。
+
+```yaml
+$let:
+  opt:
+    $fn: default
+    $body:
+      $std.handler:
+        std.fail:
+          $fn: _
+          $body: {$.default: null}
+$in:
+  $do:
+  - $let:
+      spec: {}
+      orEmpty:
+        $.opt: {$fn: _, $body: ''}
+  - pre:
+      $.orEmpty:
+        $fn: _
+        $body: ${spec.pre}
+```
+
+```yaml
+pre: ''
+```
+
+`$default` を省いた `{$std.opt: 式}` は、既定値のサンクを `{$fn: _, $body: null}` にした形である。
+
 ## 例
 
 ```yaml

@@ -22,27 +22,38 @@ $std.lookup:
 - `in` の値がマッピングでないことと `key` の値が文字列でないことは、データの変動ではなく形の誤りなのでエラーになる。捕捉できない。
 - 実装は O(1) の照会で最適化してよいが、観測できる振る舞いは下の展開と一致する。
 
-## 展開
+## 展開と関数による実装
 
 意味は選択による照合への展開で定める。
+展開に `$fn` を被せて関数にしたものが次であり、`{$std.lookup: {in: m, key: k}}` は `lookup` を `m` と `k` に順に適用した形と等価である。
+表を先に与えた部分適用が、表を固定した照会関数になる。
 
 ```yaml
-# {$std.lookup: {in: m, key: k}} の展開
-$do:
-- $let:
-    m: in の式
-    k: key の式
-- $std.first:
-    $do:
-    - $let:
-        e:
-          $std.each: ${m}
-    - $std.where: ${e.key == k}
-    - ${e.value}
+$let:
+  lookup:
+    $fn: [m, k]
+    $body:
+      $std.first:
+        $do:
+        - $std.for:
+            e: ${m}
+        - $std.where: ${e.key == k}
+        - ${e.value}
+$in:
+  $let:
+    prices: {basic: 9, pro: 29, enterprise: 99}
+    price: {$.lookup: "${prices}"}
+  $in:
+    $.price: pro
+```
+
+```yaml
+29
 ```
 
 キーが在ればその値になり、無ければ `$std.first` の規則によりこの位置で `std.fail` が起きる。
 展開の中の選択は `$std.first` が処理し尽くすので、作用集合への寄与は `std.fail` と `in` / `key` の式の作用だけであり、選択が外へ出ることはない。
+失敗の値の文言だけは展開に委ねず、組み込みは欠落したキーを含む説明文にする（規則の節）。
 
 ## 例
 

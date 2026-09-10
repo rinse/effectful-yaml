@@ -41,6 +41,7 @@ $in: {$std.param: 名前}
 ```
 
 パラメータが渡されていないときの値が `$default` の式になり、`$default` を省いたときに `std.fail` がそのまま伝播するのはこの展開から従う。
+この `$with` は [std.opt](std.opt.md) の展開そのものなので、`{$std.param: 名前, $default: 式}` は `{$std.opt: {$std.param: 名前}, $default: 式}` とも等価である。
 
 ## 例
 

@@ -21,55 +21,83 @@ $std.merge: マッピングのリストの式
 - `$std.mapping` がキーの重複をエラーにするのとは矛盾しない。あちらは新しいマッピングの構成であり重複は誤りの兆候、こちらは重複を優先順位で解決することが目的だからである。
 - 実装は直接のマージで最適化してよいが、観測できる振る舞いは下の展開と一致する。
 
-## 展開
+## 展開と関数による実装
 
-意味は二項のマージの左畳み込みで定める。`[m1, ..., mn]` は `{}` から始めて m1 から mn までを順に重ねた結果であり、二項の merge(a, b) は次の展開で定める。
+意味は二項のマージの左畳み込みで定める。
+`[m1, ..., mn]` は `{}` から始めて m1 から mn までを順に重ねた結果であり、二項の merge(a, b) は関数 `merge2` の本体の展開で定める。
+左畳み込み `merge` は、`$collect` で要素を回りながら途中結果を `$std.state` のセルに持ち回る。
+`{$std.merge: 式}` は `merge` をその式の値に適用した形と等価である。
 
 ```yaml
-# merge(a, b) の展開。b が勝ち、キーの位置は初出の位置。
 $let:
-  a: 先の式
-  b: 後の式
+  merge2:
+    $fn: [a, b]
+    $body:
+      $std.mapping:
+        $do:
+        - $let:
+            phase:
+              $std.each: [0, 1]
+            src:
+              $if: ${phase == 0}
+              $then: ${a}
+              $else: ${b}
+            e:
+              $std.each: ${src}
+            fresh:
+              $if: ${phase == 0}
+              $then: true
+              $else:
+                $std.opt:
+                  $let:
+                    _:
+                      $std.lookup:
+                        in: ${a}
+                        key: ${e.key}
+                  $in: false
+                $default: true
+        - $std.where: ${fresh}
+        - key: ${e.key}
+          value:
+            $if: ${phase == 0}
+            $then:
+              $std.opt:
+                $std.lookup:
+                  in: ${b}
+                  key: ${e.key}
+              $default: ${e.value}
+            $else: ${e.value}
+  merge:
+    $fn: ms
+    $body:
+      $std.state: {acc: {}}
+      $in:
+        $do:
+        - $collect: ${ms}
+          $with:
+            $fn: m
+            $body:
+              $do:
+              - $let:
+                  cur: {$std.get: acc}
+                  step: {$.merge2: "${cur}"}
+                  next: {$.step: "${m}"}
+              - $std.set:
+                  acc: ${next}
+              - []
+        - $std.get: acc
 $in:
-  $std.mapping:
-    $do:
-    - $let:
-        phase:
-          $std.each: [0, 1]
-        src:
-          $if: ${phase == 0}
-          $then: ${a}
-          $else: ${b}
-        e:
-          $std.each: ${src}
-        fresh:
-          $if: ${phase == 0}
-          $then: true
-          $else:
-            $std.opt:
-              $let:
-                _:
-                  $std.lookup:
-                    in: ${a}
-                    key: ${e.key}
-              $in: false
-            $default: true
-    - $std.where: ${fresh}
-    - key: ${e.key}
-      value:
-        $if: ${phase == 0}
-        $then:
-          $std.opt:
-            $std.lookup:
-              in: ${b}
-              key: ${e.key}
-          $default: ${e.value}
-        $else: ${e.value}
+  $.merge: [{b: 2, a: 1, keep: base}, {b: 9, c: 3}]
+```
+
+```yaml
+{b: 9, a: 1, keep: base, c: 3}
 ```
 
 a の側（phase 0）は自分のキーをその位置のまま並べ、b に同じキーが在ればその値で差し替える。
 b の側（phase 1）は a に無いキーだけを後ろに足す。
 二つの `$std.each` の入れ子が全エントリを一列に並べ、`$std.mapping` が集め直すので、作用集合への寄与は引数の式の作用だけであり、選択が外へ出ることはない。
+`merge` の `$std.state` は自分の `std.get` と `std.set` を処理し尽くすので、これも外へ出ない。
 
 ## 例
 

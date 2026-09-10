@@ -5,7 +5,7 @@
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
  * ページの例が誤っていて実行結果と食い違う場合も、テストは曲げず、そのまま失敗させて報告する。
  *
- * docs/reference/std.first.md の「展開の概形」節のコードは tests/derivations.test.ts が
+ * docs/reference/std.*.md の「関数による実装」節のコードは tests/std-functions.test.ts が
  * 別途検証するので、ここには転記しない（形だけを示す断片も対象外）。
  */
 import { describe, expect, it } from 'vitest';

@@ -49,6 +49,42 @@ $in: 本体
 内側に選択がなければ `return` 節だけが働き、全体は要素 1 のリストになる。
 分岐の中の失敗は `std.fail` の節がないので処理されず、そのまま外側へ伝播して全体の失敗になる。
 
+## 関数による実装
+
+展開の節を `$std.handler` に書けば、`$std.list` と同じ働きをするハンドラの値が文書の中で作れる。
+本体はサンクで渡す。
+処理系の `$std.list` は速度のために直接実装されているが、観測できる振る舞いはこの関数と一致する。
+
+```yaml
+$let:
+  list:
+    $std.handler:
+      std.each:
+        $fn: xs
+        $body:
+          $collect: ${xs}
+          $with:
+            $fn: x
+            $body:
+              $resume: ${x}
+      return:
+        $fn: x
+        $body:
+        - ${x}
+$in:
+  $.list:
+    $fn: _
+    $body:
+      $do:
+      - $std.for:
+          n: [1, 2, 3]
+      - ${n * 10}
+```
+
+```yaml
+[10, 20, 30]
+```
+
 ## 例
 
 ```yaml
