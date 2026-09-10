@@ -20,7 +20,7 @@ async function failure(src: string, options?: EvaluateOptions): Promise<Effectfu
   throw new Error('expected a rejection');
 }
 
-const UNHANDLED = 'unhandled choice: $std.each reached the boundary without a handler';
+const UNHANDLED = 'unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each';
 
 describe('境界に達した選択', () => {
   it('選ばれなかった分岐の選択は起きない', async () => {
@@ -30,7 +30,6 @@ describe('境界に達した選択', () => {
   it('ハンドラに捕まらずに境界へ達した $std.each はエラーになる', async () => {
     const e = await failure('a:\n  b: {$std.each: [1, 2]}\n');
     expect(e.message).toContain(UNHANDLED);
-    expect(e.message).toContain('wrap the computation in $std.list, $std.first or $std.mapping');
     expect(e.message).toMatch(/\(at a\.b\)$/);
     expect(e.path).toBe('a.b');
   });

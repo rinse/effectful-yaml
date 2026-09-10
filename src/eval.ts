@@ -722,8 +722,7 @@ async function drive(
     if (c.name === 'std.each') {
       throw attachPath(
         new EffectfulYamlError(
-          `unhandled choice: ${c.what} reached the boundary without a handler; ` +
-            'wrap the computation in $std.list, $std.first or $std.mapping',
+          `unhandled choice: ${c.what} reached the boundary; no enclosing handler handles std.each`,
         ),
         c.path,
       );

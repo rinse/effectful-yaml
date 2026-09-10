@@ -96,7 +96,7 @@ cache:
 - ホスト演算への閉包：文書内のどの節にも現れない演算の引数に閉包が流れうる文書は、評価を始める前に `a function value cannot be passed to a host operation` で拒否される。節を持つ演算では、実行時にホストへ渡る直前の引数に同じ検査が働く。
 - `return` の予約：レキシカルな呼び出し `$.return`（`$.return.x` を含む）を書いた文書は、評価を始める前に `return is reserved: $.return is not callable` で拒否される。`return` はハンドラの節名として予約されているので、この呼び出しは解決しない。`$let` で `return` に束縛することと `${return}` の参照は妨げない。
 - 未登録演算：既定ハンドラが処理せず、文書内のどのハンドラの節にも現れず、`ops` にも無い演算を含む文書は、評価を始める前に `unregistered operation: $名前` で拒否される。この検査は演算の出現に対して全域であり、実行が到達しない位置の演算も、呼び先が実行時に決まる関数の本体の演算も同じく拒否される。節を持つ演算はこの検査を通るので、その節のハンドラの範囲外で呼ばれた場合だけ、実行時に同じエラーになる。
-- 境界に達した選択：`std.each` を処理するハンドラ（`$std.list`、`$std.mapping`、`$std.first`、`std.each` の節を持つ `$with`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary without a handler` で reject される。選択を含む計算はいずれかのハンドラで包む。
+- 境界に達した選択：`std.each` を処理するハンドラ（`$std.list`、`$std.mapping`、`$std.first`、`std.each` の節を持つ `$with`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each` で reject される。選択を含む計算はいずれかのハンドラで包む。
 - `$std.fail`：文書内のハンドラ（`$with`、`$std.first`、`$std.opt` など）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
 - 関数値の脱出：閉包が文書の値に残るとエラーになる。
 - ローカル作用の脱出：`$with` のドットなしの節名が宣言したローカル作用は、その素通しの関数がハンドラの外へ持ち出されて呼ばれると、どのハンドラにも捕まらずに境界へ達する。このとき未登録演算ではなく `local effect 'throw' escaped its handler (declared at 宣言位置)` で reject される。宣言位置は、内部の演算名を決めるのに使った構文パスである。
