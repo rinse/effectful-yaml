@@ -95,12 +95,13 @@ cache:
 - 言語仕様上のエラー（マッピングでない値のキーの走査、型の不一致など、文書の形の誤り）。捕捉できない。
 - 未定義参照：呼び出しや参照のパスの最初の区画がどの束縛（`$let`・`$fn`、`std`、ホストの `ops`・`functions`、`$handler` のローカル作用の宣言）にも解決しない文書は、評価を始める前に `undefined reference: NAME` で拒否される。環境はレキシカルに決まるので、この判定は評価を要しない。
 - 自己適用の拒否：関数値の流れの検査に通らない文書は、評価を始める前に `self-application detected` で拒否される。この検査は、`$` キーを含めて文書の構文をそのまま降りる構文パス（例 `config.$let.f`）で位置を報告する。
-- ホストの値への閉包と演算：閉包や演算の値がホストの実装（`ops`・`functions`）の引数に流れうる文書は、評価を始める前に `a function value cannot be passed to a host operation` で拒否される。実行時にも、ホストへ渡る直前の引数に同じ検査が働く。
+- ホストの値への閉包と演算：閉包や演算の値がホストの実装（`ops`・`functions`）の引数に流れうる文書は、評価を始める前に `a function value cannot be passed to a host operation: $名前` で拒否される（ホストの関数なら `host function`）。実行時にも、ホストへ渡る直前の引数に同じ検査が働く。
 - `return` の予約：レキシカルな呼び出し `$.return`（`$.return.x` を含む）を書いた文書は、評価を始める前に `return is reserved: $.return is not callable` で拒否される。`return` はハンドラの節名として予約されているので、この呼び出しは解決しない。`$let` で `return` に束縛することと `${return}` の参照は妨げない。
 - `$resume` の位置：節の本体の外（`return` 節、ハンドラの本体、`$handler` の外にある関数の本体）に書いた `$resume` は、評価を始める前に `$resume is only allowed inside a $handler clause` で拒否される。
 - 境界に達した選択：`std.each` を処理するハンドラ（`$handler: ${std.list}`、`$handler: ${std.mapping}`、`$handler: ${std.first}`、`std.each` の節を持つ `$handler`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each` で reject される。選択を含む計算はいずれかのハンドラで包む。
 - `$std.fail`：文書内のハンドラ（`$handler` の節や `$default`）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
-- 関数値の脱出：閉包が文書の値に残るとエラーになる。
+- `$handler` の式：節のマッピングでも関数でもない値（データや演算）に評価されると、`$handler requires a mapping of clauses or a function, got: 値` で reject される。
+- 関数値と演算の値の脱出：閉包が文書の値に残ると `a function value cannot escape into the document value` で、演算の値が残ると `an operation value cannot escape into the document value` で reject される。
 - ローカル作用の脱出：`$handler` のドットなしの節名が宣言したローカル作用は、その演算の値がハンドラの外へ持ち出されて呼ばれると、どのハンドラにも捕まらずに境界へ達する。このとき `local effect 'throw' escaped its handler (declared at 宣言位置)` で reject される。宣言位置は、宣言を書いた `$handler` の構文パスである。
 
 メッセージの末尾には、失敗した値の位置が `(at server.hosts[2])` の形で付く（`EffectfulYamlError` の `path` にも入る）。
