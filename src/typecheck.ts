@@ -1,8 +1,9 @@
 /**
- * 関数値の流れの検査（0CFA 流のフロー解析）と、演算の事前検査。
- * 仕様: docs/grammar.md（草案 0.12）「関数値の流れと停止性」「演算」。
+ * 未定義参照の検査、関数値と演算の値の流れの検査（0CFA 流のフロー解析）、
+ * ホストの実装に渡る引数の検査。
+ * 仕様: docs/grammar.md（草案 0.13）「名前と環境」「関数値の流れと停止性」「ホストの値」。
  *
- * 閉包を作るのは文書内の `$fn` だけである（パラメータとホスト演算の結果は常にデータ）。
+ * 閉包を作るのは文書内の `$fn` だけである（パラメータとホストの値の結果は常にデータ）。
  * したがって文書の有限個の `$fn` を抽象閉包とするフロー解析は、追跡不能を持たない全域の解析になる。
  * カーネルの AST を一度だけ走査して「どのセルにどの閉包が流れうるか」の制約を組み立て、
  * ワークリストで不動点まで伝播させ、`$fn` の間の到達グラフに循環があれば評価前にエラーにする。
@@ -14,10 +15,10 @@
  * 出現主義：$if の選ばれない側や $default の中の適用も数える。
  * エラーの位置は評価時の失敗位置と違い、`$` 式の内側へも降りる構文パスで報告する。
  */
-import { unhandledOpMessage, type Clause, type KNode } from './desugar.js';
-import { refPathOf } from './expr.js';
+import { type ClauseKey, type KNode } from './desugar.js';
+import { refPathOf, referencedNames } from './expr.js';
 import { empty, get, insert, type PMap } from './pmap.js';
-import { BUILTIN_OPS, EffectfulYamlError } from './types.js';
+import { EffectfulYamlError, STD_FUNCTIONS, STD_OPS } from './types.js';
 
 // ---------------------------------------------------------------------------
 // 原子とセル
@@ -29,6 +30,8 @@ import { BUILTIN_OPS, EffectfulYamlError } from './types.js';
  *   継続由来の印（ハンドラの畳み込みで停止が保証される適用を、循環の辺から除くため）。
  * - struct: リテラルのマッピング・リスト。フィールドごとのセルを持つ（キーの精度を保つ）。
  * - soup: 中身のキーが静的に分からない容れ物（ハンドラの値のリストなど）。要素は一つのセルに合流する。
+ * - op: 演算の値。適用すると作用のサイトになる。初期環境とローカル作用の宣言だけが作る。
+ * - native: 処理系が実装する関数。名前ごとの模型で値と作用を数える（stage はカリー化の段）。
  */
 type Atom =
   | { readonly kind: 'clo'; readonly fn: FnInfo; readonly stage: number; readonly blessed: boolean }
@@ -37,7 +40,9 @@ type Atom =
       readonly source: 'list' | 'mapping';
       readonly fields: ReadonlyMap<string, Cell>;
     }
-  | { readonly kind: 'soup'; readonly elems: Cell };
+  | { readonly kind: 'soup'; readonly elems: Cell }
+  | { readonly kind: 'op'; readonly name: string }
+  | { readonly kind: 'native'; readonly name: string; readonly stage: number };
 
 interface Cell {
   readonly atoms: Set<Atom>;
@@ -59,9 +64,13 @@ interface FnInfo {
 
 type Scope = PMap<Cell>;
 
-/** $resume が見える文脈（ハンドラの節の本体）。opName は節の演算名、res はハンドラの値のセル。 */
+/**
+ * $resume が見える文脈（ハンドラの節の本体）。
+ * ops は節のキーが解決しうる演算のセル（節の名前は式で与えられうるので一つに定まらない）、
+ * res はハンドラの値のセルである。
+ */
 interface ResumeCtx {
-  readonly opName: string;
+  readonly ops: Cell;
   readonly res: Cell;
 }
 
@@ -73,6 +82,16 @@ class Checker {
   private readonly fns: FnInfo[] = [];
   private readonly argPools = new Map<string, Cell>();
   private readonly resumePools = new Map<string, Cell>();
+  /** 名前ごとに intern した演算と Native の原子（原子の同一性で伝播の重複を除くため）。 */
+  private readonly opAtoms = new Map<string, Atom>();
+  private readonly nativeAtoms = new Map<string, Atom>();
+  private readonly hostOps: ReadonlySet<string>;
+  private readonly hostFns: ReadonlySet<string>;
+
+  constructor(hostOps: readonly string[], hostFns: readonly string[]) {
+    this.hostOps = new Set(hostOps);
+    this.hostFns = new Set(hostFns);
+  }
   /** 既定ハンドラの状態セルへ書かれうる値の合流先（std.set の引数のフィールド値、$std.state の初期値）。 */
   private readonly stateSoup = this.cell();
   /** 文書のどこかに節として現れる演算名。ホスト演算の引数検査の除外に使う。 */
@@ -133,7 +152,7 @@ class Checker {
       this.listen(c, (a) => {
         if (a.kind === 'clo') cb(a);
         else if (a.kind === 'struct') for (const f of a.fields.values()) walkCell(f);
-        else walkCell(a.elems);
+        else if (a.kind === 'soup') walkCell(a.elems);
       });
     };
     walkCell(cell);
@@ -155,6 +174,89 @@ class Checker {
       this.resumePools.set(name, c);
     }
     return c;
+  }
+
+  private opAtom(name: string): Atom {
+    let a = this.opAtoms.get(name);
+    if (a === undefined) {
+      a = { kind: 'op', name };
+      this.opAtoms.set(name, a);
+    }
+    return a;
+  }
+
+  private nativeAtom(name: string, stage: number): Atom {
+    const key = `${name}#${stage}`;
+    let a = this.nativeAtoms.get(key);
+    if (a === undefined) {
+      a = { kind: 'native', name, stage };
+      this.nativeAtoms.set(key, a);
+    }
+    return a;
+  }
+
+  /** 原子ひとつを持つセル。 */
+  private atomCell(atom: Atom): Cell {
+    const c = this.cell();
+    this.add(c, atom);
+    return c;
+  }
+
+  /** 走査の途中で包囲する `$fn` を差し替える。listen の遅延発火では文脈が失われるため。 */
+  private withFn<T>(fn: FnInfo | undefined, f: () => T): T {
+    const saved = this.currentFn;
+    this.currentFn = fn;
+    try {
+      return f();
+    } finally {
+      this.currentFn = saved;
+    }
+  }
+
+  /**
+   * 初期環境のスコープ。束縛 `std`（演算と Native のマッピング）と、
+   * ホストが与えた束縛（名前の区画ごとに入れ子のマッピング）からなる。
+   */
+  initialScope(): Scope {
+    const stdFields = new Map<string, Cell>();
+    for (const n of STD_OPS) stdFields.set(n, this.atomCell(this.opAtom(`std.${n}`)));
+    for (const n of STD_FUNCTIONS) stdFields.set(n, this.atomCell(this.nativeAtom(`std.${n}`, 0)));
+    let scope = insert(empty as Scope, 'std', this.structOf(stdFields));
+
+    interface Tree {
+      readonly children: Map<string, Tree>;
+      atom?: Atom;
+    }
+    const roots = new Map<string, Tree>();
+    const place = (name: string, atom: Atom): void => {
+      const segs = name.split('.');
+      let level = roots;
+      let node: Tree | undefined;
+      for (const seg of segs) {
+        let next = level.get(seg);
+        if (next === undefined) {
+          next = { children: new Map() };
+          level.set(seg, next);
+        }
+        node = next;
+        level = next.children;
+      }
+      node!.atom = atom;
+    };
+    for (const name of this.hostOps) place(name, this.opAtom(name));
+    for (const name of this.hostFns) place(name, this.nativeAtom(name, 0));
+    const toCell = (t: Tree): Cell => {
+      if (t.atom !== undefined) return this.atomCell(t.atom);
+      const fields = new Map<string, Cell>();
+      for (const [k, child] of t.children) fields.set(k, toCell(child));
+      return this.structOf(fields);
+    };
+    for (const [name, t] of roots) scope = insert(scope, name, toCell(t));
+    return scope;
+  }
+
+  private structOf(fields: ReadonlyMap<string, Cell>): Cell {
+    return this.atomCell({ kind: 'struct', source: 'mapping', fields });
   }
 
   private stageAtom(fn: FnInfo, stage: number, blessed: boolean): Atom {
@@ -184,7 +286,7 @@ class Checker {
   }
 
   /**
-   * 構造を回る形（$std.each の分岐、$collect の対象）の要素を out へ流す。
+   * 構造を回る形（std.each の分岐、std.collect の対象）の要素を out へ流す。
    * マッピングは {key, value} のエントリに分解される（eval.ts の entriesOf と同じ規則）ので、
    * value にフィールド値を合流させたエントリの struct を合成する。soup は両様に読む。
    */
@@ -216,7 +318,7 @@ class Checker {
     };
   }
 
-  /** 既定ハンドラの状態セルへの書き込み（std.set の引数、$std.state の初期値）。フィールド値が書かれる。 */
+  /** 既定ハンドラの状態セルへの書き込み（std.set の引数、std.state の初期値）。フィールド値が書かれる。 */
   private writeState(cell: Cell): void {
     this.listen(cell, (a) => {
       if (a.kind === 'struct') for (const f of a.fields.values()) this.flow(f, this.stateSoup);
@@ -225,22 +327,103 @@ class Checker {
   }
 
   /**
-   * 適用。呼び先に現れる各閉包へ引数を流し、結果（部分適用なら次の段、最終段なら Cod）を返す。
+   * 適用。呼び先にたどり着いた値の種類ごとに、閉包なら引数をパラメータへ流して結果
+   * （部分適用なら次の段、最終段なら Cod）を、演算なら作用のサイトを、Native なら
+   * 名前ごとの模型の値を返す。
    * 継続由来（blessed）でない閉包を包囲する $fn の本体で適用したら、到達グラフの辺に数える。
+   * listen は後から届いた原子にも発火するので、包囲する $fn は呼び出し時のものを捕まえておく。
    */
   private apply(calleeCell: Cell, argCell: Cell): Cell {
     const out = this.cell();
     const enclosing = this.currentFn;
     this.listen(calleeCell, (a) => {
-      if (a.kind !== 'clo') return;
-      if (enclosing !== undefined && !a.blessed) enclosing.edges.add(a.fn);
-      this.flow(argCell, a.fn.paramCells[a.stage]!);
-      if (a.stage + 1 < a.fn.params.length) {
-        this.add(out, this.stageAtom(a.fn, a.stage + 1, a.blessed));
-      } else {
-        this.flow(a.fn.cod, out);
+      if (a.kind === 'clo') {
+        if (enclosing !== undefined && !a.blessed) enclosing.edges.add(a.fn);
+        this.flow(argCell, a.fn.paramCells[a.stage]!);
+        if (a.stage + 1 < a.fn.params.length) {
+          this.add(out, this.stageAtom(a.fn, a.stage + 1, a.blessed));
+        } else {
+          this.flow(a.fn.cod, out);
+        }
+        return;
+      }
+      if (a.kind === 'op') {
+        this.withFn(enclosing, () => this.flow(this.opSite(a.name, argCell), out));
+        return;
+      }
+      if (a.kind === 'native') {
+        this.withFn(enclosing, () => this.flow(this.native(a.name, a.stage, argCell), out));
       }
     });
+    return out;
+  }
+
+  /**
+   * Native の模型。値と作用を名前ごとに数える（仕様の展開と観測的に等価な範囲で近似する）。
+   * 本体の閉包を受け取る関数は、引数の関数をその場で適用するのと同じに数える
+   * （包囲する `$fn` の辺も直接の適用と同じに立つ）。
+   */
+  private native(name: string, stage: number, argCell: Cell): Cell {
+    if (name === 'std.state') {
+      // 第一段は初期値（状態のセルへの書き込み）、第二段は本体の閉包の適用。
+      if (stage === 0) {
+        this.writeState(argCell);
+        return this.atomCell(this.nativeAtom('std.state', 1));
+      }
+      return this.apply(argCell, this.cell());
+    }
+    switch (name) {
+      case 'std.where':
+        // {$if: 条件, $then: null, $else: {$std.each: []}}。
+        // 値は null と空の選択のサイトの値の合併である（展開の $if の二分岐そのもの）。
+        return this.opSite('std.each', this.cell());
+      case 'std.range':
+        return this.cell();
+      case 'std.collect':
+        return this.collect(argCell);
+      case 'std.lookup': {
+        // 値は in のマッピングのどれかのキーの値。キーの精度は諦めて値の合併にする。
+        const out = this.cell();
+        this.fieldValuesInto(this.project(argCell, 'in'), out);
+        return out;
+      }
+      case 'std.merge': {
+        // 引数はマッピングのリスト。結果の値の集合は、各マッピングの値の合併の soup。
+        const mappings = this.cell();
+        this.elemsInto(argCell, mappings);
+        const values = this.cell();
+        this.fieldValuesInto(mappings, values);
+        const out = this.cell();
+        this.add(out, { kind: 'soup', elems: values });
+        return out;
+      }
+      case 'std.list':
+      case 'std.mapping': {
+        // 値は全分岐の結果の容れ物。長さもキーも静的に分からないので soup にする。
+        const out = this.cell();
+        this.add(out, { kind: 'soup', elems: this.apply(argCell, this.cell()) });
+        return out;
+      }
+      case 'std.first':
+        return this.apply(argCell, this.cell()); // 最初に成功した分岐の値そのもの
+      default:
+        // ホストの関数。結果は常にデータであり、引数はホストへ渡るので引数プールに記録する。
+        return this.opSite(name, argCell);
+    }
+  }
+
+  /** std.collect。要素ごとに `with` の関数を適用し、結果のリストを連ねた容れ物を返す。 */
+  private collect(argCell: Cell): Cell {
+    const elems = this.cell();
+    this.elemsInto(this.project(argCell, 'in'), elems);
+    const flat = this.cell();
+    this.elemsInto(this.apply(this.project(argCell, 'with'), elems), flat);
+    // `into` は静的に分からないので、リストの要素と、エントリの value の両方を数える。
+    const all = this.cell();
+    this.flow(flat, all);
+    this.flow(this.project(flat, 'value'), all);
+    const out = this.cell();
+    this.add(out, { kind: 'soup', elems: all });
     return out;
   }
 
@@ -279,11 +462,12 @@ class Checker {
       case 'lit':
         return this.cell();
       case 'str': {
+        // 参照の先頭区画は環境の束縛でなければならない（評価を要さないレキシカルな判定）。
+        for (const name of referencedNames(node.raw)) this.requireBound(name, scope);
         const ref = refPathOf(node.raw);
         if (ref === undefined) return this.cell(); // 演算子・補間の混在は閉包を運べない
         const [head, ...rest] = ref;
-        let cur = get(scope, head!);
-        if (cur === undefined) return this.cell(); // 未定義参照は評価時のエラーに任せる
+        let cur = get(scope, head!) ?? this.cell();
         for (const seg of rest) cur = this.project(cur, seg);
         return cur;
       }
@@ -322,51 +506,27 @@ class Checker {
       case 'fn':
         return this.fn(node, scope);
       case 'call': {
+        this.requireBound(node.head, scope);
         let callee = get(scope, node.head) ?? this.cell();
         for (const seg of node.keys) callee = this.project(callee, seg);
         return this.apply(callee, this.walk(node.arg, scope));
       }
-      case 'op':
-        return this.operation(node.name, this.walk(node.arg, scope));
       case 'handle':
         return this.handle(node, scope);
-      case 'collect': {
-        const target = this.walk(node.target, scope);
-        const f = this.walk(node.fn, scope);
-        const elems = this.cell();
-        this.elemsInto(target, elems);
-        // 要素ごとに $with の関数を適用する。関数はリストを返すので、結果はその要素の soup。
-        const flat = this.cell();
-        this.elemsInto(this.apply(f, elems), flat);
-        const out = this.cell();
-        this.add(out, {
-          kind: 'soup',
-          elems: node.into === 'mapping' ? this.project(flat, 'value') : flat,
-        });
-        return out;
-      }
       case 'resume': {
         const v = this.walk(node.arg, scope);
         const ctx = this.currentResume;
-        if (ctx === undefined) return this.cell(); // 節の外の $resume は評価器がエラーにする
-        this.flow(v, this.resumePool(ctx.opName));
+        if (ctx === undefined) return this.cell(); // 節の外の $resume は脱糖器が拒む
+        // 節のキーが解決しうる演算ごとに、再開される値のプールへ流す。
+        this.listen(ctx.ops, (a) => {
+          if (a.kind === 'op') this.flow(v, this.resumePool(a.name));
+        });
         // 値はこのハンドラの残りの計算の結果。継続由来の閉包は blessed の印をつけて流す
         // （継続の適用はハンドラの畳み込みで停止し、循環の辺には数えないため）。
         const out = this.cell();
         this.listen(ctx.res, (a) => {
           this.add(out, a.kind === 'clo' ? this.stageAtom(a.fn, a.stage, true) : a);
         });
-        return out;
-      }
-      case 'state':
-        this.writeState(this.walk(node.init, scope));
-        return this.walk(node.body, scope);
-      case 'first':
-        return this.walk(node.body, scope); // 最初に成功した分岐の値そのもの
-      case 'listOf': {
-        // 値は全分岐の結果のリスト。長さは静的に分からないので soup にする。
-        const out = this.cell();
-        this.add(out, { kind: 'soup', elems: this.walk(node.body, scope) });
         return out;
       }
       case 'err': {
@@ -377,26 +537,9 @@ class Checker {
     }
   }
 
-  private operation(name: string, argCell: Cell): Cell {
-    switch (name) {
-      case 'std.lookup': {
-        // 値は in のマッピングのどれかのキーの値。キーの精度は諦めて値の合併にする。
-        const out = this.cell();
-        this.fieldValuesInto(this.project(argCell, 'in'), out);
-        return out;
-      }
-      case 'std.merge': {
-        // 引数はマッピングのリスト。結果の値の集合は、各マッピングの値の合併の soup。
-        const mappings = this.cell();
-        this.elemsInto(argCell, mappings);
-        const values = this.cell();
-        this.fieldValuesInto(mappings, values);
-        const out = this.cell();
-        this.add(out, { kind: 'soup', elems: values });
-        return out;
-      }
-      default:
-        return this.opSite(name, argCell);
+  private requireBound(name: string, scope: Scope): void {
+    if (get(scope, name) === undefined) {
+      throw new EffectfulYamlError(`undefined reference: ${name}`);
     }
   }
 
@@ -427,25 +570,44 @@ class Checker {
   }
 
   /**
-   * ハンドラ。節の演算名を記録し、引数プールを節の関数に適用して、
+   * ハンドラ。節のキーをスコープで解決し、届いた演算ごとにその引数プールを節の関数に適用して、
    * 節の結果とハンドラ本体の値を Res に合流させる。
+   * ローカル作用の宣言は宣言位置ごとの演算の原子を作り、その名前を本体のスコープに束縛する。
    */
   private handle(node: Extract<KNode, { k: 'handle' }>, scope: Scope): Cell {
     const res = this.cell();
-    const walkClause = (c: Clause): void => {
-      this.clauseNames.add(c.op);
+    const enclosing = this.currentFn;
+    let bodyScope = scope;
+    for (const c of node.clauses) {
+      const ops = this.clauseOps(c.key, scope);
+      if (c.key.kind === 'local') bodyScope = insert(bodyScope, c.key.name, ops);
       const saved = this.currentResume;
-      this.currentResume = { opName: c.op, res };
+      this.currentResume = { ops, res };
       const cell = this.walk(c.fn, scope);
       this.currentResume = saved;
-      this.flow(this.apply(cell, this.argPool(c.op)), res);
-    };
-    for (const c of node.clauses) walkClause(c);
+      this.listen(ops, (a) => {
+        if (a.kind !== 'op') return;
+        this.clauseNames.add(a.name);
+        this.withFn(enclosing, () => this.flow(this.apply(cell, this.argPool(a.name)), res));
+      });
+    }
     // return 節の本体に $resume は見えない。
     const ret = node.ret === undefined ? undefined : this.walk(node.ret, scope);
-    const body = this.walk(node.body, scope);
+    const body = this.walk(node.body, bodyScope);
     this.flow(ret === undefined ? body : this.apply(ret, body), res);
     return res;
+  }
+
+  /**
+   * 節のキーが解決しうる演算のセル。ローカル作用の宣言は宣言位置で一意な演算の原子になる。
+   * パスの節名も呼び出しや参照と同じく、先頭区画が環境に無ければ評価前に拒む。
+   */
+  private clauseOps(key: ClauseKey, scope: Scope): Cell {
+    if (key.kind === 'local') return this.atomCell(this.opAtom(`${key.name}@${key.spath}`));
+    this.requireBound(key.head, scope);
+    let cur = get(scope, key.head) ?? this.cell();
+    for (const seg of key.keys) cur = this.project(cur, seg);
+    return cur;
   }
 
   // --- 判定 ---
@@ -479,31 +641,26 @@ class Checker {
     return undefined;
   }
 
-  /** 文書内のどの節にも現れない（＝ホストへ渡りうる）演算の引数に、閉包が到達しうるか。 */
-  findHostViolation(): string | undefined {
-    for (const [name, pool] of this.argPools) {
-      if (name.startsWith('std.') || this.clauseNames.has(name)) continue;
-      if (this.reachesClosure(pool)) return name;
-    }
-    return undefined;
-  }
-
   /**
-   * 実装が供給されていない演算。境界の既定ハンドラの系列（失敗・パラメータ・ログ・状態）と
-   * 選択のハンドラが処理する演算、文書内の節が処理する演算、第一階の標準演算、
-   * ホストが登録した演算のいずれでもない名前を返す。
-   * 走査は演算の出現に対して全域なので、この検査も全域である。
+   * ホストの実装へ渡りうる引数に、閉包か演算の値が到達しうるか。
+   * 文書内の節が処理する演算はホストへ渡らないので除く（ホストの関数は横取りできないので
+   * 節に現れることはない）。
    */
-  findUnsuppliedOp(ops: Readonly<Record<string, unknown>>): string | undefined {
-    for (const name of this.argPools.keys()) {
-      if (IMPLICIT_OPS.has(name) || this.clauseNames.has(name)) continue;
-      if (name in ops || name in BUILTIN_OPS) continue;
-      return name;
+  findHostViolation(): { name: string; kind: 'operation' | 'function' } | undefined {
+    for (const [name, pool] of this.argPools) {
+      const kind = this.hostOps.has(name)
+        ? ('operation' as const)
+        : this.hostFns.has(name)
+          ? ('function' as const)
+          : undefined;
+      if (kind === undefined || this.clauseNames.has(name)) continue;
+      if (this.reachesNonData(pool)) return { name, kind };
     }
     return undefined;
   }
 
-  private reachesClosure(cell: Cell): boolean {
+  /** セルから到達しうる原子に、データでない値（閉包・Native・演算）があるか。 */
+  private reachesNonData(cell: Cell): boolean {
     const visited = new Set<Cell>();
     const stack = [cell];
     while (stack.length > 0) {
@@ -511,7 +668,7 @@ class Checker {
       if (visited.has(c)) continue;
       visited.add(c);
       for (const a of c.atoms) {
-        if (a.kind === 'clo') return true;
+        if (a.kind === 'clo' || a.kind === 'op' || a.kind === 'native') return true;
         if (a.kind === 'struct') stack.push(...a.fields.values());
         else stack.push(a.elems);
       }
@@ -520,30 +677,19 @@ class Checker {
   }
 }
 
-/**
- * 実装の登録を要さない演算。境界の既定ハンドラの系列が処理する 5 つと、
- * 選択のハンドラ（$std.list など）が処理する std.each である。
- * std.each がここに在るのは、選択を処理するハンドラが在るかどうかを走査では決められず、
- * 捕まえ手のない選択を評価時のエラーにすると定めたからである（言語仕様の作用境界）。
- */
-const IMPLICIT_OPS: ReadonlySet<string> = new Set([
-  'std.fail',
-  'std.param',
-  'std.log',
-  'std.get',
-  'std.set',
-  'std.each',
-]);
-
 const describePath = (p: string): string => (p === '' ? 'the document root' : p);
 
 /**
- * 文書全体の評価前の検査。自己適用を含みうる文書、ホスト演算の引数に閉包が流れうる文書、
- * 実装の供給されていない演算を含む文書を EffectfulYamlError で拒否する。
+ * 文書全体の評価前の検査。未定義の参照を含む文書、自己適用を含みうる文書、
+ * ホストの実装の引数に閉包や演算の値が流れうる文書を EffectfulYamlError で拒否する。
  */
-export function typecheck(ast: KNode, ops: Readonly<Record<string, unknown>> = {}): void {
-  const checker = new Checker();
-  checker.walk(ast, empty);
+export function typecheck(
+  ast: KNode,
+  hostOps: readonly string[] = [],
+  hostFns: readonly string[] = [],
+): void {
+  const checker = new Checker(hostOps, hostFns);
+  checker.walk(ast, checker.initialScope());
   const cycle = checker.findCycle();
   if (cycle !== undefined) {
     if (cycle.length === 1) {
@@ -558,8 +704,8 @@ export function typecheck(ast: KNode, ops: Readonly<Record<string, unknown>> = {
   }
   const host = checker.findHostViolation();
   if (host !== undefined) {
-    throw new EffectfulYamlError(`a function value cannot be passed to a host operation: $${host}`);
+    throw new EffectfulYamlError(
+      `a function value cannot be passed to a host ${host.kind}: $${host.name}`,
+    );
   }
-  const missing = checker.findUnsuppliedOp(ops);
-  if (missing !== undefined) throw new EffectfulYamlError(unhandledOpMessage(missing));
 }

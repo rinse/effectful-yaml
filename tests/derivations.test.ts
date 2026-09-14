@@ -1,14 +1,13 @@
 /**
- * 検証テスト：docs/grammar.md（草案 0.12）が定める std の派生ハンドラ
- * （$std.list / $std.mapping / $std.first / $std.state / $std.opt）の
- * 「$with と $collect への展開」を文書として書き、同じ本体を組み込みで評価した
- * 結果と比較する。
+ * 検証テスト：docs/grammar.md（草案 0.13）が定める展開を文書として書き、同じ本体を
+ * 処理系の組み込み（`std` の関数と導出形）で評価した結果と比較する。
  *
- * 仕様（grammar.md「std の派生ハンドラ」節）：
- *   実装は等価な組み込みで最適化してよいが、観測できる振る舞い（値、作用、ログの順序）は
+ * 仕様（grammar.md「std」節）：
+ *   処理系は等価な組み込みで最適化してよいが、観測できる振る舞い（値、作用、ログの順序）は
  *   展開と一致しなければならない。
  *
- * $std.list の展開との等価性は tests/eval.test.ts が固定する。
+ * 本体の閉包を受け取る関数（std.list / std.mapping / std.first / std.state）は、
+ * 仕様どおり文書の中の関数として書き、`$handler: ${名前}` の形で使う。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -35,109 +34,220 @@ function block(yaml: string, col: number): string {
 }
 
 // -----------------------------------------------------------------------------
-// 1. $std.state の展開（grammar.md「std の派生ハンドラ」節 + docs/reference/std.state.md）
+// 仕様に書かれた std の関数の値（本体の閉包を受け取る関数）
 // -----------------------------------------------------------------------------
 
-/** `$std.state: initFlow, $in: body` の展開。initFlow はフロー形式（例: "{n: 0}"）。 */
-function stateExpanded(initFlow: string, body: string): string {
-  return `
-$do:
-- $let:
-    init: ${initFlow}
-    run:
-      $in:${block(body, 8)}
-      $with:
+/** grammar.md「std.list の値」 */
+const LIST_FN = `
+$fn: run
+$body:
+  $handler:
+    std.each:
+      $fn: xs
+      $body:
+        $std.collect:
+          in: \${xs}
+          with:
+            $fn: x
+            $body:
+              $resume: \${x}
+    return:
+      $fn: x
+      $body:
+      - \${x}
+  $in: {$.run: null}
+`;
+
+/** grammar.md「std.mapping の値」 */
+const MAPPING_FN = `
+$fn: run
+$body:
+  $std.collect:
+    in:
+      $handler: \${std.list}
+      $in: {$.run: null}
+    with:
+      $fn: e
+      $body:
+      - \${e}
+    into: mapping
+`;
+
+/** grammar.md「std.state の値」（初期値と本体の閉包をとるカリー化された関数） */
+const STATE_FN = `
+$fn: [init, run]
+$body:
+  $let:
+    step:
+      $handler:
         std.get:
           $fn: name
           $body:
             $fn: s
             $body:
-              $do:
-              - $let:
-                  hits:
-                    $collect: \${s}
-                    $with:
+              $let:
+                hits:
+                  $std.collect:
+                    in: \${s}
+                    with:
                       $fn: e
                       $body:
                         $if: \${e.key == name}
                         $then:
                         - \${e.value}
                         $else: []
-              - $let:
-                  k:
-                    $resume: \${hits[0]}
-              - $.k: \${s}
+                k:
+                  $resume: \${hits[0]}
+              $in:
+                $.k: \${s}
         std.set:
           $fn: m
           $body:
             $fn: s
             $body:
-              $do:
-              - $let:
-                  empty: []
-              - $let:
-                  kept:
-                    $collect: \${s}
-                    $with:
-                      $fn: e
+              $let:
+                s2:
+                  $std.collect:
+                    in:
+                    - \${m}
+                    - \${s}
+                    with:
+                      $fn: part
                       $body:
-                        $do:
-                        - $let:
-                            dup:
-                              $collect: \${m}
-                              $with:
-                                $fn: e2
-                                $body:
-                                  $if: \${e2.key == e.key}
-                                  $then:
-                                  - null
-                                  $else: []
-                        - $if: \${dup == empty}
-                          $then:
-                          - \${e}
-                          $else: []
-                  ments:
-                    $collect: \${m}
-                    $with:
-                      $fn: e2
-                      $body:
-                      - \${e2}
-                  alle:
-                    $collect:
-                    - \${kept}
-                    - \${ments}
-                    $with:
-                      $fn: ys
-                      $body: \${ys}
-                  s2:
-                    $collect: \${alle}
-                    $with:
-                      $fn: p
-                      $body:
-                      - \${p}
-                    $into: mapping
-              - $let:
-                  k:
-                    $resume: null
-              - $.k: \${s2}
+                        $std.collect:
+                          in: \${part}
+                          with:
+                            $fn: e
+                            $body:
+                            - \${e}
+                k:
+                  $resume: null
+              $in:
+                $.k: \${s2}
         return:
           $fn: x
           $body:
             $fn: s
             $body: \${x}
-- $.run: \${init}
+      $in: {$.run: null}
+  $in:
+    $.step: \${init}
+`;
+
+/**
+ * std.first の展開（docs/reference/std.first.md）。
+ * 成功の印を持ち回る外側の `$handler` と、選択と失敗を処理する内側の `$handler` の二段。
+ * 印の持ち回りは外側がローカル作用として宣言するので、本体の std.get / std.set と衝突しない。
+ */
+/**
+ * 印を持ち回る外側の `$handler`（節は状態変換関数を返し、印はローカル作用の宣言で運ぶ）と、
+ * 選択と失敗を処理する内側の `$handler` の二段。値は初期値 false を渡して得る。
+ */
+const FIRST_STEP = `
+$handler:
+  taken:
+    $fn: _
+    $body:
+      $fn: t
+      $body:
+        $let:
+          k:
+            $resume: \${t}
+        $in:
+          $.k: \${t}
+  mark:
+    $fn: _
+    $body:
+      $fn: t
+      $body:
+        $let:
+          k:
+            $resume: null
+        $in:
+          $.k: true
+  return:
+    $fn: x
+    $body:
+      $fn: t
+      $body: \${x}
+$in:
+  $handler:
+    std.each:
+      $fn: xs
+      $body:
+        $std.collect:
+          in: \${xs}
+          with:
+            $fn: x
+            $body:
+              $if: {$.taken: null}
+              $then: []
+              $else:
+                $resume: \${x}
+    std.fail:
+      $fn: _
+      $body: []
+    return:
+      $fn: x
+      $body:
+        $do:
+        - {$.mark: null}
+        - - \${x}
+  $in: {$.run: null}
+`;
+
+const FIRST_FN = `
+$fn: run
+$body:
+  $let:
+    step:${block(FIRST_STEP, 6)}
+    results: {$.step: false}
+  $in: \${results[0]}
+`;
+
+/** 仕様の関数を `名前` に束縛して、`$handler: ${名前}` の下で本体を評価する文書。 */
+function viaFn(name: string, fn: string, body: string): string {
+  return `
+$let:
+  ${name}:${block(fn, 4)}
+$in:
+  $handler: \${${name}}
+  $in:${block(body, 4)}
 `;
 }
 
-/** 組み込みの `$std.state: initFlow, $in: body`。 */
-function stateBuiltin(initFlow: string, body: string): string {
+/** 組み込みの `$handler: ${std.名前}` の下で本体を評価する文書。 */
+function viaBuiltin(name: string, body: string): string {
   return `
-$std.state: ${initFlow}
+$handler: \${std.${name}}
 $in:${block(body, 2)}
 `;
 }
 
-describe('$std.state の展開との等価性', () => {
+// -----------------------------------------------------------------------------
+// 1. std.state
+// -----------------------------------------------------------------------------
+
+/** 仕様の std.state を束縛し、部分適用 `{$.myState: 初期値}` を `$handler` の式に置く。 */
+function stateExpanded(initFlow: string, body: string): string {
+  return `
+$let:
+  myState:${block(STATE_FN, 4)}
+$in:
+  $handler: {$.myState: ${initFlow}}
+  $in:${block(body, 4)}
+`;
+}
+
+/** 組み込みの `$handler: {$std.state: 初期値}`。 */
+function stateBuiltin(initFlow: string, body: string): string {
+  return `
+$handler: {$std.state: ${initFlow}}
+$in:${block(body, 2)}
+`;
+}
+
+describe('std.state の展開との等価性', () => {
   it('get / set / get の並びが一致する', async () => {
     const body = `
 $do:
@@ -176,28 +286,30 @@ $do:
     await expect(run(stateBuiltin('{}', body))).rejects.toThrow();
   });
 
-  it('$std.opt の内側に $std.state を置けば捕まり、逆の入れ子では捕まらない（組み込み、std.get.md）', async () => {
-    // 未初期化セルの失敗は $std.state の展開の節の本体（${hits[0]}）が起こすので、
-    // 状態のハンドラより「外側」でしか捕まらない（$with の規則）。
+  it('状態のハンドラの外側に置いた $default は捕まえ、内側では捕まえない（std.get.md）', async () => {
+    // 未初期化セルの失敗は std.state の展開の節の本体（${hits[0]}）が起こすので、
+    // 状態のハンドラより「外側」でしか捕まらない（$handler の規則）。
     await expect(
       run(`
-$std.opt:
-  $std.state: {}
-  $in: {$std.get: nope}
+$handler: {$std.state: {}}
+$in: {$std.get: nope}
+$default: null
 `),
     ).resolves.toBe(null);
     await expect(
       run(`
-$std.state: {}
+$handler: {$std.state: {}}
 $in:
-  $std.opt: {$std.get: nope}
+  $std.get: nope
+  $default: null
 `),
     ).rejects.toThrow('failure: uninitialized cell: nope');
   });
 
-  it('貫流（展開した state で $std.list を包む）が組み込みの貫流と一致する', async () => {
+  it('貫流（展開した state で std.list を包む）が組み込みの貫流と一致する', async () => {
     const inner = `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $std.set: {n: 10}
   - $let:
@@ -213,7 +325,7 @@ $std.list:
     expect(builtin).toEqual(['a10', 'b11']);
   });
 
-  it('分岐点で分かれる（$std.list の内側に展開した state を置く）が組み込みと一致する', async () => {
+  it('分岐点で分かれる（std.list の内側に展開した state を置く）が組み込みと一致する', async () => {
     const inner = `
 $do:
 - $std.set: {n: 10}
@@ -225,12 +337,12 @@ $do:
 - \${x}\${i}
 `;
     const expanded = await run(`
-$std.list:${block(stateExpanded('{n: 0}', inner), 2)}
+$handler: \${std.list}
+$in:${block(stateExpanded('{n: 0}', inner), 2)}
 `);
     const builtin = await run(`
-$std.list:
-  $std.state: {n: 0}
-  $in:${block(inner, 4)}
+$handler: \${std.list}
+$in:${block(stateBuiltin('{n: 0}', inner), 2)}
 `);
     expect(expanded).toEqual(builtin);
     expect(builtin).toEqual(['a10', 'b10']);
@@ -238,47 +350,63 @@ $std.list:
 });
 
 // -----------------------------------------------------------------------------
-// 2. $std.mapping の展開（grammar.md「std の派生ハンドラ」節）
+// 2. std.list
 // -----------------------------------------------------------------------------
 
-function mappingExpanded(body: string): string {
-  return `
-$in:${block(body, 2)}
-$with:
-  std.each:
-    $fn: xs
-    $body:
-      $collect: \${xs}
-      $into: mapping
-      $with:
-        $fn: x
-        $body:
-          $collect:
-            $resume: \${x}
-          $with:
-            $fn: p
-            $body:
-            - \${p}
-  return:
-    $fn: x
-    $body:
-      $collect:
-      - \${x}
-      $with:
-        $fn: p
-        $body:
-        - \${p}
-      $into: mapping
+describe('std.list の展開との等価性', () => {
+  it('二重の選択の全分岐が文書順に並ぶ', async () => {
+    const body = `
+$do:
+- $let:
+    x: {$std.each: [1, 2]}
+    y: {$std.each: [10, 20]}
+- \${x + y}
 `;
-}
+    const expanded = await run(viaFn('myList', LIST_FN, body));
+    const builtin = await run(viaBuiltin('list', body));
+    expect(expanded).toEqual(builtin);
+    expect(builtin).toEqual([11, 21, 12, 22]);
+  });
 
-function mappingBuiltin(body: string): string {
-  return `
-$std.mapping:${block(body, 2)}
+  it('内側に選択がなければ要素 1 のリストになる', async () => {
+    const body = '42';
+    expect(await run(viaFn('myList', LIST_FN, body))).toEqual([42]);
+    expect(await run(viaBuiltin('list', body))).toEqual([42]);
+  });
+
+  it('$std.where の打ち切りが分岐を消す（空の $std.each）', async () => {
+    const body = `
+$do:
+- $for:
+    x: [1, 2, 3, 4]
+- $std.where: \${x % 2 == 0}
+- \${x}
 `;
-}
+    const expanded = await run(viaFn('myList', LIST_FN, body));
+    const builtin = await run(viaBuiltin('list', body));
+    expect(expanded).toEqual(builtin);
+    expect(builtin).toEqual([2, 4]);
+  });
 
-describe('$std.mapping の展開との等価性', () => {
+  it('分岐の中の失敗は節にないので全体の失敗として伝播する', async () => {
+    const body = `
+$do:
+- $for:
+    x: [1, 2]
+- $if: \${x == 2}
+  $then: {$std.fail: boom}
+  $else: \${x}
+`;
+    await expect(run(viaFn('myList', LIST_FN, body))).rejects.toThrow(/boom/);
+    await expect(run(viaBuiltin('list', body))).rejects.toThrow(/boom/);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// 3. std.mapping
+// -----------------------------------------------------------------------------
+
+describe('std.mapping の展開との等価性', () => {
   it('grammar.md の svc- 用例（std.each によるマッピングの分解と組み立て）が一致する', async () => {
     const body = `
 $do:
@@ -287,10 +415,11 @@ $do:
 - key: svc-\${e.key}
   value: \${e.value}
 `;
-    const expanded = await run(mappingExpanded(body));
-    const builtin = await run(mappingBuiltin(body));
+    const expanded = await run(viaFn('myMapping', MAPPING_FN, body));
+    const builtin = await run(viaBuiltin('mapping', body));
     expect(expanded).toEqual(builtin);
     expect(builtin).toEqual({ 'svc-web': 80, 'svc-db': 5432 });
+    expect(Object.keys(expanded as object)).toEqual(['svc-web', 'svc-db']);
   });
 
   it('$std.where によるエントリの省略が一致する', async () => {
@@ -302,8 +431,8 @@ $do:
 - key: \${e.key}
   value: \${e.value}
 `;
-    const expanded = await run(mappingExpanded(body));
-    const builtin = await run(mappingBuiltin(body));
+    const expanded = await run(viaFn('myMapping', MAPPING_FN, body));
+    const builtin = await run(viaBuiltin('mapping', body));
     expect(expanded).toEqual(builtin);
     expect(builtin).toEqual({ web: 80, db: 5432 });
   });
@@ -316,178 +445,17 @@ $do:
 - key: dup
   value: \${e}
 `;
-    await expect(run(mappingExpanded(body))).rejects.toThrow();
-    await expect(run(mappingBuiltin(body))).rejects.toThrow();
+    await expect(run(viaFn('myMapping', MAPPING_FN, body))).rejects.toThrow();
+    await expect(run(viaBuiltin('mapping', body))).rejects.toThrow();
   });
 });
 
 // -----------------------------------------------------------------------------
-// 3. $std.opt の展開（docs/reference/std.opt.md）
+// 4. std.first
 // -----------------------------------------------------------------------------
 
-function optExpanded(body: string): string {
-  return `
-$in:${block(body, 2)}
-$with:
-  std.fail:
-    $fn: _
-    $body: null
-`;
-}
-
-// 打ち切りの定型 {$std.opt: 式, $default: {$std.where: false}} の展開。
-function cutExpanded(body: string): string {
-  return `
-$in:${block(body, 2)}
-$with:
-  std.fail:
-    $fn: _
-    $body: {$std.where: false}
-`;
-}
-
-describe('$std.opt の展開との等価性', () => {
-  it('欠落するデータの除外（grammar.md 用例）が打ち切りの定型の展開と一致する', async () => {
-    const builtin = await run(`
-$std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-        - {date: d3, code: c3}
-  - date: \${row.date}
-    code:
-      $std.opt: \${row.code}
-      $default: {$std.where: false}
-`);
-    const expanded = await run(`
-$std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-        - {date: d3, code: c3}
-  - date: \${row.date}
-    code:
-      $in: \${row.code}
-      $with:
-        std.fail:
-          $fn: _
-          $body: {$std.where: false}
-`);
-    expect(expanded).toEqual(builtin);
-    expect(builtin).toEqual([
-      { date: 'd1', code: 'c1' },
-      { date: 'd3', code: 'c3' },
-    ]);
-  });
-
-  it('$std.first の中で使った打ち切りの定型も、外側の選択のハンドラまで打ち切りが届く', async () => {
-    // row が {} の分岐は $default が std.where:false に翻訳し、$std.opt 自身ではなく
-    // 外側（ここでは $std.first）で処理されるので、その分岐が消えて次の候補に進む。
-    const builtin = await run(`
-$std.first:
-  $do:
-  - $let:
-      row: {$std.each: [{}, {code: c3}]}
-  - $std.opt: \${row.code}
-    $default: {$std.where: false}
-`);
-    const expanded = await run(`
-$std.first:
-  $do:
-  - $let:
-      row: {$std.each: [{}, {code: c3}]}
-  - $in: \${row.code}
-    $with:
-      std.fail:
-        $fn: _
-        $body: {$std.where: false}
-`);
-    expect(expanded).toEqual(builtin);
-    expect(builtin).toBe('c3');
-  });
-
-  it('失敗しない本体では $std.opt は素通しになる', async () => {
-    expect(await run('{$std.opt: 5}')).toBe(5);
-    expect(await run(optExpanded('5'))).toBe(5);
-    // 打ち切りの定型は $default が std.where を含むので、選択のハンドラ
-    // （ここでは $std.list）の内側で素通しを確かめる。
-    expect(await run('{$std.list: {$std.opt: 5, $default: {$std.where: false}}}')).toEqual([5]);
-    expect(await run(`$std.list:${block(cutExpanded('5'), 2)}`)).toEqual([5]);
-  });
-});
-
-// -----------------------------------------------------------------------------
-// 4. $std.first の展開（docs/reference/std.first.md の関数による実装を、名前空間つきの私的な演算で書いたもの）
-// -----------------------------------------------------------------------------
-
-function firstExpanded(body: string): string {
-  return `
-$do:
-- $let:
-    run:
-      $in:
-        $in:${block(body, 10)}
-        $with:
-          std.each:
-            $fn: xs
-            $body:
-              $collect: \${xs}
-              $with:
-                $fn: x
-                $body:
-                  $if: {$first.taken: null}
-                  $then: []
-                  $else:
-                    $resume: \${x}
-          std.fail:
-            $fn: _
-            $body: []
-          return:
-            $fn: x
-            $body:
-              $do:
-              - {$first.mark: null}
-              - - \${x}
-      $with:
-        first.taken:
-          $fn: _
-          $body:
-            $fn: t
-            $body:
-              $do:
-              - $let:
-                  k:
-                    $resume: \${t}
-              - $.k: \${t}
-        first.mark:
-          $fn: _
-          $body:
-            $fn: t
-            $body:
-              $do:
-              - $let:
-                  k:
-                    $resume: null
-              - $.k: true
-        return:
-          $fn: x
-          $body:
-            $fn: t
-            $body: \${x}
-- $let:
-    results: {$.run: false}
-- \${results[0]}
-`;
-}
-
-describe('$std.first の展開との等価性', () => {
-  it('grammar.md 参照文書の用例（パラメータ未渡しで info に落ちる）が一致する', async () => {
+describe('std.first の展開との等価性', () => {
+  it('参照文書の用例（パラメータ未渡しで info に落ちる）が一致する', async () => {
     const body = `
 $do:
 - $let:
@@ -495,8 +463,8 @@ $do:
 - $std.where: \${v != null}
 - \${v}
 `;
-    const expanded = await run(firstExpanded(body));
-    const builtin = await run(`$std.first:${block(body, 2)}`);
+    const expanded = await run(viaFn('myFirst', FIRST_FN, body));
+    const builtin = await run(viaBuiltin('first', body));
     expect(expanded).toEqual(builtin);
     expect(builtin).toBe('info');
   });
@@ -525,8 +493,10 @@ $do:
 `;
     const expandedLogs: Value[] = [];
     const builtinLogs: Value[] = [];
-    const expanded = await run(firstExpanded(body), { onLog: (v) => expandedLogs.push(v) });
-    const builtin = await run(`$std.first:${block(body, 2)}`, { onLog: (v) => builtinLogs.push(v) });
+    const expanded = await run(viaFn('myFirst', FIRST_FN, body), {
+      onLog: (v) => expandedLogs.push(v),
+    });
+    const builtin = await run(viaBuiltin('first', body), { onLog: (v) => builtinLogs.push(v) });
     expect(expanded).toEqual(builtin);
     expect(builtin).toBe(2);
     expect(expandedLogs).toEqual(['reached-2']);
@@ -540,19 +510,139 @@ $do:
     v: {$std.each: [1, 2]}
 - $std.fail: nope
 `;
-    await expect(run(firstExpanded(body))).rejects.toThrow();
-    await expect(run(`$std.first:${block(body, 2)}`)).rejects.toThrow();
+    await expect(run(viaFn('myFirst', FIRST_FN, body))).rejects.toThrow();
+    await expect(run(viaBuiltin('first', body))).rejects.toThrow();
   });
 });
 
 // -----------------------------------------------------------------------------
-// 5. $std.where の展開（grammar.md「打ち切りの導出形 $std.where」節）
+// 5. $default（grammar.md「$default」節）
+//   {主形 ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 私的名, $body: 式}}, $in: 主形}
 // -----------------------------------------------------------------------------
 
-describe('$std.where の展開との等価性', () => {
+describe('$default の展開との等価性', () => {
+  it('失敗を既定値に置き換える形が literal な std.fail の節と一致する', async () => {
+    const sugar = await run(`
+$do:
+- $let:
+    m: {}
+- $std.lookup: {in: "\${m}", key: nope}
+  $default: fallback
+`);
+    const expanded = await run(`
+$do:
+- $let:
+    m: {}
+- $handler:
+    std.fail: {$fn: _, $body: fallback}
+  $in:
+    $std.lookup: {in: "\${m}", key: nope}
+`);
+    expect(sugar).toEqual(expanded);
+    expect(sugar).toBe('fallback');
+  });
+
+  it('打ち切りの定型（$default に $std.where: false）が展開と一致する', async () => {
+    const rows = `
+  row:
+  - {date: d1, code: c1}
+  - {date: d2}
+  - {date: d3, code: c3}
+`;
+    const sugar = await run(`
+$handler: \${std.list}
+$for:${rows}date: \${row.date}
+code:
+  $std.lookup: {in: "\${row}", key: code}
+  $default: {$std.where: false}
+`);
+    const expanded = await run(`
+$handler: \${std.list}
+$for:${rows}date: \${row.date}
+code:
+  $handler:
+    std.fail:
+      $fn: _
+      $body: {$std.where: false}
+  $in:
+    $std.lookup: {in: "\${row}", key: code}
+`);
+    expect(sugar).toEqual(expanded);
+    expect(sugar).toEqual([
+      { date: 'd1', code: 'c1' },
+      { date: 'd3', code: 'c3' },
+    ]);
+  });
+
+  it('std.first の中で使った打ち切りの定型も、外側の選択のハンドラまで打ち切りが届く', async () => {
+    // row が {} の分岐は $default の {$std.where: false} が失敗を打ち切りに変える。
+    // 打ち切りは選択なので $default 自身のハンドラでは処理されず、外側（std.first）に届く。
+    const sugar = await run(`
+$handler: \${std.first}
+$in:
+  $do:
+  - $let:
+      row: {$std.each: [{}, {code: c3}]}
+  - $std.lookup: {in: "\${row}", key: code}
+    $default: {$std.where: false}
+`);
+    const expanded = await run(`
+$handler: \${std.first}
+$in:
+  $do:
+  - $let:
+      row: {$std.each: [{}, {code: c3}]}
+  - $handler:
+      std.fail:
+        $fn: _
+        $body: {$std.where: false}
+    $in:
+      $std.lookup: {in: "\${row}", key: code}
+`);
+    expect(expanded).toEqual(sugar);
+    expect(sugar).toBe('c3');
+  });
+
+  it('本体が失敗しなければ $default は素通しであり、その作用も起きない', async () => {
+    const logs: Value[] = [];
+    const sugar = await run(
+      `
+$do:
+- $let:
+    m: {a: 5}
+- $std.lookup: {in: "\${m}", key: a}
+  $default:
+    $do:
+    - $std.log: evaluated
+    - 0
+`,
+      { onLog: (v) => logs.push(v) },
+    );
+    expect(sugar).toBe(5);
+    expect(logs).toEqual([]);
+  });
+
+  it('$default の式は $ 式の外側にあるので、頭が導入する束縛を見られない', async () => {
+    await expect(
+      run(`
+$let:
+  x: 1
+$in: {$std.fail: boom}
+$default: \${x}
+`),
+    ).rejects.toThrow('undefined reference: x');
+  });
+});
+
+// -----------------------------------------------------------------------------
+// 6. std.where（grammar.md「std.where」節）
+// -----------------------------------------------------------------------------
+
+describe('std.where の展開との等価性', () => {
   it('ガードが {$if: 条件, $then: null, $else: {$std.each: []}} と一致する', async () => {
     const sugar = await run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2, 3, 4]}
@@ -560,7 +650,8 @@ $std.list:
   - \${x}
 `);
     const expanded = await run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2, 3, 4]}
@@ -574,34 +665,35 @@ $std.list:
   });
 
   it('条件が真のときの値はどちらも null である', async () => {
-    expect(await run('{$std.list: {$std.where: true}}')).toEqual([null]);
-    expect(await run('{$std.list: {$if: true, $then: null, $else: {$std.each: []}}}')).toEqual([
-      null,
-    ]);
+    expect(await run('{$handler: "${std.list}", $in: {$std.where: true}}')).toEqual([null]);
+    expect(
+      await run('{$handler: "${std.list}", $in: {$if: true, $then: null, $else: {$std.each: []}}}'),
+    ).toEqual([null]);
   });
 });
 
 // -----------------------------------------------------------------------------
-// 6. fold の導出（$collect + $std.state、grammar.md「std の派生ハンドラ」節）
+// 7. fold の導出（std.collect + std.state、grammar.md「std.collect」節）
 // -----------------------------------------------------------------------------
 
-describe('fold の導出（$collect + $std.state）', () => {
+describe('fold の導出（std.collect + std.state）', () => {
   it('[3, 1, 4, 1, 5] の総和が 14 になる', async () => {
     await expect(
       run(`
-$std.state: {acc: 0}
+$handler: {$std.state: {acc: 0}}
 $in:
   $do:
-  - $collect: [3, 1, 4, 1, 5]
-    $with:
-      $fn: x
-      $body:
-        $do:
-        - $let:
-            a: {$std.get: acc}
-        - $std.set:
-            acc: \${a + x}
-        - []
+  - $std.collect:
+      in: [3, 1, 4, 1, 5]
+      with:
+        $fn: x
+        $body:
+          $do:
+          - $let:
+              a: {$std.get: acc}
+          - $std.set:
+              acc: \${a + x}
+          - []
   - {$std.get: acc}
 `),
     ).resolves.toBe(14);
@@ -609,7 +701,7 @@ $in:
 });
 
 // -----------------------------------------------------------------------------
-// 7. $fn の列（カリー化の導出形、grammar.md「引数名の列と部分適用」節）
+// 8. $fn の列（カリー化の導出形、grammar.md「引数名の列と部分適用」節）
 // -----------------------------------------------------------------------------
 
 describe('$fn の列のカリー化展開', () => {
@@ -674,27 +766,31 @@ $do:
 });
 
 // -----------------------------------------------------------------------------
-// 8. $std.lookup の展開（grammar.md「計算したキーの照会 $std.lookup」節）
+// 9. std.lookup の展開（grammar.md「std.lookup」節）
 // -----------------------------------------------------------------------------
 
-/** `{$std.lookup: {in: inFlow, key: keyScalar}}` の展開。inFlow はフロー形式（例: "{a: 1}"）。 */
+/** grammar.md「std.lookup の値」に引数を渡した形。inFlow はフロー形式（例: "{a: 1}"）。 */
 function lookupExpanded(inFlow: string, keyScalar: string): string {
   return `
-$do:
-- $let:
-    m: ${inFlow}
-    k: ${keyScalar}
-- $std.first:
-    $do:
-    - $let:
-        e:
-          $std.each: \${m}
-    - $std.where: \${e.key == k}
-    - \${e.value}
+$let:
+  myLookup:
+    $fn: arg
+    $body:
+      $handler: \${std.first}
+      $in:
+        $do:
+        - $for:
+            e: \${arg.in}
+        - $std.where: \${e.key == arg.key}
+        - \${e.value}
+$in:
+  $.myLookup:
+    in: ${inFlow}
+    key: ${keyScalar}
 `;
 }
 
-describe('$std.lookup の展開との等価性', () => {
+describe('std.lookup の展開との等価性', () => {
   it('キーが在れば、展開と組み込みが同じ値になる', async () => {
     const expanded = await run(lookupExpanded('{a: 1, b: 2}', 'b'));
     const builtin = await run(`
@@ -717,16 +813,14 @@ $std.lookup:
     ).rejects.toThrow(/failure: missing key 'x'/);
   });
 
-  it('無いキーの失敗は、展開も組み込みも $std.opt の $default で同じ既定値になる', async () => {
-    const expanded = await run(`
-$std.opt:${block(lookupExpanded('{a: 1}', 'x'), 2)}
+  it('無いキーの失敗は、展開も組み込みも $default で同じ既定値になる', async () => {
+    const expanded = await run(`${lookupExpanded('{a: 1}', 'x').trim()}
 $default: fallback
 `);
     const builtin = await run(`
-$std.opt:
-  $std.lookup:
-    in: {a: 1}
-    key: x
+$std.lookup:
+  in: {a: 1}
+  key: x
 $default: fallback
 `);
     expect(expanded).toBe('fallback');
@@ -735,16 +829,15 @@ $default: fallback
 });
 
 // -----------------------------------------------------------------------------
-// 9. $do の文に置いた文脈の導入の展開（grammar.md「$do」）
-//   {$do: [{$std.state: 初期値}, 残り...]} ≡ {$std.state: 初期値, $in: {$do: [残り...]}}
-//   {$do: [{$with: 節}, 残り...]}          ≡ {$in: {$do: [残り...]}, $with: 節}
+// 10. $do の文に置いた文脈の導入の展開（grammar.md「$do」）
+//   {$do: [{$handler: 式}, 残り...]} ≡ {$handler: 式, $in: {$do: [残り...]}}
 // -----------------------------------------------------------------------------
 
 describe('$do の文に置いた文脈の導入の展開との等価性', () => {
-  it('$in を省いた $with は残りの文を包む $with と一致する（値もログの順序も）', async () => {
+  it('$in を省いた $handler は残りの文を包む $handler と一致する（値もログの順序も）', async () => {
     const statement = `
 $do:
-- $with:
+- $handler:
     std.fail:
       $fn: m
       $body:
@@ -755,17 +848,17 @@ $do:
 - {$std.fail: boom}
 `;
     const expanded = `
-$in:
-  $do:
-  - $std.log: before
-  - {$std.fail: boom}
-$with:
+$handler:
   std.fail:
     $fn: m
     $body:
       $do:
       - $std.log: 'caught: \${m}'
       - recovered
+$in:
+  $do:
+  - $std.log: before
+  - {$std.fail: boom}
 `;
     const logsA: Value[] = [];
     const logsB: Value[] = [];
@@ -777,13 +870,14 @@ $with:
     expect(logsA).toEqual(['before', 'caught: boom']);
   });
 
-  it('$in を省いた $std.state は、残りの文を $in に書いた形と一致する（初期値は文の位置で評価される）', async () => {
+  it('$in を省いた std.state のハンドラは、残りの文を $in に書いた形と一致する（初期値は文の位置で評価される）', async () => {
     const statement = `
 $do:
 - $let:
     base: 41
-- $std.state:
-    n: \${base}
+- $handler:
+    $std.state:
+      n: \${base}
 - $let:
     v: {$std.get: n}
 - \${v + 1}
@@ -792,8 +886,9 @@ $do:
 $do:
 - $let:
     base: 41
-- $std.state:
-    n: \${base}
+- $handler:
+    $std.state:
+      n: \${base}
   $in:
     $do:
     - $let:
@@ -807,52 +902,51 @@ $do:
 });
 
 // -----------------------------------------------------------------------------
-// 10. $std.merge の展開（grammar.md「マッピングのマージ $std.merge」節）
+// 11. std.merge の展開（grammar.md「std.merge」節）
 //   値は後勝ち、キーの位置は初出。a 側は自分のキーをその位置のまま並べ、b に同じキーが
 //   在ればその値で差し替える。b 側は a に無いキーだけを後ろに足す。
 // -----------------------------------------------------------------------------
 
-describe('$std.merge の展開との等価性', () => {
+describe('std.merge の展開との等価性', () => {
   it('後勝ち・初出の位置（grammar.md 用例）が展開と一致する（キー順まで）', async () => {
     const expanded = await run(`
 $let:
   a: {b: 2, a: 1, keep: base}
   b: {b: 9, c: 3}
+$handler: \${std.mapping}
 $in:
-  $std.mapping:
-    $do:
-    - $let:
-        phase:
-          $std.each: [0, 1]
-        src:
-          $if: \${phase == 0}
-          $then: \${a}
-          $else: \${b}
-        e:
-          $std.each: \${src}
-        fresh:
-          $if: \${phase == 0}
-          $then: true
-          $else:
-            $std.opt:
-              $let:
-                _:
-                  $std.lookup:
-                    in: \${a}
-                    key: \${e.key}
-              $in: false
-            $default: true
-    - $std.where: \${fresh}
-    - key: \${e.key}
-      value:
+  $do:
+  - $for:
+      phase: [0, 1]
+  - $let:
+      src:
         $if: \${phase == 0}
-        $then:
-          $std.opt:
-            $std.lookup:
-              in: \${b}
-              key: \${e.key}
-          $default: \${e.value}
-        $else: \${e.value}
+        $then: \${a}
+        $else: \${b}
+  - $for:
+      e: \${src}
+  - $let:
+      fresh:
+        $if: \${phase == 0}
+        $then: true
+        $else:
+          $let:
+            _:
+              $std.lookup:
+                in: \${a}
+                key: \${e.key}
+          $in: false
+          $default: true
+  - $std.where: \${fresh}
+  - key: \${e.key}
+    value:
+      $if: \${phase == 0}
+      $then:
+        $std.lookup:
+          in: \${b}
+          key: \${e.key}
+        $default: \${e.value}
+      $else: \${e.value}
 `);
     const builtin = await run(`
 $let:
@@ -871,34 +965,48 @@ $in:
 });
 
 // -----------------------------------------------------------------------------
-// 11. $std.for の展開（grammar.md「文脈の導入」節、std.for は束縛の右辺を std.each で包む）
-//   {$std.for: 束縛} ∪ 残り ≡ {$let: {束縛の各右辺を std.each で包んだもの}} ∪ 残り
+// 12. $for の展開（grammar.md「$for」節）
+//   {$for: {x: 式}} ∪ 残り ≡ {$let: {x: {$std.each: 式}}} ∪ 残り
 // -----------------------------------------------------------------------------
 
-describe('$std.for の展開との等価性', () => {
+describe('$for の展開との等価性', () => {
   it('後の束縛が先の束縛の選んだ要素を見る（entry/label の flatMap）が一致する', async () => {
     const sugar = await run(`
-$std.list:
-  $let:
-    forms:
-      a: [1, 2]
-      b: [3]
-  $std.for:
-    entry: \${forms}
-    label: \${entry.value}
-  $in: \${entry.key}\${label}
+$handler: \${std.list}
+$let:
+  forms:
+    a: [1, 2]
+    b: [3]
+$for:
+  entry: \${forms}
+  label: \${entry.value}
+$in: \${entry.key}\${label}
 `);
     const expanded = await run(`
-$std.list:
-  $let:
-    forms:
-      a: [1, 2]
-      b: [3]
-    entry: {$std.each: "\${forms}"}
-    label: {$std.each: "\${entry.value}"}
-  $in: \${entry.key}\${label}
+$handler: \${std.list}
+$let:
+  forms:
+    a: [1, 2]
+    b: [3]
+  entry: {$std.each: "\${forms}"}
+  label: {$std.each: "\${entry.value}"}
+$in: \${entry.key}\${label}
 `);
     expect(sugar).toEqual(expanded);
     expect(sugar).toEqual(['a1', 'a2', 'b3']);
+  });
+
+  it('展開の $std.each は展開先の環境で解決するので、std を隠せば $for もそれに従う', async () => {
+    await expect(
+      run(`
+$handler: \${std.list}
+$in:
+  $let:
+    std: {each: "\${std.each}"}
+  $for:
+    x: [1, 2]
+  $in: \${x}
+`),
+    ).resolves.toEqual([1, 2]);
   });
 });

@@ -5,7 +5,7 @@ import { parse } from 'yaml';
 import { evaluate, type EvaluateOptions } from './eval.js';
 import type { Value } from './types.js';
 
-export { evaluate, type EvaluateOptions } from './eval.js';
+export { evaluate, type EvaluateOptions, type HostImpl } from './eval.js';
 export { EffectfulYamlError, OperationFailure, type Value } from './types.js';
 export { renderPreserving } from './preserve.js';
 

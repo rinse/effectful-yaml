@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { evalExpr, interpolate, MissingPathError } from '../src/expr.js';
-import { EffectfulYamlError, emptyEnv, extendEnv, type Env, type Value } from '../src/types.js';
+import { evalExpr, interpolate, MissingPathError, referencedNames } from '../src/expr.js';
+import {
+  EffectfulYamlError,
+  emptyEnv,
+  extendEnv,
+  Native,
+  Operation,
+  pure,
+  type Env,
+  type Value,
+} from '../src/types.js';
 
 function envOf(vars: Record<string, Value>): Env {
   let env = emptyEnv;
@@ -83,6 +92,32 @@ describe('evalExpr: comparison', () => {
     expect(evalExpr('xs == zs', env)).toBe(false);
     expect(evalExpr('xs != zs', env)).toBe(true);
     expect(evalExpr('m1 == m2', env)).toBe(true);
+  });
+});
+
+describe('evalExpr: functions and operations are not comparable', () => {
+  const env = envOf({
+    f: new Native('host.f', () => pure(null)),
+    e: new Operation('std.each'),
+    n: 1,
+  });
+
+  it('== and != reject a function value on either side', () => {
+    expect(() => evalExpr('f == f', env)).toThrow(
+      "'==' cannot compare a function or operation value, got: <function>",
+    );
+    expect(() => evalExpr('n != f', env)).toThrow(
+      "'!=' cannot compare a function or operation value, got: <function>",
+    );
+  });
+
+  it('== and != reject an operation value, naming the operation', () => {
+    expect(() => evalExpr('e == e', env)).toThrow(
+      "'==' cannot compare a function or operation value, got: <operation std.each>",
+    );
+    expect(() => evalExpr('e != n', env)).toThrow(
+      "'!=' cannot compare a function or operation value, got: <operation std.each>",
+    );
   });
 });
 
@@ -169,6 +204,16 @@ describe('interpolate', () => {
     expect(() => interpolate('x=${n}!', envOf({ n: null }))).toThrow(EffectfulYamlError);
   });
 
+  it('errors stringifying functions and operations in partial interpolation', () => {
+    const f = new Native('host.f', () => pure(null));
+    const env = envOf({ f, e: new Operation('std.each') });
+    const message = 'cannot interpolate a list, mapping, null, function, or operation value into a string';
+    expect(() => interpolate('x=${f}!', env)).toThrow(message);
+    expect(() => interpolate('x=${e}!', env)).toThrow(message);
+    // 文字列化を通らない「全体がちょうど一つの ${式}」は値そのものなので通る。
+    expect(interpolate('${f}', env)).toBe(f);
+  });
+
   it('handles $$ escaping to a literal $, including multiple occurrences', () => {
     expect(interpolate('costs $$5', emptyEnv)).toBe('costs $5');
     expect(interpolate('$$5 and $$10', emptyEnv)).toBe('$5 and $10');
@@ -177,5 +222,36 @@ describe('interpolate', () => {
 
   it('leaves $${x} as a literal string per the left-to-right scan rule', () => {
     expect(interpolate('$${x}', envOf({ x: 1 }))).toBe('${x}');
+  });
+});
+
+describe('referencedNames', () => {
+  it('returns the head segment of every ${...} in document order', () => {
+    expect(referencedNames('${a.b} ${xs[0]}')).toEqual(['a', 'xs']);
+    expect(referencedNames('item-${n}/${obj.a.b[2].c}')).toEqual(['n', 'obj']);
+  });
+
+  it('descends into operators, not just bare references', () => {
+    expect(referencedNames('${a + b * c}')).toEqual(['a', 'b', 'c']);
+    expect(referencedNames('${!flag}')).toEqual(['flag']);
+    expect(referencedNames('${x == 1 || y > 2}')).toEqual(['x', 'y']);
+  });
+
+  it('returns nothing for scalars without references', () => {
+    expect(referencedNames('just a plain string')).toEqual([]);
+    expect(referencedNames("${'literal' + 1}")).toEqual([]);
+    // true / false / null は参照ではなくリテラル。
+    expect(referencedNames('${true && false}')).toEqual([]);
+  });
+
+  it('treats $$ as an escape, so $${x} names nothing', () => {
+    expect(referencedNames('$${x}')).toEqual([]);
+    expect(referencedNames('$$${y}')).toEqual(['y']);
+  });
+
+  it('stays silent on scalars it cannot parse (the evaluator reports those)', () => {
+    expect(referencedNames('${1 +}')).toEqual([]);
+    expect(referencedNames('${x')).toEqual([]);
+    expect(referencedNames('${a} ${1 +}')).toEqual(['a']);
   });
 });

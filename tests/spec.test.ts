@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.12）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar.md（草案 0.13）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -29,41 +29,98 @@ const cases: readonly SpecCase[] = [
     expected: { greeting: 'hello' },
   },
   {
-    name: '$collect の基本形（各要素を二重にする）',
+    name: 'ハンドラの再利用（本体の閉包を受け取る関数を二つの本体に掛ける）',
     yaml: `
-$collect: [1, 2, 3]
-$with:
-  $fn: x
-  $body:
-  - \${x}
-  - \${x}
+$let:
+  fallback:
+    $fn: run
+    $body:
+      $handler:
+        std.fail: {$fn: _, $body: 0}
+      $in: {$.run: null}
+$in:
+  a:
+    $handler: \${fallback}
+    $in: {$std.lookup: {in: {}, key: missing}}
+  b:
+    $handler: \${fallback}
+    $in: 7
+`,
+    expected: { a: 0, b: 7 },
+  },
+  {
+    name: 'ローカル作用の宣言（打ち切り：caught boom）',
+    yaml: `
+$handler:
+  throw:
+    $fn: msg
+    $body: caught \${msg}
+$in:
+  $do:
+  - {$.throw: boom}
+  - never
+`,
+    expected: 'caught boom',
+  },
+  {
+    name: 'ローカル作用の宣言（入れ子のハンドラは同じ名前でも取り違えない）',
+    yaml: `
+$handler:
+  throw:
+    $fn: m
+    $body:
+      $resume: outer \${m}
+$in:
+  $do:
+  - $let:
+      up: \${throw}
+  - $handler:
+      throw:
+        $fn: m
+        $body:
+          $resume: inner \${m}
+    a: {$.throw: x}
+    b: {$.up: y}
+`,
+    expected: { a: 'inner x', b: 'outer y' },
+  },
+  {
+    name: 'std.collect の基本形（各要素を二重にする）',
+    yaml: `
+$std.collect:
+  in: [1, 2, 3]
+  with:
+    $fn: x
+    $body:
+    - \${x}
+    - \${x}
 `,
     expected: [1, 1, 2, 2, 3, 3],
   },
   {
     name: '選択の基本形（18 要素版：$in の本体が $std.each）',
     yaml: `
-$std.list:
-  $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-  $in:
-    $std.each:
-    - \${x}
-    - \${y}
+$handler: \${std.list}
+$for:
+  x: [a, b, c]
+  y: [x, y, z]
+$in:
+  $std.each:
+  - \${x}
+  - \${y}
 `,
     expected: ['a', 'x', 'a', 'y', 'a', 'z', 'b', 'x', 'b', 'y', 'b', 'z', 'c', 'x', 'c', 'y', 'c', 'z'],
   },
   {
     name: '選択の基本形（9 ペア版：$in の本体が literal なリスト）',
     yaml: `
-$std.list:
-  $let:
-    x: {$std.each: [a, b, c]}
-    y: {$std.each: [x, y, z]}
-  $in:
-  - \${x}
-  - \${y}
+$handler: \${std.list}
+$for:
+  x: [a, b, c]
+  y: [x, y, z]
+$in:
+- \${x}
+- \${y}
 `,
     expected: [
       ['a', 'x'], ['a', 'y'], ['a', 'z'],
@@ -72,33 +129,33 @@ $std.list:
     ],
   },
   {
-    name: '打ち切りつきの選択（$std.for と $std.where によるリスト内包表記）',
+    name: '打ち切りつきの選択（$for と $std.where によるリスト内包表記）',
     yaml: `
-$std.list:
-  $do:
-  - $std.for:
-      x: [1, 2, 3]
-      y: [1, 2, 3]
-  - $std.where: \${x < y}
-  - - \${x}
-    - \${y}
+$do:
+- $handler: \${std.list}
+- $for:
+    x: [1, 2, 3]
+    y: [1, 2, 3]
+- $std.where: \${x < y}
+- - \${x}
+  - \${y}
 `,
     expected: [[1, 2], [1, 3], [2, 3]],
   },
   {
-    name: '選択の束縛（$let の表を $std.for で組み替える）',
+    name: '選択の束縛（$let の表を $for で組み替える）',
     yaml: `
 $let:
   forms:
     "a{id}": [x, y]
     "b{id}": [z]
-$std.mapping:
-  $std.for:
-    entry: \${forms}
-    label: \${entry.value}
-  key: \${label}
-  value:
-    id: \${entry.key}
+$handler: \${std.mapping}
+$for:
+  entry: \${forms}
+  label: \${entry.value}
+key: \${label}
+value:
+  id: \${entry.key}
 `,
     expected: { x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } },
     expectedKeyOrder: ['x', 'y', 'z'],
@@ -121,16 +178,17 @@ server:
   {
     name: '分岐を貫く状態（連番の採番）',
     yaml: `
-$std.list:
-  $do:
-  - $std.set: {n: 0}
-  - $let:
-      name: {$std.each: [web, db, cache]}
-      id: {$std.get: n}
-  - $std.set:
-      n: \${id + 1}
-  - name: \${name}
-    id: \${id}
+$do:
+- $handler: \${std.list}
+- $std.set: {n: 0}
+- $for:
+    name: [web, db, cache]
+- $let:
+    id: {$std.get: n}
+- $std.set:
+    n: \${id + 1}
+- name: \${name}
+  id: \${id}
 `,
     expected: [
       { name: 'web', id: 0 },
@@ -141,12 +199,11 @@ $std.list:
   {
     name: 'マッピングの生成と変換',
     yaml: `
-$std.mapping:
-  $let:
-    e: {$std.each: {web: 80, db: 5432}}
-  $in:
-    key: svc-\${e.key}
-    value: \${e.value}
+$handler: \${std.mapping}
+$for:
+  e: {web: 80, db: 5432}
+key: svc-\${e.key}
+value: \${e.value}
 `,
     expected: { 'svc-web': 80, 'svc-db': 5432 },
     expectedKeyOrder: ['svc-web', 'svc-db'],
@@ -154,18 +211,16 @@ $std.mapping:
   {
     name: '欠落するデータの除外（打ち切りの定型）',
     yaml: `
-$std.list:
-  $let:
-    row:
-      $std.each:
-      - {date: d1, code: c1}
-      - {date: d2}
-      - {date: d3, code: c3}
-  $in:
-    date: \${row.date}
-    code:
-      $std.opt: \${row.code}
-      $default: {$std.where: false}
+$handler: \${std.list}
+$for:
+  row:
+  - {date: d1, code: c1}
+  - {date: d2}
+  - {date: d3, code: c3}
+date: \${row.date}
+code:
+  $std.lookup: {in: "\${row}", key: code}
+  $default: {$std.where: false}
 `,
     expected: [
       { date: 'd1', code: 'c1' },
@@ -173,21 +228,21 @@ $std.list:
     ],
   },
   {
-    name: '回数つきの unfold（$std.range + $collect + $std.state）',
+    name: '回数つきの unfold（$std.range + $std.collect + $std.state）',
     yaml: `
-$std.state: {acc: 1}
+$handler: {$std.state: {acc: 1}}
 $in:
-  $collect: {$std.range: 5}
-  $with:
-    $fn: _
-    $body:
-      $let:
-        v: {$std.get: acc}
-        _:
-          $std.set:
+  $std.collect:
+    in: {$std.range: 5}
+    with:
+      $fn: _
+      $body:
+        $do:
+        - $let:
+            v: {$std.get: acc}
+        - $std.set:
             acc: \${v * 2}
-      $in:
-      - \${v}
+        - - \${v}
 `,
     expected: [1, 2, 4, 8, 16],
   },
@@ -208,10 +263,45 @@ $in:
     expected: 41,
   },
   {
-    name: '失敗の捕捉（$with で std.fail を捕まえて既定値に置き換える）',
+    name: '$fn の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
+    yaml: `
+$let:
+  add:
+    $fn: [a, b]
+    $body: \${a + b}
+  succ:
+    $.add: 1
+$in:
+  $.succ: 41
+`,
+    expected: 42,
+  },
+  {
+    name: '演算の部分適用（表を固定した照会関数をキーの各分岐に適用する）',
+    yaml: `
+$handler: \${std.list}
+$let:
+  codes: {ja: 81, us: 1}
+  look:
+    $fn: [m, k]
+    $body:
+      $std.lookup:
+        in: \${m}
+        key: \${k}
+  dial:
+    $.look: \${codes}
+$for:
+  c: [ja, us]
+$in:
+  $.dial: \${c}
+`,
+    expected: [81, 1],
+  },
+  {
+    name: '失敗の捕捉（$handler で std.fail を捕まえて既定値に置き換える）',
     yaml: `
 port:
-  $with:
+  $handler:
     std.fail:
       $fn: msg
       $body:
@@ -229,104 +319,53 @@ port:
     expectedLogs: ['invalid port 0'],
   },
   {
-    name: '最初に成功する分岐（$std.first、パラメータ未指定で既定値 info）',
+    name: '引数で調整するハンドラ（カリー化した関数の部分適用を $handler の式に置く）',
+    yaml: `
+$let:
+  orElse:
+    $fn: [d, run]
+    $body:
+      $handler:
+        std.fail: {$fn: _, $body: "\${d}"}
+      $in: {$.run: null}
+$in:
+  a:
+    $handler: {$.orElse: 0}
+    $in: {$std.lookup: {in: {}, key: missing}}
+  b:
+    $handler: {$.orElse: 0}
+    $in: 7
+`,
+    expected: { a: 0, b: 7 },
+  },
+  {
+    name: '最初に成功する分岐（std.first、パラメータ未指定で既定値 info）',
     yaml: `
 log_level:
-  $std.first:
-    $do:
-    - $let:
-        v: {$std.each: [{$std.param: log_level, $default: null}, {$std.param: fallback_log_level, $default: null}, info]}
-    - $std.where: \${v != null}
-    - \${v}
+  $handler: \${std.first}
+  $for:
+    v: [{$std.param: log_level, $default: null}, {$std.param: fallback_log_level, $default: null}, info]
+  $do:
+  - $std.where: \${v != null}
+  - \${v}
 `,
     expected: { log_level: 'info' },
   },
   {
-    name: '$fn の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
-    yaml: `
-$let:
-  add:
-    $fn: [a, b]
-    $body: \${a + b}
-  succ:
-    $.add: 1
-$in:
-  $.succ: 41
-`,
-    expected: 42,
-  },
-  {
-    name: '演算の部分適用（表を固定した照会関数をキーの各分岐に適用する）',
-    yaml: `
-$std.list:
-  $let:
-    codes: {ja: 81, us: 1}
-    look:
-      $fn: [m, k]
-      $body:
-        $std.lookup:
-          in: \${m}
-          key: \${k}
-    dial:
-      $.look: \${codes}
-    c: {$std.each: [ja, us]}
-  $in:
-    $.dial: \${c}
-`,
-    expected: [81, 1],
-  },
-  {
-    name: 'ローカル作用の宣言（打ち切り：caught boom）',
-    yaml: `
-$with:
-  throw:
-    $fn: msg
-    $body: caught \${msg}
-$in:
-  $do:
-  - {$.throw: boom}
-  - never
-`,
-    expected: 'caught boom',
-  },
-  {
-    name: 'ローカル作用の宣言（入れ子のハンドラは同じ名前でも取り違えない）',
-    yaml: `
-$in:
-  $do:
-  - $let:
-      up: \${throw}
-  - $in:
-      a: {$.throw: x}
-      b: {$.up: y}
-    $with:
-      throw:
-        $fn: m
-        $body:
-          $resume: inner \${m}
-$with:
-  throw:
-    $fn: m
-    $body:
-      $resume: outer \${m}
-`,
-    expected: { a: 'inner x', b: 'outer y' },
-  },
-  {
-    name: '$do の文に置いた $with（残りの文にハンドラを被せる）',
+    name: '$do の文に置いた $handler（残りの文にハンドラを被せる）',
     yaml: `
 $do:
-- $with:
+- $handler:
     std.fail: {$fn: _, $body: 0}
 - $std.lookup: {in: {}, key: missing}
 `,
     expected: 0,
   },
   {
-    name: '$do の文に置いた $std.state（残りの文に記憶を通す）',
+    name: '$do の文に置いた std.state のハンドラ（残りの文に記憶を通す）',
     yaml: `
 $do:
-- $std.state: {n: 0}
+- $handler: {$std.state: {n: 0}}
 - $std.set: {n: 41}
 - $let:
     n: {$std.get: n}
@@ -350,10 +389,10 @@ replicas:
     expected: { name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 },
   },
   {
-    name: '文脈の導入を伴うマッピング（$in を省いた $with）',
+    name: '文脈の導入を伴うマッピング（$in を省いた $handler：節が $resume: null で再開する）',
     yaml: `
 database:
-  $with:
+  $handler:
     std.fail: {$fn: _, $body: {$resume: null}}
   host: {$std.param: db_host}
   port: {$std.param: db_port}
@@ -362,84 +401,47 @@ database:
     expected: { database: { host: 'db', port: null } },
   },
   {
-    name: '文脈の導入を伴うマッピング（合成位置で文脈を導入する $let）',
+    name: '文脈の導入を伴うマッピング（残りが主形：fizzbuzz）',
     yaml: `
-$std.list:
-  $let:
-    x: {$std.each: [1, 2]}
-  v: \${x}
-`,
-    expected: [{ v: 1 }, { v: 2 }],
-  },
-  {
-    name: '文脈の導入を伴うマッピング（$in を省いた $std.state）',
-    yaml: `
-$do:
-- $std.set: {n: 100}
-- inner:
-    $std.state: {n: 0}
-    a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
-    b: {$std.get: n}
-  outer: {$std.get: n}
-`,
-    expected: { inner: { a: 1, b: 1 }, outer: 100 },
-  },
-  {
-    name: '文脈の導入を伴うマッピング（残りが $if）',
-    yaml: `
-$std.list:
-  $let:
-    i0: {$std.each: {$std.range: 15}}
-    i: \${i0 + 1}
-  $if: \${i % 15 == 0}
-  $then: fizzbuzz
+$handler: \${std.list}
+$for:
+  i0: {$std.range: 15}
+$let:
+  i: \${i0 + 1}
+$if: \${i % 15 == 0}
+$then: fizzbuzz
+$else:
+  $if: \${i % 3 == 0}
+  $then: fizz
   $else:
-    $if: \${i % 3 == 0}
-    $then: fizz
-    $else:
-      $if: \${i % 5 == 0}
-      $then: buzz
-      $else: "\${i}"
+    $if: \${i % 5 == 0}
+    $then: buzz
+    $else: "\${i}"
 `,
-    expected: [
-      1, 2, 'fizz', 4, 'buzz', 'fizz', 7, 8, 'fizz', 'buzz', 11, 'fizz', 13, 14, 'fizzbuzz',
-    ],
+    expected: [1, 2, 'fizz', 4, 'buzz', 'fizz', 7, 8, 'fizz', 'buzz', 11, 'fizz', 13, 14, 'fizzbuzz'],
   },
   {
-    name: '文脈の導入を伴うマッピング（$with の頭と $in の本体）',
-    yaml: `
-$with:
-  std.fail: {$fn: _, $body: 0}
-$in:
-  $std.lookup: {in: {}, key: missing}
-`,
-    expected: 0,
-  },
-  {
-    name: '文脈の導入を伴うマッピング（頭が二つと $in）',
+    name: '引数で受けた演算の処理（節の名前 .sig で引数の演算に解決する）',
     yaml: `
 $let:
-  start: 40
-$std.state: {n: "\${start}"}
+  run:
+    $fn: sig
+    $body:
+      $handler:
+        .sig:
+          $fn: _
+          $body: handled
+      $in: {$.sig: null}
+  outer:
+    $handler:
+      signal:
+        $fn: _
+        $body: unreachable
+    $in: \${signal}
 $in:
-  $do:
-  - $let:
-      n: {$std.get: n}
-  - $std.set: {n: "\${n + 2}"}
-  - $std.get: n
+  $.run: \${outer}
 `,
-    expected: 42,
-  },
-  {
-    name: '文脈の導入を伴うマッピング（残りが演算）',
-    yaml: `
-$let:
-  obj: {x: 10, y: 100}
-$std.lookup:
-  key: x
-  in: \${obj}
-`,
-    expected: 10,
+    expected: 'handled',
   },
 ];
 
@@ -480,24 +482,59 @@ $do:
     expect(viaLocalName).toBe('secret:db/password');
   });
 
-  it('失敗を null で埋めたいときは $default を省く', async () => {
+  it('失敗を null で埋めたいときは $default: null と書く', async () => {
     await expect(
       evaluateYaml(`
-$std.list:
-  $let:
-    row:
-      $std.each:
-      - {date: d1, code: c1}
-      - {date: d2}
-  $in:
-    date: \${row.date}
-    code:
-      $std.opt: \${row.code}
+$handler: \${std.list}
+$for:
+  row:
+  - {date: d1, code: c1}
+  - {date: d2}
+date: \${row.date}
+code:
+  $std.lookup: {in: "\${row}", key: code}
+  $default: null
 `),
     ).resolves.toEqual([
       { date: 'd1', code: 'c1' },
       { date: 'd2', code: null },
     ]);
+  });
+
+  it('$handler: ${std.list} と {$std.list: {$fn: 捨て名, $body: 本体}} は同じ意味である', async () => {
+    const viaHandler = await evaluateYaml(`
+$handler: "\${std.list}"
+$in:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2, 3]}
+  - \${x * 10}
+`);
+    const viaCall = await evaluateYaml(`
+$std.list:
+  $fn: _
+  $body:
+    $do:
+    - $let:
+        x: {$std.each: [1, 2, 3]}
+    - \${x * 10}
+`);
+    expect(viaHandler).toEqual([10, 20, 30]);
+    expect(viaCall).toEqual(viaHandler);
+  });
+
+  it('std は普通の束縛なので $let で隠せる（$for の展開も隠した std に従う）', async () => {
+    await expect(
+      evaluateYaml(`
+$handler: \${std.list}
+$in:
+  $let:
+    std: {each: "\${std.each}"}
+  $for:
+    x: [1, 2]
+  $in: \${x}
+`),
+    ).resolves.toEqual([1, 2]);
   });
 
   it('theory.md の対応：束縛を持たない $do の文の並びは f >> g >> h である', async () => {
@@ -517,27 +554,36 @@ interface ErrorCase {
 
 const errorCases: readonly ErrorCase[] = [
   {
-    name: '$std.handler の値をそのサンクの本体で再び適用すると自己適用として拒まれる',
+    name: '本体の閉包を受け取る関数をその閉包の本体の中で再び使うと自己適用として拒まれる',
     yaml: `
 $let:
   h:
-    $std.handler:
-      std.fail: {$fn: _, $body: 0}
+    $fn: run
+    $body:
+      $handler:
+        std.fail: {$fn: _, $body: 0}
+      $in: {$.run: null}
 $in:
-  $.h:
-    $fn: _
-    $body: {$.h: {$fn: _, $body: 1}}
+  $handler: \${h}
+  $in:
+    $handler: \${h}
+    $in: 1
 `,
     messagePattern: /self-application/,
   },
   {
-    name: '$std.handler のローカル作用の宣言はサンクから見えない',
+    name: '関数の式で与えた $handler はローカル作用の宣言を持たない',
     yaml: `
 $let:
   h:
-    $std.handler:
-      throw: {$fn: m, $body: "caught \${m}"}
-$in: {$.h: {$fn: _, $body: {$.throw: boom}}}
+    $fn: run
+    $body:
+      $handler:
+        throw: {$fn: m, $body: "caught \${m}"}
+      $in: {$.run: null}
+$in:
+  $handler: \${h}
+  $in: {$.throw: boom}
 `,
     messagePattern: /undefined reference: throw/,
   },
@@ -560,6 +606,20 @@ $do:
     messagePattern: /function value cannot escape/,
   },
   {
+    name: '演算の値が境界の外へ出て文書の値に残るのはエラー',
+    yaml: `pick: "\${std.each}"`,
+    messagePattern: /operation value cannot escape/,
+  },
+  {
+    name: '関数と演算を == で比較するのはエラー',
+    yaml: `
+$let:
+  f: {$fn: x, $body: "\${x}"}
+$in: "\${f == f}"
+`,
+    messagePattern: /cannot compare a function or operation value/,
+  },
+  {
     name: '$std.range の引数が自然数でなければエラー',
     yaml: `{$std.range: -1}`,
     messagePattern: /\$std\.range requires a natural number/,
@@ -568,6 +628,34 @@ $do:
     name: '予約されていないドットなしの $ キーはエラー',
     yaml: `{$each: [1, 2]}`,
     messagePattern: /unreserved \$ key: \$each/,
+  },
+  {
+    name: '$.return の呼び出しは形の誤り（return は節の名前として予約されている）',
+    yaml: `{$.return: 1}`,
+    messagePattern: /return is reserved: \$\.return is not callable/,
+  },
+  {
+    name: 'パスの最初の区画がどの束縛にも解決しない参照は評価前に拒まれる',
+    yaml: `x: "\${nope}"`,
+    messagePattern: /undefined reference: nope/,
+  },
+  {
+    name: '節の本体の外に書いた $resume は形の誤り',
+    yaml: `
+$handler:
+  std.fail: {$fn: _, $body: 0}
+$in: {$resume: 1}
+`,
+    messagePattern: /\$resume is only allowed inside a \$handler clause/,
+  },
+  {
+    name: '節の解決先が演算でなければエラー',
+    yaml: `
+$handler:
+  std.list: {$fn: x, $body: 1}
+$in: 2
+`,
+    messagePattern: /\$handler clause 'std\.list' must name an operation/,
   },
 ];
 
@@ -578,8 +666,8 @@ describe('grammar.md 用例（エラーになる）', () => {
 });
 
 // -----------------------------------------------------------------------------
-// docs/reference/ 用例：カーネル（do / let / if / fn / with / collect）と std の各ページの
-// 「例」節にある実行可能な用例。
+// docs/reference/ 用例：カーネル（do / let / if / fn / handler / for / default）と std の
+// 各ページの「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------
@@ -662,10 +750,10 @@ $do:
     expected: 81,
   },
   {
-    name: 'with.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
+    name: 'handler.md の例（失敗の捕捉：ログを流して既定値に置き換える）',
     yaml: `
 port:
-  $with:
+  $handler:
     std.fail:
       $fn: msg
       $body:
@@ -683,9 +771,9 @@ port:
     expectedLogs: ['invalid port 0'],
   },
   {
-    name: 'with.md の例（ログの計装：捕捉して加工してから呼び直す）',
+    name: 'handler.md の例（ログの計装：捕捉して加工してから呼び直す）',
     yaml: `
-$with:
+$handler:
   std.log:
     $fn: msg
     $body:
@@ -700,9 +788,9 @@ $do:
     expectedLogs: ['app: hello'],
   },
   {
-    name: 'with.md の例（ローカル作用の宣言：caught boom）',
+    name: 'handler.md の例（ローカル作用の宣言：caught boom）',
     yaml: `
-$with:
+$handler:
   throw:
     $fn: msg
     $body: caught \${msg}
@@ -714,52 +802,141 @@ $in:
     expected: 'caught boom',
   },
   {
-    name: 'collect.md の例（map の形：各要素を二重にする）',
+    name: 'handler.md の例（一度作ったハンドラの関数を二つの本体に掛ける）',
     yaml: `
-$collect: [1, 2, 3]
-$with:
-  $fn: x
-  $body:
-  - \${x}
-  - \${x}
+$let:
+  fallback:
+    $fn: run
+    $body:
+      $handler:
+        std.fail: {$fn: _, $body: 0}
+      $in: {$.run: null}
+$in:
+  a: {$handler: "\${fallback}", $in: {$std.lookup: {in: {}, key: missing}}}
+  b: {$handler: "\${fallback}", $in: 7}
+`,
+    expected: { a: 0, b: 7 },
+  },
+  {
+    name: 'handler.md の例（節の本体が定義位置の束縛を捕まえる）',
+    yaml: `
+$let:
+  orElse:
+    $fn: [d, run]
+    $body:
+      $handler:
+        std.fail: {$fn: _, $body: "\${d}"}
+      $in: {$.run: null}
+  zero: {$.orElse: 0}
+  empty: {$.orElse: ""}
+$in:
+  n: {$handler: "\${zero}", $in: {$std.lookup: {in: {}, key: missing}}}
+  s: {$handler: "\${empty}", $in: {$std.lookup: {in: {}, key: missing}}}
+`,
+    expected: { n: 0, s: '' },
+  },
+  {
+    name: 'default.md の例（$default で失敗を既定値に置き換える）',
+    yaml: `
+$do:
+- $let:
+    spec: {}
+- pre:
+    $do: ["\${spec.pre}"]
+    $default: ''
+`,
+    expected: { pre: '' },
+  },
+  {
+    name: 'default.md の例（$default を省かず null を書いて欠落を埋める）',
+    yaml: `
+$handler: \${std.list}
+$for:
+  row:
+  - {date: d1, code: c1}
+  - {date: d2}
+  - {date: d3, code: c3}
+date: \${row.date}
+code:
+  $std.lookup: {in: "\${row}", key: code}
+  $default: null
+`,
+    expected: [
+      { date: 'd1', code: 'c1' },
+      { date: 'd2', code: null },
+      { date: 'd3', code: 'c3' },
+    ],
+  },
+  {
+    name: 'default.md の例（打ち切りの定型で行ごと削る）',
+    yaml: `
+$handler: \${std.list}
+$for:
+  row:
+  - {date: d1, code: c1}
+  - {date: d2}
+  - {date: d3, code: c3}
+date: \${row.date}
+code:
+  $std.lookup: {in: "\${row}", key: code}
+  $default: {$std.where: false}
+`,
+    expected: [
+      { date: 'd1', code: 'c1' },
+      { date: 'd3', code: 'c3' },
+    ],
+  },
+  // --- std ---------------------------------------------------------------
+  {
+    name: 'std.collect.md の例（map の形：各要素を二重にする）',
+    yaml: `
+$std.collect:
+  in: [1, 2, 3]
+  with:
+    $fn: x
+    $body:
+    - \${x}
+    - \${x}
 `,
     expected: [1, 1, 2, 2, 3, 3],
   },
   {
-    name: 'collect.md の例（filter の形：偶数だけを残す）',
+    name: 'std.collect.md の例（filter の形：偶数だけを残す）',
     yaml: `
-$collect: [1, 2, 3, 4, 5]
-$with:
-  $fn: x
-  $body:
-    $if: \${x % 2 == 0}
-    $then:
-    - \${x}
-    $else: []
+$std.collect:
+  in: [1, 2, 3, 4, 5]
+  with:
+    $fn: x
+    $body:
+      $if: \${x % 2 == 0}
+      $then:
+      - \${x}
+      $else: []
 `,
     expected: [2, 4],
   },
   {
-    name: 'collect.md の例（エントリの列から $into: mapping で組み立てる）',
+    name: 'std.collect.md の例（エントリの列から into: mapping で組み立てる）',
     yaml: `
-$collect:
-- {name: web, value: 80}
-- {name: db, value: 5432}
-$with:
-  $fn: e
-  $body:
-  - key: \${e.name}
-    value: \${e.value}
-$into: mapping
+$std.collect:
+  in:
+  - {name: web, value: 80}
+  - {name: db, value: 5432}
+  with:
+    $fn: e
+    $body:
+    - key: \${e.name}
+      value: \${e.value}
+  into: mapping
 `,
     expected: { web: 80, db: 5432 },
     expectedKeyOrder: ['web', 'db'],
   },
-  // --- std ---------------------------------------------------------------
   {
     name: 'std.each.md の例（二重の選択で全組み合わせを作る）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2]}
@@ -771,7 +948,8 @@ $std.list:
   {
     name: 'std.each.md の例（マッピングの分解）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       e: {$std.each: {web: 80, db: 5432}}
@@ -780,29 +958,30 @@ $std.list:
     expected: ['web', 'db'],
   },
   {
-    name: 'std.for.md の例（表の組み替え：後の束縛が先の束縛のエントリを見る）',
+    name: 'for.md の例（表の組み替え：後の束縛が先の束縛のエントリを見る）',
     yaml: `
 $let:
   forms:
     "a{id}": [x, y]
     "b{id}": [z]
-$std.mapping:
-  $std.for:
-    entry: \${forms}
-    label: \${entry.value}
-  key: \${label}
-  value:
-    id: \${entry.key}
+$handler: \${std.mapping}
+$for:
+  entry: \${forms}
+  label: \${entry.value}
+key: \${label}
+value:
+  id: \${entry.key}
 `,
     expected: { x: { id: 'a{id}' }, y: { id: 'a{id}' }, z: { id: 'b{id}' } },
     expectedKeyOrder: ['x', 'y', 'z'],
   },
   {
-    name: 'std.for.md の例（$do の文に置いて $std.where と並べるリスト内包表記）',
+    name: 'for.md の例（$do の文に置いて $std.where と並べるリスト内包表記）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
-  - $std.for:
+  - $for:
       x: [1, 2, 3]
       y: [1, 2, 3]
   - $std.where: \${x < y}
@@ -812,10 +991,11 @@ $std.list:
     expected: [[1, 2], [1, 3], [2, 3]],
   },
   {
-    name: 'std.for.md の例（マッピングのキーに置いて残りのデータを本体にする）',
+    name: 'for.md の例（マッピングのキーに置いて残りのデータを本体にする）',
     yaml: `
-$std.list:
-  $std.for:
+$handler: \${std.list}
+$in:
+  $for:
     x: [1, 2]
   n: \${x}
   sq: \${x * x}
@@ -828,9 +1008,10 @@ $std.list:
   {
     name: 'std.where.md の例（リスト内包表記のガード）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
-  - $std.for:
+  - $for:
       x: [1, 2, 3]
       y: [1, 2, 3]
   - $std.where: \${x < y}
@@ -868,7 +1049,8 @@ $do:
     name: 'std.list.md の例（sizes を集める）',
     yaml: `
 sizes:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $do:
     - $let:
         n: {$std.each: [1, 2, 3]}
@@ -889,7 +1071,8 @@ $do:
   {
     name: 'std.mapping.md の例（svc- マッピングの生成）',
     yaml: `
-$std.mapping:
+$handler: \${std.mapping}
+$in:
   $do:
   - $let:
       e: {$std.each: {web: 80, db: 5432}}
@@ -898,39 +1081,6 @@ $std.mapping:
 `,
     expected: { 'svc-web': 80, 'svc-db': 5432 },
     expectedKeyOrder: ['svc-web', 'svc-db'],
-  },
-  {
-    name: 'std.opt.md の例（欠落を null で埋める）',
-    yaml: `
-$std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-        - {date: d3, code: c3}
-  - date: \${row.date}
-    code:
-      $std.opt: \${row.code}
-`,
-    expected: [
-      { date: 'd1', code: 'c1' },
-      { date: 'd2', code: null },
-      { date: 'd3', code: 'c3' },
-    ],
-  },
-  {
-    name: 'std.opt.md の例（$default でパスアクセスの欠落を埋める）',
-    yaml: `
-$do:
-- $let:
-    spec: {}
-- pre:
-    $std.opt: \${spec.pre}
-    $default: ''
-`,
-    expected: { pre: '' },
   },
   {
     name: 'std.param.md の例（渡されたパラメータと $default）',
@@ -942,27 +1092,6 @@ port: {$std.param: db_port, $default: 5432}
     expected: { host: 'example.com', port: 5432 },
   },
   {
-    name: 'std.opt.md の例（打ち切りの定型で行ごと削る）',
-    yaml: `
-$std.list:
-  $do:
-  - $let:
-      row:
-        $std.each:
-        - {date: d1, code: c1}
-        - {date: d2}
-        - {date: d3, code: c3}
-  - date: \${row.date}
-    code:
-      $std.opt: \${row.code}
-      $default: {$std.where: false}
-`,
-    expected: [
-      { date: 'd1', code: 'c1' },
-      { date: 'd3', code: 'c3' },
-    ],
-  },
-  {
     name: 'std.range.md の例（自然数を添字のリストに変える）',
     yaml: `{$std.range: 5}`,
     expected: [0, 1, 2, 3, 4],
@@ -970,18 +1099,19 @@ $std.list:
   {
     name: 'std.range.md の例（回数つきの unfold）',
     yaml: `
-$std.state: {acc: 1}
+$handler: {$std.state: {acc: 1}}
 $in:
-  $collect: {$std.range: 5}
-  $with:
-    $fn: _
-    $body:
-      $do:
-      - $let:
-          v: {$std.get: acc}
-      - $std.set:
-          acc: \${v * 2}
-      - - \${v}
+  $std.collect:
+    in: {$std.range: 5}
+    with:
+      $fn: _
+      $body:
+        $do:
+        - $let:
+            v: {$std.get: acc}
+        - $std.set:
+            acc: \${v * 2}
+        - - \${v}
 `,
     expected: [1, 2, 4, 8, 16],
   },
@@ -999,28 +1129,37 @@ $do:
     expected: 29,
   },
   {
-    name: 'std.lookup.md の例（$std.opt の $default と組み合わせた既定値つきの照会）',
+    name: 'std.lookup.md の例（$default と組み合わせた既定値つきの照会）',
     yaml: `
 $do:
 - $let:
     overrides: {web: {timeout: 30}, db: {timeout: 60}}
     label: cache
-- $std.opt:
-    $std.lookup:
-      in: \${overrides}
-      key: \${label}
+- $std.lookup:
+    in: \${overrides}
+    key: \${label}
   $default: {}
 `,
     expected: {},
   },
   {
-    name: 'std.state.md の例（内側の $std.state は外の状態に触れない）',
+    name: 'std.merge.md の例（後のマッピングの値が勝ち、キーの位置は初出）',
+    yaml: `
+$std.merge:
+- {name: api, replicas: 1}
+- {replicas: 3}
+`,
+    expected: { name: 'api', replicas: 3 },
+    expectedKeyOrder: ['name', 'replicas'],
+  },
+  {
+    name: 'std.state.md の例（内側の std.state は外の状態に触れない）',
     yaml: `
 $do:
 - $std.set: {n: 100}
 - $let:
     inner:
-      $std.state: {n: 0}
+      $handler: {$std.state: {n: 0}}
       $in:
         $do:
         - $std.set: {n: 1}
@@ -1034,9 +1173,10 @@ $do:
   {
     name: 'std.state.md の例（貫流：状態が分岐から分岐へ持ち越される）',
     yaml: `
-$std.state: {n: 0}
+$handler: {$std.state: {n: 0}}
 $in:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $do:
     - $std.set: {n: 10}
     - $let:
@@ -1051,8 +1191,9 @@ $in:
   {
     name: 'std.state.md の例（分岐点で分かれる：各分岐が選択時点の状態を引き継ぐ）',
     yaml: `
-$std.list:
-  $std.state: {n: 0}
+$handler: \${std.list}
+$in:
+  $handler: {$std.state: {n: 0}}
   $in:
     $do:
     - $std.set: {n: 10}
@@ -1068,11 +1209,12 @@ $std.list:
   {
     name: 'std.state.md の例（分岐ごとに初期化：各分岐が初期値から作り直す）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [a, b]}
-  - $std.state: {n: 0}
+  - $handler: {$std.state: {n: 0}}
     $in:
       $do:
       - $let:
@@ -1086,7 +1228,8 @@ $std.list:
   {
     name: 'std.state.md の例（連番の採番）',
     yaml: `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $std.set: {n: 0}
   - $let:
@@ -1107,7 +1250,8 @@ $std.list:
     name: 'std.first.md の例（パラメータ未渡しで info に落ちる、参照ページの 2 分岐版）',
     yaml: `
 log_level:
-  $std.first:
+  $handler: \${std.first}
+  $in:
     $do:
     - $let:
         v: {$std.each: [{$std.param: log_level, $default: null}, info]}
@@ -1117,11 +1261,12 @@ log_level:
     expected: { log_level: 'info' },
   },
   {
-    name: 'std.state.md の例（$in を省いた $std.state で選択に記憶を貫流させる）',
+    name: 'std.state.md の例（$do の文に置いた std.state のハンドラで選択に記憶を貫流させる）',
     yaml: `
 $do:
-- $std.state: {i: 0}
-- $std.list:
+- $handler: {$std.state: {i: 0}}
+- $handler: \${std.list}
+  $in:
     $do:
     - $let:
         x: {$std.each: [a, b, c]}
@@ -1132,36 +1277,6 @@ $do:
     - \${i}-\${x}
 `,
     expected: ['0-a', '1-b', '2-c'],
-  },
-  {
-    name: 'std.handler.md の例（一度作ったハンドラの値を二つの本体に掛ける）',
-    yaml: `
-$let:
-  fallback:
-    $std.handler:
-      std.fail: {$fn: _, $body: 0}
-$in:
-  a: {$.fallback: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-  b: {$.fallback: {$fn: _, $body: 7}}
-`,
-    expected: { a: 0, b: 7 },
-  },
-  {
-    name: 'std.handler.md の例（節の本体が定義位置の束縛を捕まえる）',
-    yaml: `
-$let:
-  fallback:
-    $fn: default
-    $body:
-      $std.handler:
-        std.fail: {$fn: _, $body: "\${default}"}
-  zero: {$.fallback: 0}
-  empty: {$.fallback: ""}
-$in:
-  n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-  s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-`,
-    expected: { n: 0, s: '' },
   },
 ];
 

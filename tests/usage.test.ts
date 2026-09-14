@@ -51,7 +51,7 @@ $do:
         `
 db: {$dns.lookup: db}
 cache:
-  $std.opt: {$dns.lookup: cache}
+  $dns.lookup: cache
   $default: localhost
 `,
         { ops },
@@ -81,5 +81,58 @@ $do:
     const p = evaluateYaml('{$std.fail: boom}');
     await expect(p).rejects.toBeInstanceOf(EffectfulYamlError);
     await expect(p).rejects.toThrow('failure: boom');
+  });
+});
+
+describe('EvaluateOptions.functions', () => {
+  it('ホストの関数は同期でも非同期でもよい', async () => {
+    await expect(
+      evaluateYaml('{a: {$str.upper: hello}, b: {$svc.double: 2}}', {
+        functions: {
+          'str.upper': (s) => String(s).toUpperCase(),
+          'svc.double': async (n) => Number(n) * 2,
+        },
+      }),
+    ).resolves.toEqual({ a: 'HELLO', b: 4 });
+  });
+
+  it('関数は作用ではないので $handler の節で横取りできない', async () => {
+    await expect(
+      evaluateYaml('{$handler: {svc.f: {$fn: x, $body: {$resume: intercepted}}}, $in: {$svc.f: 1}}', {
+        functions: { 'svc.f': () => 'from host' },
+      }),
+    ).rejects.toThrow("$handler clause 'svc.f' must name an operation, got: <function>");
+  });
+
+  it('同じ名前を ops と functions の両方に与えるとエラー', async () => {
+    await expect(
+      evaluateYaml('null', { ops: { 'a.b': () => 1 }, functions: { 'a.b': () => 2 } }),
+    ).rejects.toThrow('host name registered both as an operation and as a function: a.b');
+  });
+
+  it('名前は束縛とキーの形（2 区画以上）でなければならない', async () => {
+    await expect(evaluateYaml('null', { functions: { f: () => 1 } })).rejects.toThrow(
+      'host function name must be a dotted path of names (binding.key): f',
+    );
+  });
+
+  it('std 名前空間には登録できない', async () => {
+    await expect(evaluateYaml('null', { functions: { 'std.foo': () => 1 } })).rejects.toThrow(
+      'host cannot register a function in the std namespace: $std.foo',
+    );
+  });
+
+  it('vault.read と vault.write は一つの束縛 vault にまとまる', async () => {
+    const functions = {
+      'vault.read': (k: unknown) => `read:${String(k)}`,
+      'vault.write': (k: unknown) => `write:${String(k)}`,
+    };
+    await expect(
+      evaluateYaml('{r: {$vault.read: k}, w: {$vault.write: k}}', { functions }),
+    ).resolves.toEqual({ r: 'read:k', w: 'write:k' });
+    // 束縛は一つなので、隠せば両方とも届かなくなる。
+    await expect(
+      evaluateYaml('{$let: {vault: {read: 1}}, $in: {$vault.read: k}}', { functions }),
+    ).rejects.toThrow('$vault.read is not a function: 1');
   });
 });

@@ -11,9 +11,9 @@ import type { Value } from '../src/types.js';
 const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
 
 describe('大きな文書', () => {
-  it('$std.list の中の $std.each が 8000 分岐しても溢れない', async () => {
+  it('$handler: ${std.list} の中の $std.each が 8000 分岐しても溢れない', async () => {
     // 8000 要素のデータリストの逐次組み立てと、8000 分岐の畳み込みの両方を踏む。
-    await expect(evaluate({ '$std.list': { '$std.each': range(8000) } })).resolves.toEqual(range(8000));
+    await expect(evaluate({ $handler: '${std.list}', $in: { '$std.each': range(8000) } })).resolves.toEqual(range(8000));
   });
 
   it('8000 分岐がそれぞれ $std.log しても溢れない', async () => {
@@ -21,7 +21,7 @@ describe('大きな文書', () => {
     const seen: Value[] = [];
     await expect(
       evaluate(
-        { '$std.list': { $do: [{ $let: { x: { '$std.each': range(8000) } } }, { '$std.log': '${x}' }, '${x}'] } },
+        { $handler: '${std.list}', $in: { $do: [{ $let: { x: { '$std.each': range(8000) } } }, { '$std.log': '${x}' }, '${x}'] } },
         { onLog: (v) => seen.push(v) },
       ),
     ).resolves.toEqual(range(8000));
@@ -29,13 +29,14 @@ describe('大きな文書', () => {
   });
 
   it('8000 分岐が状態を貫流させても溢れない', async () => {
-    // 選択（$std.each）は $std.list が、状態（$std.get/$std.set）はその外側の既定ハンドラが処理する。
+    // 選択（$std.each）は $handler: ${std.list} が、状態（$std.get/$std.set）はその外側の既定ハンドラが処理する。
     // 状態は分岐をまたいで文書順に貫流するので、最後の分岐の値は 8000 になる。
     const doc = {
       $do: [
         { '$std.set': { n: 0 } },
         {
-          '$std.list': {
+          $handler: '${std.list}',
+          $in: {
             $do: [
               { '$std.each': range(8000) },
               { $let: { v: { '$std.get': 'n' } } },
@@ -67,8 +68,8 @@ describe('大きな文書', () => {
 describe('逐次組み立ての計算量', () => {
   // 線形なら数百 ms で終わる。二乗なら 10 万要素は数十秒かかるので、5 秒のタイムアウトが回帰を検知する。
 
-  it('$std.list: {$std.each: ...} が 10 万分岐でも妥当な時間で終わる', async () => {
-    await expect(evaluate({ '$std.list': { '$std.each': range(100000) } })).resolves.toEqual(range(100000));
+  it('$handler: ${std.list} の下の $std.each が 10 万分岐でも妥当な時間で終わる', async () => {
+    await expect(evaluate({ $handler: '${std.list}', $in: { '$std.each': range(100000) } })).resolves.toEqual(range(100000));
   }, 5000);
 
   it('10 万要素のデータリストのリテラルが妥当な時間で終わる', async () => {

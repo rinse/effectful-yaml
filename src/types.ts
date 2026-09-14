@@ -1,11 +1,15 @@
 /**
  * effectful-yaml の値・環境・計算表現。
- * 仕様: docs/grammar.md（草案 0.12）
+ * 仕様: docs/grammar.md（草案 0.13）「値」
+ *
+ * 値は三種に分かれる。データ（スカラー・リスト・マッピング）、関数（`$fn` の閉包と
+ * 処理系が実装する Native）、演算（作用の名前を持つ値）である。
+ * 関数と演算は文書の中でだけ意味を持ち、作用境界の外へ出ることはエラーになる。
  */
 import type { KNode } from './desugar.js';
 import { empty, get, insert, type PMap } from './pmap.js';
 
-/** 評価結果の値。YAML のデータ値に、言語内部の関数値（Closure）を加えたもの。 */
+/** 評価結果の値。YAML のデータ値に、関数（Closure・Native）と演算（Operation）を加えたもの。 */
 export type Value =
   | null
   | boolean
@@ -13,7 +17,9 @@ export type Value =
   | string
   | Value[]
   | { [key: string]: Value }
-  | Closure;
+  | Closure
+  | Native
+  | Operation;
 
 /**
  * $fn が作る閉包。YAML データからは決して作れない値なので、
@@ -33,7 +39,47 @@ export class Closure {
 export const isClosure = (v: unknown): v is Closure => v instanceof Closure;
 
 /**
- * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、`$with` の節の本体でだけ
+ * 作用の名前を持つ値。呼び出すと作用を起こし、包囲する最も近いハンドラの節が引数を受け取る。
+ * 値を作るのは初期環境（std とホストの値）と `$handler` のローカル作用の宣言だけである。
+ * ローカル作用の name は実行時に一意な内部名（`名前@構文パス#連番`）であり、
+ * 節の対応づけはこの名前で行う（同じ宣言を二度評価すれば別の演算になる）。
+ */
+export class Operation {
+  constructor(readonly name: string) {}
+}
+
+export const isOperation = (v: unknown): v is Operation => v instanceof Operation;
+
+/**
+ * 処理系が実装する関数（std の関数、およびホストが `functions` で与えた関数）。
+ * impl は引数と文脈から Comp を返すので、本体の閉包を受け取るハンドラ（std.list など）も
+ * 状態を立てる関数（std.state）もこの形に収まる。
+ */
+export class Native {
+  constructor(
+    readonly name: string,
+    readonly impl: (arg: Value, ctx: NativeCtx) => Comp,
+  ) {}
+}
+
+/** Native の実装が使う評価器の文脈。apply は引数に関数値を適用する（what はエラー文言の名前）。 */
+export interface NativeCtx {
+  readonly apply: (f: Value, arg: Value, what: string) => Comp;
+  /** 呼び出し位置の失敗位置。 */
+  readonly path: string;
+  /** 利用者が書いた呼び出しの形（`$std.where`、`$.w`）。 */
+  readonly what: string;
+}
+
+/** 関数の値（閉包と Native）。 */
+export const isFunctionValue = (v: unknown): v is Closure | Native =>
+  v instanceof Closure || v instanceof Native;
+
+/** データでない値（関数と演算）。マッピングの判定から除くために使う。 */
+export const isNonData = (v: unknown): boolean => isFunctionValue(v) || isOperation(v);
+
+/**
+ * レキシカル環境。名前 -> 値の永続平衡木（src/pmap.ts）と、`$handler` の節の本体でだけ
  * 束縛される継続 resume の組。木は不変なので、閉包が捕まえた環境は後から変化しない
  * （拡張は経路だけを作り直し、元の木はそのまま残る）。
  * 読み書きとも最悪 O(log 束縛数)：get は根から降りるだけ、insert の複製は経路上のノードだけ。
@@ -54,13 +100,13 @@ export const extendEnv = (env: Env, name: string, value: Value): Env => ({
 
 export const lookupEnv = (env: Env, name: string): Value | undefined => get(env.vars, name);
 
-/** `$with` の節の本体でだけ束縛される継続。 */
+/** `$handler` の節の本体でだけ束縛される継続。 */
 export const resumeOf = (env: Env): ((v: Value) => Comp) | undefined => env.resume;
 
 /**
  * freer モナド風の計算表現。
  * 評価器はこの木を返し、ハンドラは Comp → Comp の純粋変換として実装する。
- * resume が純粋クロージャなので、同じ継続を何度でも呼べる（`$with` の多重 resume）。
+ * resume が純粋クロージャなので、同じ継続を何度でも呼べる（節の多重 `$resume`）。
  *
  * bind は継続を「呼ばずに」節として積むだけである。これが表現の不変条件を決める。
  *
@@ -87,7 +133,7 @@ export type Comp =
       readonly path?: string;
       /**
        * エラー文言で演算を指す名前。既定は `$演算名` であり、導出形の展開が置いた演算は
-       * 利用者が書いた形（`$std.for 'x'`、`$std.where`）を名乗る。位置と同じく組み立て時に決まる。
+       * 利用者が書いた形（`$for 'x'`、`$std.where`）を名乗る。位置と同じく組み立て時に決まる。
        */
       readonly what: string;
     }
@@ -196,20 +242,30 @@ export const isOperationFailure = (e: unknown): e is OperationFailure =>
 /** 値を人が読む形にする（エラー文言と、文字列そのものの表示）。 */
 export function describe(v: Value): string {
   if (typeof v === 'string') return v;
-  if (isClosure(v)) return '<function>';
+  if (isFunctionValue(v)) return '<function>';
+  if (isOperation(v)) return `<operation ${userFacingOpName(v.name)}>`;
   return JSON.stringify(v) ?? String(v);
 }
 
+/** ローカル作用の内部名から、利用者が書いた裸の名前を取り出す。 */
+export const userFacingOpName = (name: string): string => name.split('@')[0]!;
+
 /**
- * 第一階の標準演算（値から値を計算するだけ）。導出できないが評価器の協力も要らないので、
- * カーネルではなく「処理系が事前登録する演算」として供給の層に置く。
- * ホスト登録の演算と同じ経路（境界を抜けてドライバへ）を通る。
+ * std の演算の名前（`std.` を除いた区画）。初期環境の束縛 `std` の値はこれらの演算と
+ * 関数を収めたマッピングであり、評価器（eval.ts）と評価前の検査（typecheck.ts）が
+ * 同じ一覧から初期環境を組む。
  */
-export const BUILTIN_OPS: Readonly<Record<string, (arg: Value) => Value>> = {
-  'std.range': (n) => {
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
-      throw new EffectfulYamlError(`$std.range requires a natural number, got: ${describe(n)}`);
-    }
-    return Array.from({ length: n }, (_, i) => i);
-  },
-};
+export const STD_OPS: readonly string[] = ['each', 'param', 'get', 'set', 'log', 'fail'];
+
+/** std の関数の名前（`std.` を除いた区画）。 */
+export const STD_FUNCTIONS: readonly string[] = [
+  'where',
+  'range',
+  'collect',
+  'lookup',
+  'merge',
+  'list',
+  'mapping',
+  'first',
+  'state',
+];

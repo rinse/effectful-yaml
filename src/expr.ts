@@ -1,12 +1,12 @@
 /**
  * `${式}` の式言語（参照・比較・算術・論理演算）と文字列補間。
- * 仕様: docs/grammar.md（草案 0.12）「参照と式」節。
+ * 仕様: docs/grammar.md（草案 0.13）「参照と式」節。
  *
  * この式言語に作用は無い。Value と Env だけを相手にする純粋な関数として実装する。
  * 作用を起こしうるのはパスの部分性だけで、それも MissingPathError を投げるにとどめ、
  * std.fail への翻訳は評価器（eval.ts の `str` ノードの評価）が行う。
  */
-import { EffectfulYamlError, isClosure, lookupEnv, type Env, type Value } from './types.js';
+import { describe, EffectfulYamlError, isNonData, lookupEnv, type Env, type Value } from './types.js';
 
 /**
  * データ起因の部分性：存在しないキーと添字。
@@ -273,7 +273,17 @@ function parse(source: string): Node {
 // ---------------------------------------------------------------------------
 
 function isPlainObject(v: Value): v is { [key: string]: Value } {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isNonData(v);
+}
+
+/** 関数と演算は `==` で比較できない（値の種類の節）。同一性の判定より先に拒む。 */
+function requireComparable(v: Value, op: string): Value {
+  if (isNonData(v)) {
+    throw new EffectfulYamlError(
+      `'${op}' cannot compare a function or operation value, got: ${describe(v)}`,
+    );
+  }
+  return v;
 }
 
 function deepEqual(a: Value, b: Value): boolean {
@@ -361,7 +371,10 @@ function evalBin(node: Extract<Node, { k: 'bin' }>, env: Env): Value {
     return l ? true : requireBoolean(evalNode(node.r, env), '||');
   }
   if (op === '==' || op === '!=') {
-    const eq = deepEqual(evalNode(node.l, env), evalNode(node.r, env));
+    const eq = deepEqual(
+      requireComparable(evalNode(node.l, env), op),
+      requireComparable(evalNode(node.r, env), op),
+    );
     return op === '==' ? eq : !eq;
   }
   const l = requireNumber(evalNode(node.l, env), op);
@@ -470,7 +483,9 @@ function stringifyForInterpolation(v: Value): string {
   if (typeof v === 'string') return v;
   if (typeof v === 'number') return String(v);
   if (typeof v === 'boolean') return v ? 'true' : 'false';
-  throw new EffectfulYamlError('cannot interpolate a list, mapping, null, or function value into a string');
+  throw new EffectfulYamlError(
+    'cannot interpolate a list, mapping, null, function, or operation value into a string',
+  );
 }
 
 /**
@@ -515,4 +530,47 @@ export function refPathOf(scalar: string): string[] | undefined {
   }
   if (node.k !== 'ref') return undefined;
   return [node.name, ...node.path.map((seg) => (seg.k === 'key' ? seg.name : String(seg.i)))];
+}
+
+/**
+ * スカラーに含まれるすべての `${式}` の参照名の先頭区画を返す（`${a.b} ${xs[0]}` は `['a', 'xs']`）。
+ * 評価前の未定義参照の検査（typecheck.ts）が使う。パースできない文字列は名前を返さず、
+ * 報告は評価時に任せる。
+ */
+export function referencedNames(scalar: string): string[] {
+  let segments: Segment[];
+  try {
+    segments = splitInterpolation(scalar);
+  } catch {
+    return [];
+  }
+  const names: string[] = [];
+  for (const seg of segments) {
+    if (seg.kind !== 'expr') continue;
+    let node: Node;
+    try {
+      node = parse(seg.src);
+    } catch {
+      continue;
+    }
+    collectRefs(node, names);
+  }
+  return names;
+}
+
+function collectRefs(node: Node, out: string[]): void {
+  switch (node.k) {
+    case 'ref':
+      out.push(node.name);
+      return;
+    case 'not':
+      collectRefs(node.e, out);
+      return;
+    case 'bin':
+      collectRefs(node.l, out);
+      collectRefs(node.r, out);
+      return;
+    default:
+      return;
+  }
 }

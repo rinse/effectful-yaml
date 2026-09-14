@@ -1,7 +1,7 @@
 /**
- * 文脈の導入を伴うマッピング（頭キー `$let`・`$std.state`・`$with`・`$std.for` を持ち、その頭を除いた
+ * 文脈の導入を伴うマッピング（頭キー `$let`・`$for`・`$handler` を持ち、その頭を除いた
  * 残りが本体になる導出形）の動作確認。
- * 仕様: docs/grammar.md（草案 0.12）「文脈の導入を伴うマッピング」。
+ * 仕様: docs/grammar.md（草案 0.13）「文脈の導入」「$do」「$handler」「$default」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -40,12 +40,12 @@ replicas:
     });
   });
 
-  it('$in を省いた $with：局所ハンドラで未渡しパラメータを null にする', async () => {
+  it('$in を省いた $handler：局所ハンドラで未渡しパラメータを null にする', async () => {
     await expect(
       run(
         `
 database:
-  $with:
+  $handler:
     std.fail: {$fn: _, $body: {$resume: null}}
   host: {$std.param: db_host}
   port: {$std.param: db_port}
@@ -55,10 +55,11 @@ database:
     ).resolves.toEqual({ database: { host: 'db', port: null } });
   });
 
-  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する $std.list に届く', async () => {
+  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する std.list のハンドラに届く', async () => {
     await expect(
       run(`
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     x: {$std.each: [1, 2]}
   v: \${x}
@@ -66,13 +67,13 @@ $std.list:
     ).resolves.toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('$in を省いた $std.state：状態のスコープがマッピングの中で閉じる', async () => {
+  it('$in を省いた $handler：状態のスコープがマッピングの中で閉じる', async () => {
     await expect(
       run(`
 $do:
 - $std.set: {n: 100}
 - inner:
-    $std.state: {n: 0}
+    $handler: {$std.state: {n: 0}}
     a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
     b: {$std.get: n}
   outer: {$std.get: n}
@@ -80,24 +81,35 @@ $do:
     ).resolves.toEqual({ inner: { a: 1, b: 1 }, outer: 100 });
   });
 
-  it('三つの頭を揃えて置く形', async () => {
+  it('三つの頭（$let・$for・$handler）を揃えて置く形', async () => {
+    // 文書順に $let が最も外側、$handler が最も内側になる。先に書いた $let の束縛は
+    // 後の頭の $for の右辺と $handler の式の両方から見える。$for の選択は包囲する
+    // std.list のハンドラが処理する。
     await expect(
       run(`
-$let:
-  base: 41
-$std.state: {n: "\${base}"}
-$with:
-  std.fail: {$fn: _, $body: {$resume: "\${base}"}}
-seed: {$std.get: n}
-missing: {$std.param: nope}
+$handler: "\${std.list}"
+$in:
+  $let:
+    base: 40
+    ks: [1, 2]
+  $for:
+    k: "\${ks}"
+  $handler:
+    std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+  seed: "\${base + k}"
+  missing: {$std.param: nope}
 `),
-    ).resolves.toEqual({ seed: 41, missing: 41 });
+    ).resolves.toEqual([
+      { seed: 41, missing: 40 },
+      { seed: 42, missing: 40 },
+    ]);
   });
 
   it('残りが $if の文脈の導入：fizzbuzz が平らなリストになる', async () => {
     await expect(
       run(`
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     i0: {$std.each: {$std.range: 15}}
     i: \${i0 + 1}
@@ -116,10 +128,10 @@ $std.list:
     ]);
   });
 
-  it('$with の頭と $in の本体', async () => {
+  it('$handler の頭と $in の本体', async () => {
     await expect(
       run(`
-$with:
+$handler:
   std.fail: {$fn: _, $body: 0}
 $in:
   $std.lookup: {in: {}, key: missing}
@@ -127,12 +139,12 @@ $in:
     ).resolves.toBe(0);
   });
 
-  it('頭が二つと $in：$std.state の初期値は先に書いた $let の束縛を見る', async () => {
+  it('頭が二つと $in：$handler の式は先に書いた $let の束縛を見る', async () => {
     await expect(
       run(`
 $let:
   start: 40
-$std.state: {n: "\${start}"}
+$handler: {$std.state: {n: "\${start}"}}
 $in:
   $do:
   - $let:
@@ -143,7 +155,7 @@ $in:
     ).resolves.toBe(42);
   });
 
-  it('残りが演算の文脈の導入', async () => {
+  it('残りが呼び出しの文脈の導入', async () => {
     await expect(
       run(`
 $let:
@@ -160,14 +172,14 @@ $std.lookup:
       `
 $let:
   base: 40
-$std.state: {n: "\${base + 2}"}
+$handler: {$std.state: {n: "\${base + 2}"}}
 $in: {$std.get: n}
 `,
       `
 $let:
   base: 40
 $in: {$std.get: n}
-$std.state: {n: "\${base + 2}"}
+$handler: {$std.state: {n: "\${base + 2}"}}
 `,
     ];
     for (const yaml of both) await expect(run(yaml)).resolves.toBe(42);
@@ -205,26 +217,27 @@ $in: {$.f: 1}
     ).rejects.toThrow('undefined reference: a');
   });
 
-  it('$let と $with の頭が並ぶとき、先に書いた $let が外側になり $in は $with の本体である', async () => {
+  it('$let と $handler の頭が並ぶとき、先に書いた $let が外側になり $in は $handler の本体である', async () => {
     await expect(
       run(`
 $let:
   x: 1
 $in: {$.throw: boom}
-$with:
+$handler:
   throw: {$fn: m, $body: "caught \${m} \${x}"}
 `),
     ).resolves.toBe('caught boom 1');
   });
 
-  it('マッピングのキーに置いた $std.for：後の束縛が先の束縛を見て表を組み替える', async () => {
+  it('マッピングのキーに置いた $for：後の束縛が先の束縛を見て表を組み替える', async () => {
     const result = await run(`
 $let:
   forms:
     "a{id}": [x, y]
     "b{id}": [z]
-$std.mapping:
-  $std.for:
+$handler: "\${std.mapping}"
+$in:
+  $for:
     entry: \${forms}
     label: \${entry.value}
   key: \${label}
@@ -235,11 +248,12 @@ $std.mapping:
     expect(Object.keys(result as object)).toEqual(['x', 'y', 'z']);
   });
 
-  it('$in を伴う $std.for：$std.list の下で複数の束縛が総当たりになる', async () => {
+  it('$in を伴う $for：std.list のハンドラの下で複数の束縛が総当たりになる', async () => {
     await expect(
       run(`
-$std.list:
-  $std.for:
+$handler: "\${std.list}"
+$in:
+  $for:
     x: [1, 2]
     y: [10, 20]
   $in: \${x}-\${y}
@@ -247,12 +261,13 @@ $std.list:
     ).resolves.toEqual(['1-10', '1-20', '2-10', '2-20']);
   });
 
-  it('$do の文に置いた $std.for と $std.where で組を絞り込む', async () => {
+  it('$do の文に置いた $for と $std.where で組を絞り込む', async () => {
     await expect(
       run(`
-$std.list:
+$handler: "\${std.list}"
+$in:
   $do:
-  - $std.for:
+  - $for:
       x: [1, 2, 3]
       y: [1, 2, 3]
   - $std.where: \${x < y}
@@ -266,11 +281,12 @@ $std.list:
     ]);
   });
 
-  it('$std.for を $let より先に書くと、$let の右辺が選ばれた要素を見る', async () => {
+  it('$for を $let より先に書くと、$let の右辺が選ばれた要素を見る', async () => {
     await expect(
       run(`
-$std.list:
-  $std.for:
+$handler: "\${std.list}"
+$in:
+  $for:
     x: [1, 2]
   $let:
     y: \${x + 1}
@@ -280,27 +296,21 @@ $std.list:
   });
 
   it('束縛名にドットは使えない', async () => {
-    await expect(run('{$std.for: {"a.b": 1}, $in: null}')).rejects.toThrow(
-      '$std.for binding name must not contain a dot: a.b',
+    await expect(run('{$for: {"a.b": 1}, $in: null}')).rejects.toThrow(
+      '$for binding name must not contain a dot: a.b',
     );
   });
 
   it('束縛がマッピングでなければエラー', async () => {
-    await expect(run('{$std.for: [1], $in: null}')).rejects.toThrow(
-      '$std.for requires a mapping of bindings',
+    await expect(run('{$for: [1], $in: null}')).rejects.toThrow(
+      '$for requires a mapping of bindings',
     );
   });
 
-  it('$in の無い $std.for を $do の外に置くとエラー', async () => {
-    await expect(run('{$std.for: {x: [1]}}')).rejects.toThrow(
-      '$std.for without $in is only allowed as a statement of $do',
-    );
-  });
-
-  it('データ位置の $std.for は境界そのものなので、選択のハンドラが無ければ拒否される', async () => {
+  it('データ位置の $for は境界そのものなので、選択のハンドラが無ければ拒否される', async () => {
     await expect(
       run(`
-$std.for:
+$for:
   x: [1, 2]
 v: "\${x}"
 `),
@@ -342,17 +352,17 @@ $in:
     expect(a).toEqual({ name: 'api', image: 'ghcr.io/acme/api:dev', replicas: 1 });
   });
 
-  it('$in を省いた $with：局所ハンドラで未渡しパラメータを null にする（ログの順序も比べる）', async () => {
+  it('$in を省いた $handler：局所ハンドラで未渡しパラメータを null にする（ログの順序も比べる）', async () => {
     const omitted = `
 database:
-  $with:
+  $handler:
     std.fail: {$fn: _, $body: {$resume: null}}
   host: {$std.param: db_host}
   port: {$std.param: db_port}
 `;
     const expanded = `
 database:
-  $with:
+  $handler:
     std.fail: {$fn: _, $body: {$resume: null}}
   $in:
     host: {$std.param: db_host}
@@ -368,15 +378,17 @@ database:
     expect(omittedLogs).toEqual(expandedLogs);
   });
 
-  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する $std.list に届く', async () => {
+  it('合成位置で文脈を導入する $let：$std.each の選択が包囲する std.list のハンドラに届く', async () => {
     const omitted = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     x: {$std.each: [1, 2]}
   v: \${x}
 `;
     const expanded = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     x: {$std.each: [1, 2]}
   $in:
@@ -387,12 +399,12 @@ $std.list:
     expect(a).toEqual([{ v: 1 }, { v: 2 }]);
   });
 
-  it('$in を省いた $std.state：状態のスコープがマッピングの中で閉じる', async () => {
+  it('$in を省いた $handler：状態のスコープがマッピングの中で閉じる', async () => {
     const omitted = `
 $do:
 - $std.set: {n: 100}
 - inner:
-    $std.state: {n: 0}
+    $handler: {$std.state: {n: 0}}
     a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
     b: {$std.get: n}
   outer: {$std.get: n}
@@ -401,7 +413,7 @@ $do:
 $do:
 - $std.set: {n: 100}
 - inner:
-    $std.state: {n: 0}
+    $handler: {$std.state: {n: 0}}
     $in:
       a: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
       b: {$std.get: n}
@@ -412,36 +424,48 @@ $do:
     expect(a).toEqual({ inner: { a: 1, b: 1 }, outer: 100 });
   });
 
-  it('三つの頭を揃えて置く形', async () => {
+  it('三つの頭（$let・$for・$handler）を揃えて置く形', async () => {
     const omitted = `
-$let:
-  base: 41
-$std.state: {n: "\${base}"}
-$with:
-  std.fail: {$fn: _, $body: {$resume: "\${base}"}}
-seed: {$std.get: n}
-missing: {$std.param: nope}
+$handler: "\${std.list}"
+$in:
+  $let:
+    base: 40
+    ks: [1, 2]
+  $for:
+    k: "\${ks}"
+  $handler:
+    std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+  seed: "\${base + k}"
+  missing: {$std.param: nope}
 `;
     const expanded = `
-$let:
-  base: 41
+$handler: "\${std.list}"
 $in:
-  $std.state: {n: "\${base}"}
+  $let:
+    base: 40
+    ks: [1, 2]
   $in:
-    $with:
-      std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+    $for:
+      k: "\${ks}"
     $in:
-      seed: {$std.get: n}
-      missing: {$std.param: nope}
+      $handler:
+        std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+      $in:
+        seed: "\${base + k}"
+        missing: {$std.param: nope}
 `;
     const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
-    expect(a).toEqual({ seed: 41, missing: 41 });
+    expect(a).toEqual([
+      { seed: 41, missing: 40 },
+      { seed: 42, missing: 40 },
+    ]);
   });
 
   it('残りが $if の文脈の導入', async () => {
     const omitted = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     i0: {$std.each: {$std.range: 15}}
     i: \${i0 + 1}
@@ -456,7 +480,8 @@ $std.list:
       $else: "\${i}"
 `;
     const expanded = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     i0: {$std.each: {$std.range: 15}}
     i: \${i0 + 1}
@@ -478,9 +503,9 @@ $std.list:
     ]);
   });
 
-  it('$with の頭と $in の本体', async () => {
+  it('$handler の頭と $in の本体', async () => {
     const omitted = `
-$with:
+$handler:
   std.fail: {$fn: _, $body: 0}
 $in:
   $std.lookup: {in: {}, key: missing}
@@ -488,7 +513,7 @@ $in:
     const expanded = `
 $in:
   $std.lookup: {in: {}, key: missing}
-$with:
+$handler:
   std.fail: {$fn: _, $body: 0}
 `;
     const a = await run(omitted);
@@ -500,14 +525,14 @@ $with:
     const omitted = `
 $let:
   start: 40
-$std.state: {n: "\${start}"}
+$handler: {$std.state: {n: "\${start}"}}
 $in: {$std.get: n}
 `;
     const expanded = `
 $let:
   start: 40
 $in:
-  $std.state: {n: "\${start}"}
+  $handler: {$std.state: {n: "\${start}"}}
   $in: {$std.get: n}
 `;
     const a = await run(omitted);
@@ -515,7 +540,7 @@ $in:
     expect(a).toBe(40);
   });
 
-  it('残りが演算の文脈の導入', async () => {
+  it('残りが呼び出しの文脈の導入', async () => {
     const omitted = `
 $let:
   obj: {x: 10, y: 100}
@@ -536,16 +561,18 @@ $in:
     expect(a).toBe(10);
   });
 
-  it('$std.for は束縛を std.each で包んだ $let と一致する', async () => {
+  it('$for は束縛を std.each で包んだ $let と一致する', async () => {
     const forHead = `
-$std.list:
-  $std.for:
+$handler: "\${std.list}"
+$in:
+  $for:
     x: [1, 2]
     y: [10, 20]
   $in: \${x}-\${y}
 `;
     const expanded = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $let:
     x: {$std.each: [1, 2]}
     y: {$std.each: [10, 20]}
@@ -556,17 +583,19 @@ $std.list:
     expect(a).toEqual(['1-10', '1-20', '2-10', '2-20']);
   });
 
-  it('$std.for は束縛を std.each で包んだ $let と一致する（ログの順序も比べる）', async () => {
+  it('$for は束縛を std.each で包んだ $let と一致する（ログの順序も比べる）', async () => {
     const forHead = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $do:
-  - $std.for:
+  - $for:
       x: [1, 2]
   - $std.log: \${x}
   - \${x}
 `;
     const expanded = `
-$std.list:
+$handler: "\${std.list}"
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2]}
@@ -585,16 +614,106 @@ $std.list:
 });
 
 // -----------------------------------------------------------------------------
+// $handler の頭は節のマッピングでも関数の式でもよい
+// -----------------------------------------------------------------------------
+
+describe('$handler の頭は節のマッピングでも関数の式でも同じに働く', () => {
+  it('節のマッピングを書いた $handler：文の位置と $in の位置で一致する', async () => {
+    const statement = `
+$do:
+- $handler:
+    std.each: {$fn: xs, $body: "\${xs[0]}"}
+- {$std.each: [a, b]}
+`;
+    const withIn = `
+$handler:
+  std.each: {$fn: xs, $body: "\${xs[0]}"}
+$in: {$std.each: [a, b]}
+`;
+    const a = await run(statement);
+    expect(a).toEqual(await run(withIn));
+    expect(a).toBe('a');
+  });
+
+  it('関数の式を書いた $handler：文の位置と $in の位置で一致する', async () => {
+    // std.list は本体の閉包を受け取る関数なので、$handler の式に置けば節のマッピングと
+    // 同じ位置に立つ。
+    const statement = `
+$do:
+- $handler: "\${std.list}"
+- {$std.each: [a, b]}
+`;
+    const withIn = `
+$handler: "\${std.list}"
+$in: {$std.each: [a, b]}
+`;
+    const a = await run(statement);
+    expect(a).toEqual(await run(withIn));
+    expect(a).toEqual(['a', 'b']);
+  });
+
+  it('関数の式を書いた $handler の文も、残りの文すべてに文脈を導入する', async () => {
+    await expect(
+      run(`
+$do:
+- $handler: "\${std.list}"
+- $for: {x: [1, 2]}
+- \${x}
+`),
+    ).resolves.toEqual([1, 2]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// $default は頭と本体をまとめて包む
+// -----------------------------------------------------------------------------
+
+describe('文脈の導入に添えた $default', () => {
+  it('$default は頭と本体をまとめて包む', async () => {
+    // 展開は {X ∪ {$default: 式}} ≡ {$handler: {std.fail: ...}, $in: X} なので、
+    // 頭（束縛の右辺）で起きた失敗も本体で起きた失敗も同じ既定値に落ちる。
+    await expect(
+      run(`
+$let:
+  x: {$std.param: nope}
+$in: "\${x}"
+$default: fallback
+`),
+    ).resolves.toBe('fallback');
+    await expect(
+      run(`
+$let:
+  x: 1
+$in: {$std.param: nope}
+$default: fallback
+`),
+    ).resolves.toBe('fallback');
+  });
+
+  it('既定値の式からは頭の束縛が見えない', async () => {
+    // $default は頭の外側に立つので、頭が導入した束縛はそのスコープに入らない。
+    await expect(
+      run(`
+$let:
+  x: 1
+$in: {$std.param: nope}
+$default: "\${x}"
+`),
+    ).rejects.toThrow('undefined reference: x');
+  });
+});
+
+// -----------------------------------------------------------------------------
 // 並びとスコープ
 // -----------------------------------------------------------------------------
 
 describe('文脈の導入の並びとスコープ', () => {
-  it('$let の後に置いた $with はその束縛を見る', async () => {
+  it('$let の後に置いた $handler はその束縛を見る', async () => {
     await expect(
       run(`
 $let:
   fallback: none
-$with:
+$handler:
   std.fail:
     $fn: _
     $body: {$resume: "\${fallback}"}
@@ -603,10 +722,10 @@ host: {$std.param: db_host}
     ).resolves.toEqual({ host: 'none' });
   });
 
-  it('$with を $let より先に書くと、$with の節はまだ束縛を見られない', async () => {
+  it('$handler を $let より先に書くと、$handler の節はまだ束縛を見られない', async () => {
     await expect(
       run(`
-$with:
+$handler:
   std.fail:
     $fn: _
     $body: {$resume: "\${fallback}"}
@@ -674,12 +793,12 @@ v: "\${x}"
 // -----------------------------------------------------------------------------
 
 describe('文脈の導入とローカル作用', () => {
-  it('$in を省いた $with が宣言したローカル作用は、データのキーから呼べる', async () => {
+  it('$in を省いた $handler が宣言したローカル作用は、データのキーから呼べる', async () => {
     // 節は $resume を呼ばないので、その戻り値がハンドラ全体の結果になり、
     // 呼び出しを包んでいたマッピングの残りは評価されない（節の戻り値がハンドラの継続を置き換える）。
     await expect(
       run(`
-$with:
+$handler:
   throw:
     $fn: m
     $body: caught \${m}
@@ -688,12 +807,12 @@ a: {$.throw: boom}
     ).resolves.toBe('caught boom');
   });
 
-  it('$in を省いた $with が束縛した素通しの関数を $let で外へ持ち出して呼ぶと脱出のエラーになり、宣言位置は文脈の導入を伴うマッピングの構文パスになる', async () => {
+  it('$in を省いた $handler が束縛した素通しの関数を $let で外へ持ち出して呼ぶと脱出のエラーになり、宣言位置は文脈の導入を伴うマッピングの構文パスになる', async () => {
     await expect(
       run(`
 $let:
   f:
-    $with:
+    $handler:
       throw:
         $fn: msg
         $body: caught \${msg}
@@ -706,7 +825,7 @@ $in:
       run(`
 $let:
   services:
-    $with:
+    $handler:
       throw:
         $fn: msg
         $body: caught \${msg}
@@ -747,17 +866,21 @@ describe('$ キーとデータのキーの混在', () => {
     ['$let の残りの {$in, データのキー}', '{$let: {x: 1}, $in: 1, k: v}'],
     ['完結した $if', '{$if: true, $then: 1, $else: 2, k: v}'],
     ['$do', '{$do: [1], k: v}'],
-    ['演算', '{$std.log: hi, k: v}'],
-    ['補助キーを伴う演算', '{$std.param: x, name: api}'],
+    ['呼び出し', '{$std.log: hi, k: v}'],
+    ['補助キーを伴う呼び出し', '{$std.param: x, name: api}'],
   ])('%s は $ key mixed with plain keys で拒否される', async (_label, yaml) => {
     await expect(run(yaml)).rejects.toThrow('$ key mixed with plain keys');
   });
 });
 
 describe('残りが空の頭', () => {
-  it('頭だけのマッピングは $do の文の位置でだけ書ける', async () => {
-    await expect(run('{$let: {b: 1}}')).rejects.toThrow(
-      '$let without $in is only allowed as a statement of $do',
+  it.each([
+    ['$let', '{$let: {b: 1}}'],
+    ['$for', '{$for: {x: [1]}}'],
+    ['$handler', '{$handler: {std.fail: {$fn: _, $body: 0}}}'],
+  ])('頭だけの %s は $do の文の位置でだけ書ける', async (head, yaml) => {
+    await expect(run(yaml)).rejects.toThrow(
+      `${head} without $in is only allowed as a statement of $do`,
     );
   });
 });
@@ -778,18 +901,18 @@ $do:
     ).resolves.toBe(2);
   });
 
-  it('$in を伴う $with は残りの文を包まない', async () => {
+  it('$in を伴う $handler は残りの文を包まない', async () => {
     await expect(
       run(`
 $do:
-- {$with: {std.fail: {$fn: _, $body: caught}}, $in: {$std.fail: x}}
+- {$handler: {std.fail: {$fn: _, $body: caught}}, $in: {$std.fail: x}}
 - done
 `),
     ).resolves.toBe('done');
     await expect(
       run(`
 $do:
-- {$with: {std.fail: {$fn: _, $body: caught}}, $in: 1}
+- {$handler: {std.fail: {$fn: _, $body: caught}}, $in: 1}
 - {$std.fail: boom}
 `),
     ).rejects.toThrow('failure: boom');

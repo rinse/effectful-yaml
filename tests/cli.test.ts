@@ -74,6 +74,16 @@ describe('eff-yaml CLI', () => {
     expect(r.err).toContain('name=value');
   });
 
+  it('--help は使い方を標準出力に書く', async () => {
+    const r = await runCli(['--help']);
+    expect(r.code).toBe(0);
+    expect(r.err).toBe('');
+    expect(r.out).toContain('Usage: eff-yaml');
+    // --ops のモジュールの二つの export の役割が書かれている。
+    expect(r.out).toContain('--ops');
+    expect(r.out).toContain('default（または名前つきの ops）export が演算、functions export が関数。');
+  });
+
   it('--version は eff-yaml とバージョンを標準出力に書く', async () => {
     const r = await runCli(['--version']);
     expect(r.code).toBe(0);
@@ -110,7 +120,7 @@ export default { 'env.get': (name) => { throw new OperationFailure('environment 
 `,
         'utf8',
       );
-      const ok = await runCli(['--ops', opsFile], 'home: {$std.opt: {$env.get: HOME}, $default: /}');
+      const ok = await runCli(['--ops', opsFile], 'home: {$env.get: HOME, $default: /}');
       expect(ok.code).toBe(0);
       expect(ok.out).toBe('home: "/"\n');
       const ng = await runCli(['--ops', opsFile], 'home: {$env.get: HOME}');
@@ -127,6 +137,58 @@ export default { 'env.get': (name) => { throw new OperationFailure('environment 
       expect(r.code).toBe(0);
       const written = await readFile(outFile, 'utf8');
       expect(written.split('\n')[0]).toContain(` --ops ${opsFile}`);
+    });
+
+    it('名前つきの ops export も default export と同じに扱う', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      await writeFile(opsFile, "export const ops = { 'str.upper': (s) => String(s).toUpperCase() };", 'utf8');
+      const r = await runCli(['--ops', opsFile], 'a: {$str.upper: hello}');
+      expect(r.code).toBe(0);
+      expect(r.out).toBe('a: "HELLO"\n');
+    });
+
+    it('functions export をホストの関数として登録する', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      await writeFile(
+        opsFile,
+        `export default { 'env.get': (name) => 'op:' + name };
+export const functions = { 'str.upper': (s) => String(s).toUpperCase() };
+`,
+        'utf8',
+      );
+      const r = await runCli(['--ops', opsFile], 'a: {$str.upper: hello}\nb: {$env.get: HOME}');
+      expect(r.code).toBe(0);
+      expect(r.out).toBe('a: "HELLO"\nb: "op:HOME"\n');
+    });
+
+    it('functions export の関数は $handler で横取りできない', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'ops.mjs');
+      await writeFile(
+        opsFile,
+        `export default {};
+export const functions = { 'str.upper': (s) => String(s).toUpperCase() };
+`,
+        'utf8',
+      );
+      const r = await runCli(
+        ['--ops', opsFile],
+        '{$handler: {str.upper: {$fn: s, $body: {$resume: nope}}}, $in: {$str.upper: hello}}',
+      );
+      expect(r.code).toBe(1);
+      expect(r.err).toContain("$handler clause 'str.upper' must name an operation, got: <function>");
+    });
+
+    it('functions export がマッピングでないと終了コード 1', async () => {
+      dir = await mkdtemp(join(tmpdir(), 'eff-yaml-'));
+      const opsFile = join(dir, 'bad.mjs');
+      await writeFile(opsFile, 'export default {};\nexport const functions = 42;\n', 'utf8');
+      const r = await runCli(['--ops', opsFile], 'a: 1');
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('--ops');
+      expect(r.err).toContain('functions');
     });
 
     it('存在しないモジュールを指定すると終了コード 1 でエラーになる', async () => {

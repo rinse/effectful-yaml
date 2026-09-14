@@ -14,7 +14,7 @@
  *    残りが主形の文脈の導入、フロー形式の文脈の導入、シーケンスの標識と同じ行に書かれた文脈の導入は
  *    島として置換する。
  * 5. 原文と結果の形が合わない場合（選択が島の外へ漏れて文書全体が分岐した、
- *    `$in` を省いた `$with` の節が本体を打ち切って値がマッピングでなくなった等）は
+ *    `$in` を省いた `$handler` の節が本体を打ち切って値がマッピングでなくなった等）は
  *    エラーにせず、合わなくなったノード全体（最悪は文書全体）の置換に退化する。
  */
 import { parse, stringify } from 'yaml';
@@ -155,10 +155,10 @@ image: ghcr.io/acme/api
 `);
   });
 
-  it('$std.for の頭も、$std.each の節を持つ $with より内側なら残るのはデータのキーだけ', async () => {
-    const src = `$with:
+  it('$for の頭も、$std.each の節を持つ $handler より内側なら残るのはデータのキーだけ', async () => {
+    const src = `$handler:
   std.each: {$fn: xs, $body: {$resume: "\${xs[0]}"}}
-$std.for:
+$for:
   x: [1]
 a: \${x}   # 行内
 `;
@@ -166,14 +166,14 @@ a: \${x}   # 行内
 `);
   });
 
-  it('三つの頭を並べても、残るのはデータのキーだけ', async () => {
+  it('頭を並べても、残るのはデータのキーだけ', async () => {
+    // 0.13 の頭は $let・$for・$handler の三つで、状態もハンドラも同じキー $handler に載る。
+    // 同じマッピングに $handler は一つしか書けないので、失敗の既定値はデータのキーの $default に置く。
     const src = `$let:
   base: 41
-$std.state: {n: "\${base}"}
-$with:
-  std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+$handler: {$std.state: {n: "\${base}"}}
 seed: {$std.get: n}   # 状態
-missing: {$std.param: nope}
+missing: {$std.param: nope, $default: "\${base}"}
 `;
     await expect(render(src)).resolves.toBe(`seed: 41   # 状態
 missing: 41
@@ -243,8 +243,8 @@ size:
 });
 
 describe('形が合わない場合は置換の退化', () => {
-  it('$in を省いた $with の節が本体を打ち切ると、島の置換に退化する', async () => {
-    const src = `$with:
+  it('$in を省いた $handler の節が本体を打ち切ると、島の置換に退化する', async () => {
+    const src = `$handler:
   throw:
     $fn: m
     $body: caught \${m}
@@ -256,7 +256,8 @@ a: {$.throw: boom}   # 消える
   it('選択が島の外に漏れて文書が分岐したら、文書全体の再直列化に退化する', async () => {
     // データ位置では島自身が作用境界なので選択は漏れない（tests/eval.test.ts の
     // 「データ文脈では最も外側の $ 式だけが境界になる」）。漏れるのは $do の中である。
-    const src = `$std.list:
+    const src = `$handler: \${std.list}
+$in:
   $do:
   - a: {$std.each: [1, 2]}
 `;

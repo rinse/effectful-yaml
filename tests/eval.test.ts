@@ -72,7 +72,8 @@ describe('選択の基本形（grammar.md 用例）', () => {
   it('末尾が $std.each なら 18 要素になる', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [a, b, c]}
@@ -91,7 +92,8 @@ $std.list:
   it('末尾が literal なリストなら 9 ペアになる', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [a, b, c]}
@@ -109,7 +111,8 @@ $std.list:
   it('$std.each はマッピングを {key, value} に分解する', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       e: {$std.each: {web: 80, db: 5432}}
@@ -119,22 +122,26 @@ $std.list:
   });
 
   it('リストの要素は合成なので、選択は外側のブロック全体を分岐させる', async () => {
-    await expect(run('$std.list: {$do: [[1, {$std.each: [a, b]}]]}')).resolves.toEqual([
+    await expect(
+      run('{$handler: "${std.list}", $in: {$do: [[1, {$std.each: [a, b]}]]}}'),
+    ).resolves.toEqual([
       [1, 'a'],
       [1, 'b'],
     ]);
   });
 
   it('演算の引数も合成なので、$std.each の入れ子が平坦化される', async () => {
-    await expect(run('{$std.list: {$std.each: {$std.each: [[1, 2], [3, 4]]}}}')).resolves.toEqual([
-      1, 2, 3, 4,
-    ]);
+    await expect(
+      run('{$handler: "${std.list}", $in: {$std.each: {$std.each: [[1, 2], [3, 4]]}}}'),
+    ).resolves.toEqual([1, 2, 3, 4]);
   });
 
   it('データ文脈では最も外側の $ 式だけが境界になる（$do の中との対比）', async () => {
     // 上の $do のテストでは同じ字面がブロック全体を分岐させる。
-    // データ文脈では {$std.list} 自身が境界なので、収集はその中で閉じる。
-    await expect(run('x: [1, {$std.list: {$std.each: [a, b]}}]')).resolves.toEqual({
+    // データ文脈では選択のハンドラ自身が境界なので、収集はその中で閉じる。
+    await expect(
+      run('x: [1, {$handler: "${std.list}", $in: {$std.each: [a, b]}}]'),
+    ).resolves.toEqual({
       x: [1, ['a', 'b']],
     });
   });
@@ -150,7 +157,8 @@ describe('$std.where', () => {
   it('内包表記になる', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2, 3]}
@@ -169,40 +177,41 @@ $std.list:
   it('境界に単独で置くと、真は null、偽は打ち切りの選択が境界に達してエラーになる', async () => {
     await expect(run('{$std.where: true}')).resolves.toBeNull();
     await expect(run('{$std.where: false}')).rejects.toThrow(/unhandled choice/);
-    await expect(run('{$std.list: {$std.where: true}}')).resolves.toEqual([null]);
-    await expect(run('{$std.list: {$std.where: false}}')).resolves.toEqual([]);
+    await expect(run('{$handler: "${std.list}", $in: {$std.where: true}}')).resolves.toEqual([
+      null,
+    ]);
+    await expect(run('{$handler: "${std.list}", $in: {$std.where: false}}')).resolves.toEqual([]);
   });
 
   it('打ち切りは展開のとおり std.each の節が捕捉する', async () => {
     await expect(
       run(`
+$handler:
+  std.each:
+    $fn: xs
+    $body: caught
 $in:
   $do:
   - $std.where: false
   - after
-$with:
-  std.each:
-    $fn: xs
-    $body: caught
 `),
     ).resolves.toBe('caught');
   });
 
-  it('std.where という節では捕捉できない（演算ではないため）', async () => {
-    // 節は死節になり、打ち切り（空の std.each）は外側の $std.list が処理する。
+  it('std.where は節の名前に書けない（関数であり演算ではないため）', async () => {
+    // 節の名前は環境で解決され、解決先が演算でなければエラーである。
     await expect(
       run(`
-$std.list:
-  $in:
-    $do:
-    - $std.where: false
-    - after
-  $with:
-    std.where:
-      $fn: _
-      $body: caught
+$handler:
+  std.where:
+    $fn: _
+    $body: caught
+$in:
+  $do:
+  - $std.where: false
+  - after
 `),
-    ).resolves.toEqual([]);
+    ).rejects.toThrow("$handler clause 'std.where' must name an operation, got: <function>");
   });
 });
 
@@ -228,24 +237,24 @@ port: {$std.param: db_port, $default: 5432}
     // $default の展開が成り立つには、失敗が呼び出し位置で生じなければならない。
     await expect(
       run(`
-$in: {$std.param: nope}
-$with:
+$handler:
   std.fail:
     $fn: msg
     $body: caught \${msg}
+$in: {$std.param: nope}
 `),
     ).resolves.toBe('caught parameter not provided: nope');
-    await expect(run('{$std.opt: {$std.param: nope}}')).resolves.toBe(null);
+    await expect(run('{$std.param: nope, $default: null}')).resolves.toBe(null);
   });
 
   it('{$std.param: 名前, $default: 式} は std.fail 節への展開と等価である', async () => {
-    // 展開: {$std.param: 名前} を $with で包み、std.fail の節で $default の式を返す。
+    // 展開: {$std.param: 名前} を $handler で包み、std.fail の節で $default の式を返す。
     const expanded = `
-$in: {$std.param: port}
-$with:
+$handler:
   std.fail:
     $fn: _
     $body: 5432
+$in: {$std.param: port}
 `;
     const paramSets: Record<string, Value>[] = [{}, { port: 8080 }];
     for (const params of paramSets) {
@@ -282,7 +291,7 @@ port:
       /unhandled choice/,
     );
     await expect(
-      run('{$std.list: {$std.param: x, $default: {$std.each: [1, 2]}}}'),
+      run('{$handler: "${std.list}", $in: {$std.param: x, $default: {$std.each: [1, 2]}}}'),
     ).resolves.toEqual([1, 2]);
   });
 
@@ -333,7 +342,8 @@ $do:
   it('マッピングの値の $std.get が貫流状態を読む（選択と組み合わせた形）', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $std.set: {n: 0}
   - $let:
@@ -356,34 +366,35 @@ $std.list:
   });
 
   it('未作成のセルの失敗は、状態のハンドラより外側で捕まえられる', async () => {
-    // 仕様の展開では、この失敗は $std.state の節の本体（`${hits[0]}`）が起こす。
-    // 節の本体の作用はそのハンドラ自身ではなく外側で処理される（$with の規則）ので、
-    // 捕まえられるのは $std.state を包む側だけである。
+    // 仕様の展開では、この失敗は std.state の std.get の節の本体（`${hits[0]}`）が起こす。
+    // 節の本体の作用はそのハンドラ自身ではなく外側で処理されるので、
+    // 捕まえられるのは std.state のハンドラを包む側だけである。
     await expect(
       run(`
-$std.opt:
-  $std.state: {}
-  $in: {$std.get: nope}
+$handler: {$std.state: {}}
+$in: {$std.get: nope}
+$default: null
 `),
     ).resolves.toBe(null);
-    // 内側に置いた $std.opt は、状態のハンドラより内側なので捕まえられない。
+    // 内側に置いた $default は、状態のハンドラより内側なので捕まえられない。
     await expect(
       run(`
-$std.state: {}
+$handler: {$std.state: {}}
 $in:
-  $std.opt: {$std.get: nope}
+  $std.get: nope
+  $default: null
 `),
     ).rejects.toThrow('failure: uninitialized cell: nope');
   });
 
-  it('内側の $std.state は外の状態に触れない（スコープの隔離）', async () => {
+  it('内側の std.state のハンドラは外の状態に触れない（スコープの隔離）', async () => {
     await expect(
       run(`
 $do:
 - $std.set: {n: 100}
 - $let:
     inner:
-      $std.state: {n: 0}
+      $handler: {$std.state: {n: 0}}
       $in:
         $do:
         - $std.set: {n: 1}
@@ -398,9 +409,10 @@ $do:
   it('貫流: 状態が分岐から分岐へ持ち越される', async () => {
     await expect(
       run(`
-$std.state: {n: 0}
+$handler: {$std.state: {n: 0}}
 $in:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $do:
     - $std.set: {n: 10}
     - $let:
@@ -416,8 +428,9 @@ $in:
   it('分岐点で分かれる: 各分岐が選択時点の状態を引き継ぐ', async () => {
     await expect(
       run(`
-$std.list:
-  $std.state: {n: 0}
+$handler: \${std.list}
+$in:
+  $handler: {$std.state: {n: 0}}
   $in:
     $do:
     - $std.set: {n: 10}
@@ -434,11 +447,12 @@ $std.list:
   it('分岐ごとに初期化', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       x: {$std.each: [a, b]}
-  - $std.state: {n: 0}
+  - $handler: {$std.state: {n: 0}}
     $in:
       $do:
       - $let:
@@ -453,7 +467,8 @@ $std.list:
   it('連番の採番（既定ハンドラの貫流）', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $std.set: {n: 0}
   - $let:
@@ -470,14 +485,37 @@ $std.list:
       { name: 'cache', id: 2 },
     ]);
   });
+
+  it('{$std.state: 初期値} は部分適用の呼び出しなので、$let で束縛して再利用できる', async () => {
+    // std.state は初期値と本体の閉包をとるカリー化された関数であり、{$std.state: I} の値は
+    // 本体の閉包を待つ関数である。束縛して $handler: ${名前} に置けば同じハンドラを再利用でき、
+    // 立てるたびに状態は初期値から始まる。
+    await expect(
+      run(`
+$do:
+- $let:
+    memo: {$std.state: {n: 0}}
+- a:
+    $handler: \${memo}
+    $in:
+      $do:
+      - $std.set: {n: 1}
+      - {$std.get: n}
+  b:
+    $handler: \${memo}
+    $in: {$std.get: n}
+`),
+    ).resolves.toEqual({ a: 1, b: 0 });
+  });
 });
 
-describe('$std.list / $std.mapping / $std.first', () => {
-  it('$std.list は全分岐を集める', async () => {
+describe('ハンドラを立てる関数（std.list / std.mapping / std.first）', () => {
+  it('std.list は全分岐を集める', async () => {
     await expect(
       run(`
 sizes:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $do:
     - $let:
         n: {$std.each: [1, 2, 3]}
@@ -487,13 +525,34 @@ sizes:
   });
 
   it('選択が無ければ要素 1 のリストになる', async () => {
-    await expect(run('{$std.list: 42}')).resolves.toEqual([42]);
+    await expect(run('{$handler: "${std.list}", $in: 42}')).resolves.toEqual([42]);
   });
 
-  it('$std.mapping は {key, value} を集める', async () => {
+  it('直接の呼び出し {$std.list: {$fn: _, $body: 本体}} は $handler: ${std.list} と同じ値になる', async () => {
+    // std.list は本体の閉包を受け取る関数であり、$handler はその引数に本体の閉包を渡す。
+    // 二つの書き方は同じ適用に帰着する。
+    const inner = `
+    $do:
+    - $let:
+        n: {$std.each: [1, 2, 3]}
+    - \${n * 10}
+`;
+    const viaHandler = await run(`
+$handler: \${std.list}
+$in:${inner}`);
+    const viaCall = await run(`
+$std.list:
+  $fn: _
+  $body:${inner}`);
+    expect(viaCall).toEqual(viaHandler);
+    expect(viaCall).toEqual([10, 20, 30]);
+  });
+
+  it('std.mapping は {key, value} を集める', async () => {
     await expect(
       run(`
-$std.mapping:
+$handler: \${std.mapping}
+$in:
   $do:
   - $let:
       e: {$std.each: {web: 80, db: 5432}}
@@ -503,11 +562,12 @@ $std.mapping:
     ).resolves.toEqual({ 'svc-web': 80, 'svc-db': 5432 });
   });
 
-  it('$std.first は失敗しなかった最初の分岐', async () => {
+  it('std.first は失敗しなかった最初の分岐', async () => {
     await expect(
       run(`
 log_level:
-  $std.first:
+  $handler: \${std.first}
+  $in:
     $do:
     - $let:
         v: {$std.each: [{$std.param: log_level, $default: null}, info]}
@@ -517,12 +577,13 @@ log_level:
     ).resolves.toEqual({ log_level: 'info' });
   });
 
-  it('$std.first は渡されたパラメータを優先する', async () => {
+  it('std.first は渡されたパラメータを優先する', async () => {
     await expect(
       run(
         `
 log_level:
-  $std.first:
+  $handler: \${std.first}
+  $in:
     $do:
     - $let:
         v: {$std.each: [{$std.param: log_level, $default: null}, info]}
@@ -534,10 +595,30 @@ log_level:
     ).resolves.toEqual({ log_level: 'debug' });
   });
 
-  it('全分岐が打ち切られれば $std.first は失敗する', async () => {
+  it('std.first は最初の成功より後の分岐を評価しない（作用も起こさない）', async () => {
+    const logs: Value[] = [];
+    await expect(
+      run(
+        `
+$handler: \${std.first}
+$in:
+  $do:
+  - $let:
+      v: {$std.each: [1, 2, 3]}
+  - $std.log: 'evaluated \${v}'
+  - \${v}
+`,
+        { onLog: (v) => logs.push(v) },
+      ),
+    ).resolves.toBe(1);
+    expect(logs).toEqual(['evaluated 1']);
+  });
+
+  it('全分岐が打ち切られれば std.first は失敗する', async () => {
     await expect(
       run(`
-$std.first:
+$handler: \${std.first}
+$in:
   $do:
   - $let:
       v: {$std.each: [1, 2]}
@@ -547,8 +628,8 @@ $std.first:
     ).rejects.toThrow(EffectfulYamlError);
   });
 
-  it('$std.list は失敗を処理しない', async () => {
-    await expect(run('{$std.list: {$std.fail: boom}}')).rejects.toThrow(/boom/);
+  it('std.list は失敗を処理しない', async () => {
+    await expect(run('{$handler: "${std.list}", $in: {$std.fail: boom}}')).rejects.toThrow(/boom/);
   });
 });
 
@@ -602,7 +683,8 @@ $do:
   it('呼び出しの引数は合成なので、引数の選択が呼び出しごと分岐する', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       double:
@@ -639,7 +721,7 @@ $do:
     ).resolves.toBe('abc');
   });
 
-  it('部分適用の閉包は $collect の $with にも置ける', async () => {
+  it("部分適用の閉包は $std.collect の 'with' にも置ける", async () => {
     await expect(
       run(`
 $do:
@@ -649,8 +731,9 @@ $do:
       $body:
       - \${k * x}
     tripled: {$.scaled: 3}
-- $collect: [1, 2, 3]
-  $with: \${tripled}
+- $std.collect:
+    in: [1, 2, 3]
+    with: \${tripled}
 `),
     ).resolves.toEqual([3, 6, 9]);
   });
@@ -703,14 +786,14 @@ $do:
     ).rejects.toThrow(/cannot escape/);
   });
 
-  it('$with の節は一引数で呼ばれるので、多引数の節は閉包が値になり脱出のエラーに至る', async () => {
+  it('$handler の節は一引数で呼ばれるので、多引数の節は閉包が値になり脱出のエラーに至る', async () => {
     await expect(
       run(`
-$in: {$std.fail: boom}
-$with:
+$handler:
   std.fail:
     $fn: [msg, extra]
     $body: \${msg}
+$in: {$std.fail: boom}
 `),
     ).rejects.toThrow(/cannot escape/);
   });
@@ -784,20 +867,27 @@ $do:
     ).rejects.toThrow(/a\.self is not a function/);
   });
 
-  it('空区画・添字は invalid lexical call name（名前は 名前(.名前)* に限る）', async () => {
-    await expect(run('$..a: 1')).rejects.toThrow(/invalid lexical call name/);
-    await expect(run('$.a.: 1')).rejects.toThrow(/invalid lexical call name/);
-    await expect(run('$.a[0]: 1')).rejects.toThrow(/invalid lexical call name/);
+  it('空区画・添字は invalid call path（名前は 名前(.名前)* に限る）', async () => {
+    await expect(run('$..a: 1')).rejects.toThrow(/invalid call path/);
+    await expect(run('$.a.: 1')).rejects.toThrow(/invalid call path/);
+    await expect(run('$.a[0]: 1')).rejects.toThrow(/invalid call path/);
   });
 });
 
-describe('$with / $in / $resume', () => {
+describe('$handler / $in / $resume', () => {
   it('失敗を捕捉して既定値に置き換える', async () => {
     const logs: Value[] = [];
     await expect(
       run(
         `
 port:
+  $handler:
+    std.fail:
+      $fn: msg
+      $body:
+        $do:
+        - $std.log: \${msg}
+        - 5432
   $in:
     $do:
     - $let:
@@ -806,13 +896,6 @@ port:
       $then:
         $std.fail: invalid port \${p}
       $else: \${p}
-  $with:
-    std.fail:
-      $fn: msg
-      $body:
-        $do:
-        - $std.log: \${msg}
-        - 5432
 `,
         { onLog: (v) => logs.push(v) },
       ),
@@ -825,17 +908,17 @@ port:
     await expect(
       run(
         `
-$in:
-  $do:
-  - $std.log: hello
-  - 42
-$with:
+$handler:
   std.log:
     $fn: msg
     $body:
       $do:
       - $std.log: 'app: \${msg}'
       - {$resume: null}
+$in:
+  $do:
+  - $std.log: hello
+  - 42
 `,
         { onLog: (v) => logs.push(v) },
       ),
@@ -843,20 +926,15 @@ $with:
     expect(logs).toEqual(['app: hello']);
   });
 
-  it('$resume の多重呼び出しで $std.list を自作できる', async () => {
+  it('$resume の多重呼び出しで std.list を自作できる', async () => {
     await expect(
       run(`
-$in:
-  $do:
-  - $let:
-      x: {$std.each: [1, 2]}
-      y: {$std.each: [10, 20]}
-  - \${x + y}
-$with:
+$handler:
   std.each:
     $fn: xs
     $body:
-      $std.list:
+      $handler: \${std.list}
+      $in:
         $do:
         - $let:
             e:
@@ -870,14 +948,7 @@ $with:
     $fn: v
     $body:
     - \${v}
-`),
-    ).resolves.toEqual([11, 21, 12, 22]);
-  });
-
-  it('組み込みの $std.each も同じ結果になる', async () => {
-    await expect(
-      run(`
-$std.list:
+$in:
   $do:
   - $let:
       x: {$std.each: [1, 2]}
@@ -887,8 +958,55 @@ $std.list:
     ).resolves.toEqual([11, 21, 12, 22]);
   });
 
-  it('$resume は節の本体の外では呼べない', async () => {
-    await expect(run('{$resume: 1}')).rejects.toThrow(EffectfulYamlError);
+  it('組み込みの std.list も同じ結果になる', async () => {
+    await expect(
+      run(`
+$handler: \${std.list}
+$in:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2]}
+      y: {$std.each: [10, 20]}
+  - \${x + y}
+`),
+    ).resolves.toEqual([11, 21, 12, 22]);
+  });
+
+  it('$resume を書けない位置は評価前に拒まれる', async () => {
+    const msg = '$resume is only allowed inside a $handler clause';
+    // 境界に単独で置いた $resume
+    await expect(run('{$resume: 1}')).rejects.toThrow(msg);
+    // return 節の本体
+    await expect(
+      run(`
+$handler:
+  return:
+    $fn: v
+    $body: {$resume: "\${v}"}
+$in: 1
+`),
+    ).rejects.toThrow(msg);
+    // ハンドラの本体
+    await expect(
+      run(`
+$handler:
+  std.fail: {$fn: _, $body: caught}
+$in: {$resume: 1}
+`),
+    ).rejects.toThrow(msg);
+    // ハンドラの外にある $fn の本体（節から呼ばれても、書いた位置が節の外なら拒まれる）
+    await expect(
+      run(`
+$do:
+- $let:
+    k:
+      $fn: v
+      $body: {$resume: "\${v}"}
+- $handler:
+    std.fail: {$fn: _, $body: {$.k: 1}}
+- {$std.fail: boom}
+`),
+    ).rejects.toThrow(msg);
   });
 });
 
@@ -935,7 +1053,8 @@ result:
       run(
         `
 result:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $if: {$std.param: cond}
     $then: {$std.each: [a, b]}
     $else: 42
@@ -948,7 +1067,8 @@ result:
   it('関数の本体の選択も、呼び出しを包む選択のハンドラが処理する', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       pick:
@@ -960,13 +1080,15 @@ $std.list:
     ).resolves.toEqual([1, 2, 3]);
   });
 
-  it('登録されていない演算は評価前に拒否される', async () => {
+  it('ホストが与えていない束縛の呼び出しは評価前に undefined reference で拒まれる', async () => {
+    // 0.13 では名前空間は環境なので、ホストの演算も初期環境の束縛である。
+    // 束縛が無ければ、演算の実装の有無ではなく参照の未定義として拒まれる。
     await expect(run('password: {$vault.read: secret/db/password}')).rejects.toThrow(
-      /unregistered operation: \$vault\.read/,
+      /undefined reference: vault/,
     );
   });
 
-  it('登録演算は非同期でもよい', async () => {
+  it('ホストの演算は非同期でもよい', async () => {
     await expect(
       run('password: {$vault.read: secret/db/password}', {
         ops: { 'vault.read': async (k) => `value of ${String(k)}` },
@@ -974,20 +1096,32 @@ $std.list:
     ).resolves.toEqual({ password: 'value of secret/db/password' });
   });
 
-  it('$with が節を与えた演算は登録されていなくてよい', async () => {
+  it('ホストの演算は $handler の節が横取りでき、そのとき実装は走らない', async () => {
+    let calls = 0;
     await expect(
-      run(`
-$in: {$vault.read: db/password}
-$with:
+      run(
+        `
+$handler:
   vault.read:
     $fn: key
     $body: handled-\${key}
-`),
+$in: {$vault.read: db/password}
+`,
+        {
+          ops: {
+            'vault.read': (k) => {
+              calls += 1;
+              return `value of ${String(k)}`;
+            },
+          },
+        },
+      ),
     ).resolves.toBe('handled-db/password');
+    expect(calls).toBe(0);
   });
 });
 
-describe('fold（$std.state + $std.list による畳み込み）', () => {
+describe('fold（std.state + std.list による畳み込み）', () => {
   it('6 になる', async () => {
     await expect(
       run(`
@@ -996,11 +1130,13 @@ $do:
     fold:
       $fn: arg
       $body:
-        $std.state:
-          acc: \${arg.init}
+        $handler:
+          $std.state:
+            acc: \${arg.init}
         $in:
           $do:
-          - $std.list:
+          - $handler: \${std.list}
+            $in:
               $do:
               - $let:
                   x:
@@ -1035,16 +1171,17 @@ describe('作用の推論の計算量', () => {
   });
 });
 
-describe('$collect（畳み込みのカーネル構文）', () => {
-  it('$with の結果リストを文書順に連結する（$into 省略時は list）', async () => {
+describe('std の関数 std.collect', () => {
+  it("'with' の結果リストを文書順に連結する（'into' 省略時は list）", async () => {
     await expect(
       run(`
-$collect: [1, 2, 3]
-$with:
-  $fn: x
-  $body:
-  - \${x}
-  - \${x}
+$std.collect:
+  in: [1, 2, 3]
+  with:
+    $fn: x
+    $body:
+    - \${x}
+    - \${x}
 `),
     ).resolves.toEqual([1, 1, 2, 2, 3, 3]);
   });
@@ -1052,14 +1189,15 @@ $with:
   it('空リストを返す分岐は filter、一要素のリストは map になる', async () => {
     await expect(
       run(`
-$collect: [1, 2, 3, 4]
-$with:
-  $fn: x
-  $body:
-    $if: \${x % 2 == 0}
-    $then:
-    - \${x * 10}
-    $else: []
+$std.collect:
+  in: [1, 2, 3, 4]
+  with:
+    $fn: x
+    $body:
+      $if: \${x % 2 == 0}
+      $then:
+      - \${x * 10}
+      $else: []
 `),
     ).resolves.toEqual([20, 40]);
   });
@@ -1067,121 +1205,137 @@ $with:
   it('マッピングは {key, value} のエントリ列として文書順に回る', async () => {
     await expect(
       run(`
-$collect: {web: 80, db: 5432}
-$with:
-  $fn: e
-  $body:
-  - \${e.key}=\${e.value}
+$std.collect:
+  in: {web: 80, db: 5432}
+  with:
+    $fn: e
+    $body:
+    - \${e.key}=\${e.value}
 `),
     ).resolves.toEqual(['web=80', 'db=5432']);
   });
 
-  it('$into: mapping は {key, value} のエントリを集めたマッピングになる', async () => {
+  it('into: mapping は {key, value} のエントリを集めたマッピングになる', async () => {
     const result = await run(`
-$collect: {web: 80, db: 5432}
-$with:
-  $fn: e
-  $body:
-  - key: svc-\${e.key}
-    value: \${e.value}
-$into: mapping
+$std.collect:
+  in: {web: 80, db: 5432}
+  with:
+    $fn: e
+    $body:
+    - key: svc-\${e.key}
+      value: \${e.value}
+  into: mapping
 `);
     expect(result).toEqual({ 'svc-web': 80, 'svc-db': 5432 });
     expect(Object.keys(result as object)).toEqual(['svc-web', 'svc-db']);
   });
 
   it('空の対象の値は、list なら空リスト、mapping なら空マッピング', async () => {
-    await expect(run('{$collect: [], $with: {$fn: x, $body: []}}')).resolves.toEqual([]);
+    await expect(run('{$std.collect: {in: [], with: {$fn: x, $body: []}}}')).resolves.toEqual([]);
     await expect(
-      run('{$collect: {}, $with: {$fn: x, $body: []}, $into: mapping}'),
+      run('{$std.collect: {in: {}, with: {$fn: x, $body: []}, into: mapping}}'),
     ).resolves.toEqual({});
   });
 
-  it('契約違反はエラー：$with の結果がリストでない', async () => {
-    await expect(run('{$collect: [1], $with: {$fn: x, $body: 5}}')).rejects.toThrow(
-      /\$collect requires the \$with function to return a list/,
+  it("契約違反はエラー：'with' の結果がリストでない", async () => {
+    await expect(run('{$std.collect: {in: [1], with: {$fn: x, $body: 5}}}')).rejects.toThrow(
+      /\$std\.collect requires the 'with' function to return a list/,
     );
   });
 
-  it('契約違反はエラー：$into: mapping のエントリが {key, value} でない', async () => {
+  it('契約違反はエラー：into: mapping のエントリが {key, value} でない', async () => {
     await expect(
       run(`
-$collect: [1]
-$with:
-  $fn: x
-  $body:
-  - {k: 1}
-$into: mapping
+$std.collect:
+  in: [1]
+  with:
+    $fn: x
+    $body:
+    - {k: 1}
+  into: mapping
 `),
     ).rejects.toThrow(/exactly the keys 'key' and 'value'/);
     await expect(
       run(`
-$collect: [1]
-$with:
-  $fn: x
-  $body:
-  - {key: 1, value: 2}
-$into: mapping
+$std.collect:
+  in: [1]
+  with:
+    $fn: x
+    $body:
+    - {key: 1, value: 2}
+  into: mapping
 `),
-    ).rejects.toThrow(/\$collect key must be a string/);
+    ).rejects.toThrow(/\$std\.collect key must be a string/);
   });
 
-  it('契約違反はエラー：$into: mapping のキーが重複する', async () => {
+  it('契約違反はエラー：into: mapping のキーが重複する', async () => {
     await expect(
       run(`
-$collect: [1, 2]
-$with:
-  $fn: x
-  $body:
-  - key: same
-    value: \${x}
-$into: mapping
+$std.collect:
+  in: [1, 2]
+  with:
+    $fn: x
+    $body:
+    - key: same
+      value: \${x}
+  into: mapping
 `),
-    ).rejects.toThrow(/duplicate key in \$collect: same/);
+    ).rejects.toThrow(/duplicate key in \$std\.collect: same/);
   });
 
   it('対象がリストでもマッピングでもなければエラー', async () => {
-    await expect(run('{$collect: 3, $with: {$fn: x, $body: []}}')).rejects.toThrow(
-      /\$collect requires a list or mapping/,
+    await expect(run('{$std.collect: {in: 3, with: {$fn: x, $body: []}}}')).rejects.toThrow(
+      /\$std\.collect 'in' requires a list or mapping/,
     );
   });
 
-  it('$into は list か mapping のどちらかでなければならない', async () => {
+  it("'into' は list か mapping のどちらかでなければならない", async () => {
     await expect(
-      run('{$collect: [], $with: {$fn: x, $body: []}, $into: set}'),
-    ).rejects.toThrow(/\$into must be 'list' or 'mapping'/);
+      run('{$std.collect: {in: [], with: {$fn: x, $body: []}, into: set}}'),
+    ).rejects.toThrow(/\$std\.collect 'into' must be 'list' or 'mapping'/);
   });
 
-  it('$with は省略できない', async () => {
-    await expect(run('{$collect: []}')).rejects.toThrow(/\$collect requires \$with/);
+  it("'with' は省略できない", async () => {
+    await expect(run('{$std.collect: {in: []}}')).rejects.toThrow(
+      /\$std\.collect requires 'with'/,
+    );
   });
 
-  it('$collect 自身は作用を持たず捕捉できない', async () => {
-    // collect という名前の節を持つハンドラを置いても、$collect は演算ではないので素通りする。
+  it('引数は {in, with, into} のマッピングでなければならない', async () => {
+    await expect(run('{$std.collect: [1, 2]}')).rejects.toThrow(
+      /\$std\.collect requires a mapping \{in, with, into\}/,
+    );
+  });
+
+  it('std.collect は関数なので作用を持たず、節の名前にも書けない', async () => {
+    // 節の名前は環境で解決され、解決先が演算でなければエラーである。
+    // std.collect の作用は引数の式と 'with' の関数本体の作用だけであり、捕捉する対象を持たない。
     await expect(
       run(`
-$in:
-  $collect: [1, 2]
-  $with:
-    $fn: x
-    $body:
-    - \${x}
-$with:
+$handler:
   std.collect:
     $fn: xs
     $body: intercepted
+$in:
+  $std.collect:
+    in: [1, 2]
+    with:
+      $fn: x
+      $body:
+      - \${x}
 `),
-    ).resolves.toEqual([1, 2]);
+    ).rejects.toThrow("$handler clause 'std.collect' must name an operation, got: <function>");
   });
 
   it('対象と関数本体の作用は周囲へ合流する（呼び出しと同じ規則）', async () => {
-    // 関数本体の $std.each は $collect に堰き止められず、外側の $std.list が集める。
+    // 関数本体の $std.each は std.collect に堰き止められず、外側の std.list が集める。
     await expect(
       run(`
-$std.list:
-  $do:
-  - $collect: [1, 2]
-    $with:
+$handler: \${std.list}
+$in:
+  $std.collect:
+    in: [1, 2]
+    with:
       $fn: x
       $body:
       - {$std.each: [a, b]}
@@ -1199,22 +1353,23 @@ $std.list:
       run(`
 $do:
 - $std.set: {n: 0}
-- $collect: [a, b, c]
-  $with:
-    $fn: x
-    $body:
-      $do:
-      - $let:
-          i: {$std.get: n}
-      - $std.set:
-          n: \${i + 1}
-      - - \${x}\${i}
+- $std.collect:
+    in: [a, b, c]
+    with:
+      $fn: x
+      $body:
+        $do:
+        - $let:
+            i: {$std.get: n}
+        - $std.set:
+            n: \${i + 1}
+        - - \${x}\${i}
 `),
     ).resolves.toEqual(['a0', 'b1', 'c2']);
   });
 });
 
-describe('第一階の標準演算', () => {
+describe('std.range', () => {
   it('$std.range は [0..n-1] を作る', async () => {
     await expect(run('{$std.range: 5}')).resolves.toEqual([0, 1, 2, 3, 4]);
     await expect(run('{$std.range: 0}')).resolves.toEqual([]);
@@ -1228,35 +1383,38 @@ describe('第一階の標準演算', () => {
     }
   });
 
-  it('第一階の演算は選択を起こさないので、ハンドラ無しで境界に置ける', async () => {
+  it('std.range は選択を起こさないので、ハンドラ無しで境界に置ける', async () => {
     // 値のリストは std.range 自身の値である。
     await expect(run('a: {$std.range: 3}')).resolves.toEqual({ a: [0, 1, 2] });
   });
 
-  it('通常の演算パイプラインに乗る：節で捕捉でき、$resume で継続もできる', async () => {
-    // 評価器に特例を作らず、事前登録された演算として同じ経路を通る。
+  it('std.range は関数なので、節の名前には書けない', async () => {
+    // 0.12 では登録演算として演算パイプラインに乗っていたが、0.13 では std の関数である。
     await expect(
       run(`
-$in: {$std.range: 3}
-$with:
+$handler:
   std.range:
     $fn: n
     $body:
       $resume: [x, y]
+$in: {$std.range: 3}
 `),
-    ).resolves.toEqual(['x', 'y']);
+    ).rejects.toThrow("$handler clause 'std.range' must name an operation, got: <function>");
   });
 
-  it('ハンドラで差し替えられる（演算である以上、意味は最も近いハンドラが選ぶ）', async () => {
-    // std の演算に限らず、任意の登録演算の名前で差し替えられることを示す。
+  it('ホストの演算はハンドラで差し替えられる（演算である以上、意味は最も近いハンドラが選ぶ）', async () => {
+    // std の演算に限らず、ホストが与えた任意の演算の名前で差し替えられる。
     await expect(
-      run(`
-$in: {$str.upper: abc}
-$with:
+      run(
+        `
+$handler:
   str.upper:
     $fn: s
     $body: shouted-\${s}
-`),
+$in: {$str.upper: abc}
+`,
+        { ops: { 'str.upper': (s) => String(s).toUpperCase() } },
+      ),
     ).resolves.toBe('shouted-abc');
   });
 });
@@ -1282,13 +1440,13 @@ $do:
     ).rejects.toThrow('failure: index [3] out of range');
   });
 
-  it('$std.opt は失敗を null に変える', async () => {
+  it('$default: null は失敗を null に変える', async () => {
     await expect(
       run(`
 $do:
 - $let: {r: {a: 1}}
-- present: {$std.opt: '\${r.a}'}
-  missing: {$std.opt: '\${r.b}'}
+- present: '\${r.a}'
+  missing: {$do: ['\${r.b}'], $default: null}
 `),
     ).resolves.toEqual({ present: 1, missing: null });
   });
@@ -1296,50 +1454,52 @@ $do:
   it('打ち切りの定型（$default: {$std.where: false}）は失敗を包囲する選択の打ち切りに変える', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       row: {$std.each: [{a: 1}, {}, {a: 3}]}
-  - $std.opt: \${row.a}
-    $default: {$std.where: false}
+  - \${row.a}
+  $default: {$std.where: false}
 `),
     ).resolves.toEqual([1, 3]);
   });
 
-  it('$with で捕まえれば任意の値に翻訳できる', async () => {
+  it('$handler で捕まえれば任意の値に翻訳できる', async () => {
     await expect(
       run(`
+$handler:
+  std.fail:
+    $fn: msg
+    $body: 'recovered: \${msg}'
 $in:
   $do:
   - $let: {r: {}}
   - \${r.b}
-$with:
-  std.fail:
-    $fn: msg
-    $body: 'recovered: \${msg}'
 `),
     ).resolves.toBe("recovered: missing key 'b'");
   });
 
   it('束縛名の未定義・非コンテナの走査・型の不一致・0 除算はハードエラーのまま', async () => {
     const hard = [
-      ['$std.opt: ${nope}', /undefined reference: nope/],
-      ["$do: [{$let: {x: 1}}, {$std.opt: '${x.y}'}]", /cannot access key '\.y' of a non-mapping/],
-      ["$do: [{$let: {x: {}}}, {$std.opt: '${x[0]}'}]", /cannot access index \[0\] of a non-list/],
-      ['$std.opt: "${1 + \'a\'}"', /requires a numeric operand/],
-      ["$std.opt: '${1 / 0}'", /division by zero/],
+      ['{$do: ["${nope}"], $default: null}', /undefined reference: nope/],
+      ['$do: [{$let: {x: 1}}, {$do: ["${x.y}"], $default: null}]', /cannot access key '\.y' of a non-mapping/],
+      ['$do: [{$let: {x: {}}}, {$do: ["${x[0]}"], $default: null}]', /cannot access index \[0\] of a non-list/],
+      ['{$do: ["${1 + \'a\'}"], $default: null}', /requires a numeric operand/],
+      ['{$do: ["${1 / 0}"], $default: null}', /division by zero/],
     ] as const;
     for (const [yaml, pattern] of hard) {
-      // $std.opt に包んでも捕まらないことが「失敗作用ではない」ことの証拠。
+      // $default を添えても捕まらないことが「失敗作用ではない」ことの証拠。
       await expect(run(yaml)).rejects.toThrow(pattern);
     }
   });
 
   it('裸の参照は純粋なので、パスをたどる参照だけが std.fail を作用に加える', async () => {
-    // $std.first は std.fail を処理するので、パス参照の失敗が最初の分岐を捨てる。
+    // std.first は std.fail を処理するので、パス参照の失敗が最初の分岐を捨てる。
     await expect(
       run(`
-$std.first:
+$handler: \${std.first}
+$in:
   $do:
   - $let:
       row: {$std.each: [{}, {a: 2}]}
@@ -1349,73 +1509,112 @@ $std.first:
   });
 });
 
-describe('$std.first / $std.opt', () => {
-  it('$std.first は最初の成功より後の分岐を評価しない（作用も起こさない）', async () => {
-    const logs: Value[] = [];
-    await expect(
-      run(
-        `
-$std.first:
-  $do:
-  - $let:
-      v: {$std.each: [1, 2, 3]}
-  - $std.log: 'evaluated \${v}'
-  - \${v}
-`,
-        { onLog: (v) => logs.push(v) },
-      ),
-    ).resolves.toBe(1);
-    expect(logs).toEqual(['evaluated 1']);
-  });
-
-  it('$std.opt は $with の std.fail 節（null を返す）への展開と等価である', async () => {
-    const body = `
-  $do:
-  - $let: {r: {}}
-  - \${r.b}
-`;
-    const sugar = await run(`$std.opt:${body}`);
+describe('$default の展開（std.fail の節への糖衣）', () => {
+  it('{X ∪ {$default: 式}} は X を std.fail の節で包む展開と等価である', async () => {
+    const sugar = await run(`
+$do:
+- $let: {r: {}}
+- \${r.b}
+$default: null
+`);
     const expanded = await run(`
-$in:${body}
-$with:
+$handler:
   std.fail:
     $fn: _
     $body: null
+$in:
+  $do:
+  - $let: {r: {}}
+  - \${r.b}
 `);
     expect(sugar).toEqual(expanded);
     expect(sugar).toBe(null);
   });
 
-  it('打ち切りの定型の $default が起こす where は、ハンドラの外側で処理される', async () => {
-    // 展開: $with の std.fail 節が {$std.where: false} を起こす。節の本体の作用は
-    // このハンドラでは処理されないので、包囲する $std.list の分岐ごと打ち切られる。
-    const body = `
+  it('$default の式が起こす作用は、展開の $handler の外側で処理される', async () => {
+    // 節が $resume を呼ばずに式へ達するので、失敗した時点で本体は打ち切られる。
+    // 節の本体の作用はこのハンドラでは処理されないので、$std.where の打ち切りは
+    // 包囲する std.list に届き、分岐ごと打ち切られる。
+    const sugar = await run(`
+$handler: \${std.list}
+$in:
+  $do:
+  - $let:
+      row: {$std.each: [{a: 1}, {}]}
+  - \${row.a}
+  $default: {$std.where: false}
+`);
+    const expanded = await run(`
+$handler: \${std.list}
+$in:
+  $handler:
+    std.fail:
+      $fn: _
+      $body: {$std.where: false}
+  $in:
     $do:
     - $let:
         row: {$std.each: [{a: 1}, {}]}
     - \${row.a}
-`;
-    const sugar = await run(`$std.list:\n  $std.opt:${body}  $default: {$std.where: false}\n`);
-    const expanded = await run(`
-$std.list:
-  $in:${body}
-  $with:
-    std.fail:
-      $fn: _
-      $body: {$std.where: false}
 `);
     expect(sugar).toEqual(expanded);
     expect(sugar).toEqual([1]);
   });
+
+  it('$default は $let を頭に持つマッピングにも添えられる（頭と本体をまとめて包む）', async () => {
+    await expect(
+      run(`
+$let:
+  m: {}
+$in: \${m.nope}
+$default: fallback
+`),
+    ).resolves.toBe('fallback');
+    await expect(
+      run(`
+$let:
+  m: {a: 1}
+$in: \${m.a}
+$default: fallback
+`),
+    ).resolves.toBe(1);
+  });
+
+  it('$default は呼び出しの主形にも添えられる（$std.lookup の欠落を埋める）', async () => {
+    await expect(
+      run(`
+$std.lookup: {in: {a: 1}, key: nope}
+$default: fallback
+`),
+    ).resolves.toBe('fallback');
+    await expect(
+      run(`
+$std.lookup: {in: {a: 1}, key: a}
+$default: fallback
+`),
+    ).resolves.toBe(1);
+  });
+
+  it('$default の式は $ 式の外側にあるので、頭が導入する束縛を見られない', async () => {
+    // 展開は {$handler: {std.fail: 節}, $in: X} であり、既定値の式は節の本体、すなわち X の外である。
+    await expect(
+      run(`
+$let:
+  m: {}
+$in: \${m.nope}
+$default: \${m}
+`),
+    ).rejects.toThrow(/undefined reference: m/);
+  });
 });
 
-describe('$std.opt の $default', () => {
+describe('$default（どの $ 式にも添えられる補助キー）', () => {
   it('欠落したパスアクセスの失敗は $default の値になる', async () => {
     await expect(
       run(`
 $do:
 - $let: {m: {}}
-- $std.opt: \${m.nope}
+- $do: ['\${m.nope}']
   $default: fallback
 `),
     ).resolves.toBe('fallback');
@@ -1426,7 +1625,7 @@ $do:
     await expect(
       run(
         `
-$std.opt: ok
+$do: [ok]
 $default:
   $do:
   - $std.log: defaulted
@@ -1445,7 +1644,7 @@ $default:
         `
 $do:
 - $let: {m: {}}
-- $std.opt: \${m.nope}
+- $do: ['\${m.nope}']
   $default:
     $do:
     - $std.log: defaulted
@@ -1462,7 +1661,7 @@ $do:
       run(`
 $do:
 - $let: {m: {}}
-- $std.opt: \${m.nope}
+- $do: ['\${m.nope}']
   $default: {$std.fail: still missing}
 `),
     ).rejects.toThrow('failure: still missing');
@@ -1473,27 +1672,36 @@ $do:
       run(`
 $do:
 - $let: {m: {}}
-- $std.opt: \${m.nope}
+- $do: ['\${m.nope}']
   $default: {}
 `),
     ).resolves.toEqual({});
   });
 
   it('未渡しパラメータの失敗も捕捉できる', async () => {
-    await expect(run('{$std.opt: {$std.param: nope}, $default: 5}')).resolves.toBe(5);
+    await expect(run('{$std.param: nope, $default: 5}')).resolves.toBe(5);
   });
 
-  it('$default を取らない主キーとの組み合わせは形の誤りになる', async () => {
-    await expect(run('{$std.list: 1, $default: 2}')).rejects.toThrow(/does not accept \$default/);
+  it('どの主キーにも添えられる（0.12 で $default を取らなかった主キーにも）', async () => {
+    const logs: Value[] = [];
+    await expect(run('{$std.log: x, $default: 1}', { onLog: (v) => logs.push(v) })).resolves.toBe(
+      null,
+    );
+    expect(logs).toEqual(['x']);
+    await expect(
+      run('{$handler: "${std.list}", $in: {$std.fail: boom}, $default: fallback}'),
+    ).resolves.toBe('fallback');
+    // 添える先は `$` 式でなければならない（データのマッピングには添えられない）。
+    await expect(run('{a: 1, $default: 2}')).rejects.toThrow(/\$ key mixed with plain keys: a/);
   });
 
   it('本体が成功すれば $default は評価されず、その中の選択も起きない（$std.param の $default と同じ）', async () => {
-    await expect(run('{$std.opt: ok, $default: {$std.each: [1, 2]}}')).resolves.toBe('ok');
+    await expect(run('{$do: [ok], $default: {$std.each: [1, 2]}}')).resolves.toBe('ok');
   });
 
   it('ホスト演算の失敗通知（OperationFailure）も $default で埋められる', async () => {
     await expect(
-      run('{$std.opt: {$x.op: a}, $default: d}', {
+      run('{$x.op: a, $default: d}', {
         ops: {
           'x.op': () => {
             throw new OperationFailure('no match: a');
@@ -1532,25 +1740,25 @@ $do:
     ).rejects.toThrow(/failure: missing key 'x'/);
   });
 
-  it('$std.opt + $default と合成すると既定値になる', async () => {
+  it('$default と合成すると既定値になる', async () => {
     await expect(
       run(`
 $do:
 - $let:
     table: {a: 1}
-- $std.opt:
-    $std.lookup:
-      in: \${table}
-      key: x
+- $std.lookup:
+    in: \${table}
+    key: x
   $default: fallback
 `),
     ).resolves.toBe('fallback');
   });
 
-  it('$std.list の中で打ち切りの定型と合成すると、無いキーの分岐だけが落ちる', async () => {
+  it('std.list の中で打ち切りの定型と合成すると、無いキーの分岐だけが落ちる', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       row:
@@ -1558,30 +1766,29 @@ $std.list:
         - {t: {a: 1}, k: a}
         - {t: {a: 1}, k: x}
         - {t: {a: 1}, k: a}
-  - $std.opt:
-      $std.lookup:
-        in: \${row.t}
-        key: \${row.k}
+  - $std.lookup:
+      in: \${row.t}
+      key: \${row.k}
     $default: {$std.where: false}
 `),
     ).resolves.toEqual([1, 1]);
   });
 
-  it("'in' がマッピングでなければエラーになり、$std.opt でも捕捉できない（形の誤り）", async () => {
+  it("'in' がマッピングでなければエラーになり、$default でも捕捉できない（形の誤り）", async () => {
     await expect(run('{$std.lookup: {in: [1, 2, 3], key: a}}')).rejects.toThrow(
       /'in' must be a mapping/,
     );
     await expect(
-      run('{$std.opt: {$std.lookup: {in: [1, 2, 3], key: a}}}'),
+      run('{$std.lookup: {in: [1, 2, 3], key: a}, $default: null}'),
     ).rejects.toThrow(/'in' must be a mapping/);
   });
 
-  it('key が文字列でなければエラーになり、$std.opt でも捕捉できない（形の誤り）', async () => {
+  it('key が文字列でなければエラーになり、$default でも捕捉できない（形の誤り）', async () => {
     await expect(run('{$std.lookup: {in: {a: 1}, key: 1}}')).rejects.toThrow(
       /\$std\.lookup key must be a string/,
     );
     await expect(
-      run('{$std.opt: {$std.lookup: {in: {a: 1}, key: 1}}}'),
+      run('{$std.lookup: {in: {a: 1}, key: 1}, $default: null}'),
     ).rejects.toThrow(/\$std\.lookup key must be a string/);
   });
 
@@ -1596,7 +1803,7 @@ $do:
     ).resolves.toBe(2);
   });
 
-  it('展開の中の選択は $std.first が処理し尽くすので外へ出ず、ops の登録も要らない', async () => {
+  it('展開の中の選択は std.first が処理し尽くすので外へ出ない', async () => {
     await expect(
       run(`
 $std.lookup:
@@ -1651,17 +1858,17 @@ $do:
     ).resolves.toEqual({ a: 2, b: 3 });
   });
 
-  it('引数がリストでない・要素がマッピングでないのは形の誤りで、$std.opt でも捕捉できない', async () => {
+  it('引数がリストでない・要素がマッピングでないのは形の誤りで、$default でも捕捉できない', async () => {
     await expect(run('{$std.merge: {a: 1}}')).rejects.toThrow(
       /\$std\.merge requires a list of mappings/,
     );
-    await expect(run('{$std.opt: {$std.merge: {a: 1}}}')).rejects.toThrow(
+    await expect(run('{$std.merge: {a: 1}, $default: null}')).rejects.toThrow(
       /\$std\.merge requires a list of mappings/,
     );
     await expect(run('{$std.merge: [1, 2]}')).rejects.toThrow(
       /\$std\.merge element must be a mapping/,
     );
-    await expect(run('{$std.opt: {$std.merge: [1, 2]}}')).rejects.toThrow(
+    await expect(run('{$std.merge: [1, 2], $default: null}')).rejects.toThrow(
       /\$std\.merge element must be a mapping/,
     );
   });
@@ -1669,7 +1876,8 @@ $do:
   it('引数の中に $std.each があると merge 全体が分岐する（値は各分岐の merge 結果）', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $std.merge:
   - $std.each:
     - {x: 1}
@@ -1688,28 +1896,27 @@ $std.list:
     });
   });
 
-  it('$with の std.merge 節は発火しない（組み込みの経路を通るため、節が値を返しても素通しになる）', async () => {
+  it('std.merge は関数なので、節の名前には書けない（捕捉する作用を持たない）', async () => {
     await expect(
       run(`
+$handler:
+  std.merge:
+    $fn: _
+    $body: caught
 $in:
   $std.merge:
   - {a: 1}
   - {b: 2}
-$with:
-  std.merge:
-    $fn: _
-    $body: caught
 `),
-    ).resolves.toEqual({ a: 1, b: 2 });
+    ).rejects.toThrow("$handler clause 'std.merge' must name an operation, got: <function>");
   });
 
-  it('引数の要素の値の中の $std.fail は伝播し、外の $std.opt で捕捉できる', async () => {
+  it('引数の要素の値の中の $std.fail は伝播し、$default で捕捉できる', async () => {
     await expect(
       run(`
-$std.opt:
-  $std.merge:
-  - {a: 1}
-  - b: {$std.fail: nope}
+$std.merge:
+- {a: 1}
+- b: {$std.fail: nope}
 $default: fallback
 `),
     ).resolves.toBe('fallback');
@@ -1720,9 +1927,7 @@ describe('$resume（節の本体で作られた閉包から）', () => {
   it('節の本体の閉包からも、その節の起動に対応する継続を再開できる', async () => {
     await expect(
       run(`
-$in:
-  $std.get: n
-$with:
+$handler:
   std.get:
     $fn: name
     $body:
@@ -1733,12 +1938,14 @@ $with:
             $body:
               $resume: \${v}
       - {$.k: 42}
+$in:
+  $std.get: n
 `),
     ).resolves.toBe(42);
   });
 
-  it('継続の再開結果を $let で値として束縛し、後で適用できる（$std.state の展開の形）', async () => {
-    // 仕様の $std.state の展開そのもの：節が状態変換関数を返し、再開結果もまた
+  it('継続の再開結果を $let で値として束縛し、後で適用できる（std.state の展開の形）', async () => {
+    // 仕様の std.state の展開そのもの：節が状態変換関数を返し、再開結果もまた
     // 状態変換関数なので、それを現在の状態に適用して続ける。
     // ここは読み出し専用の一セルに縮めた最小形で、21 を読んで 2 倍する。
     await expect(
@@ -1746,12 +1953,7 @@ $with:
 $do:
 - $let:
     f:
-      $in:
-        $do:
-        - $let:
-            v: {$std.get: acc}
-        - \${v * 2}
-      $with:
+      $handler:
         std.get:
           $fn: name
           $body:
@@ -1767,12 +1969,17 @@ $do:
           $body:
             $fn: s
             $body: \${x}
+      $in:
+        $do:
+        - $let:
+            v: {$std.get: acc}
+        - \${v * 2}
 - {$.f: 21}
 `),
     ).resolves.toBe(42);
   });
 
-  it('$std.list は仕様の展開（std.each / return の節）と同じ値になる', async () => {
+  it('std.list は仕様の展開（std.each / return の節）と同じ値になる', async () => {
     // 実装は等価な組み込みで最適化してよいが、観測できる振る舞いは展開と一致しなければならない。
     // 本体は内包表記（選択と打ち切りの両方を含む）。$std.where の打ち切りは
     // 展開により空の $std.each として現れるので、std.each の節だけで処理できる。
@@ -1786,22 +1993,24 @@ $do:
     - \${y}
 `;
     const expanded = await run(`
-$in:${body}
-$with:
+$handler:
   std.each:
     $fn: xs
     $body:
-      $collect: \${xs}
-      $with:
-        $fn: x
-        $body:
-          $resume: \${x}
+      $std.collect:
+        in: \${xs}
+        with:
+          $fn: x
+          $body:
+            $resume: \${x}
   return:
     $fn: x
     $body:
     - \${x}
-`);
-    const builtin = await run(`$std.list:${body}`);
+$in:${body}`);
+    const builtin = await run(`
+$handler: \${std.list}
+$in:${body}`);
     expect(expanded).toEqual(builtin);
     expect(builtin).toEqual([
       [1, 2],
@@ -1810,15 +2019,10 @@ $with:
     ]);
   });
 
-  it('閉包経由でも多重再開できる（$std.list を自作する）', async () => {
+  it('閉包経由でも多重再開できる（std.list を自作する）', async () => {
     await expect(
       run(`
-$in:
-  $do:
-  - $let:
-      x: {$std.each: [1, 2]}
-  - \${x * 10}
-$with:
+$handler:
   std.each:
     $fn: xs
     $body:
@@ -1828,15 +2032,21 @@ $with:
             $fn: v
             $body:
               $resume: \${v}
-      - $collect: \${xs}
-        $with:
-          $fn: e
-          $body:
-            $.k: \${e}
+      - $std.collect:
+          in: \${xs}
+          with:
+            $fn: e
+            $body:
+              $.k: \${e}
   return:
     $fn: v
     $body:
     - \${v}
+$in:
+  $do:
+  - $let:
+      x: {$std.each: [1, 2]}
+  - \${x * 10}
 `),
     ).resolves.toEqual([10, 20]);
   });
@@ -1844,79 +2054,112 @@ $with:
 
 describe('予約キーと名前空間', () => {
   it('予約されていないドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
-    const names = ['each', 'where', 'param', 'get', 'set', 'log', 'fail', 'list', 'first', 'mapping', 'state', 'op', 'pipe', 'through'];
+    // 0.13 の予約キーは 12 個（$do $let $in $if $then $else $fn $body $for $handler $resume $default）。
+    // 0.12 の $with・$collect・$into・$std.opt の綴りも、std の名前も、どれも予約されていない。
+    const names = [
+      'with', 'collect', 'into', 'opt', 'handle', 'each', 'where', 'param', 'get', 'set', 'log',
+      'fail', 'list', 'first', 'mapping', 'state', 'op', 'pipe', 'through', 'foo',
+    ];
     for (const name of names) {
       await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
     }
+  });
+
+  it('$.return は呼び出せない（return はハンドラの節名として予約されている）', async () => {
+    await expect(run('{$.return: 1}')).rejects.toThrow(
+      'return is reserved: $.return is not callable',
+    );
+    await expect(run('{$.return.x: 1}')).rejects.toThrow(
+      'return is reserved: $.return is not callable',
+    );
+    // 束縛としての return と ${return} の参照は妨げない。
+    await expect(run('{$let: {return: 1}, $in: "${return}"}')).resolves.toBe(1);
   });
 
   it('$in と $default は、それを取る主キーに付随するときだけ有効', async () => {
     await expect(run('{$in: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
     await expect(run('{$default: 1}')).rejects.toThrow(/auxiliary \$ key without a main key/);
     await expect(run('{$do: [], $in: 1}')).rejects.toThrow(/\$do does not accept \$in/);
-    await expect(run('{$std.log: x, $default: 1}')).rejects.toThrow(
-      /\$std\.log does not accept \$default/,
+    // $default はどの $ 式にも添えられるが、$in は頭の本体なので呼び出しには添えられない。
+    await expect(run('{$std.log: x, $in: 1}')).rejects.toThrow(/\$std\.log does not accept \$in/);
+  });
+
+  it('$in を省いた頭（$let / $for / $handler）は $do の文の位置でだけ書ける', async () => {
+    await expect(run('{$for: {x: [1, 2]}}')).rejects.toThrow(
+      /\$for without \$in is only allowed as a statement of \$do/,
+    );
+    await expect(run('{$handler: {$std.state: {}}}')).rejects.toThrow(
+      /\$handler without \$in is only allowed as a statement of \$do/,
+    );
+    await expect(run('{$handler: {std.fail: {$fn: m, $body: x}}}')).rejects.toThrow(
+      /\$handler without \$in is only allowed as a statement of \$do/,
     );
   });
 
-  it('$in を省いた $std.state と単独の $with は $do の文の位置でだけ書ける', async () => {
-    await expect(run('{$std.state: {}}')).rejects.toThrow(
-      /\$std\.state without \$in is only allowed as a statement of \$do/,
-    );
-    await expect(run('{$with: {std.fail: {$fn: m, $body: x}}}')).rejects.toThrow(
-      /\$with without \$in is only allowed as a statement of \$do/,
-    );
-  });
-
-  it('ホストは std. 名前空間に演算を登録できない', async () => {
+  it('ホストは std. 名前空間に演算も関数も登録できない', async () => {
     await expect(run('x: 1', { ops: { 'std.each': () => null } })).rejects.toThrow(
       /host cannot register an operation in the std namespace: \$std\.each/,
     );
     await expect(run('x: 1', { ops: { 'std.myop': () => null } })).rejects.toThrow(
       /host cannot register an operation in the std namespace/,
     );
-  });
-
-  it('$with の節名は演算名か裸のローカル名か return でなければならない', async () => {
-    // 裸の名前はローカル作用の宣言なので、誤りなのは `$` 始まりと壊れたドット区切りである。
-    for (const name of ['$fail', 'a..b']) {
-      await expect(
-        run(`
-$in: 1
-$with:
-  ${JSON.stringify(name)}:
-    $fn: m
-    $body: x
-`),
-      ).rejects.toThrow(
-        /clause name must be an operation name, a bare local name, or 'return'/,
-      );
-    }
-  });
-
-  it('節に挙げた演算は登録が要らない（事前検査はどの節にも現れない演算だけを拒む）', async () => {
-    await expect(
-      run(`
-$in: {$vault.read: db/password}
-$with:
-  vault.read:
-    $fn: key
-    $body: handled-\${key}
-`),
-    ).resolves.toBe('handled-db/password');
-    await expect(run('{$vault.read: db/password}')).rejects.toThrow(
-      /unregistered operation: \$vault\.read/,
+    await expect(run('x: 1', { functions: { 'std.myfn': () => null } })).rejects.toThrow(
+      /host cannot register a function in the std namespace: \$std\.myfn/,
     );
   });
 
-  it('std の演算は登録演算と同じ演算パイプラインを通る（節で差し替えられる）', async () => {
+  it('ホストの名前は 2 区画以上のドット付きで、演算と関数を兼ねられない', async () => {
+    await expect(run('x: 1', { ops: { foo: () => null } })).rejects.toThrow(
+      /host operation name must be a dotted path of names \(binding\.key\): foo/,
+    );
+    await expect(
+      run('x: 1', { ops: { 'a.b': () => null }, functions: { 'a.b': () => null } }),
+    ).rejects.toThrow(/host name registered both as an operation and as a function: a\.b/);
+  });
+
+  it('$handler の節名はパスか裸のローカル名か return でなければならない', async () => {
+    // 裸の名前はローカル作用の宣言なので、誤りなのは壊れたドット区切りである。
+    for (const name of ['a..b', 'a.']) {
+      await expect(
+        run(`
+$handler:
+  ${JSON.stringify(name)}:
+    $fn: m
+    $body: x
+$in: 1
+`),
+      ).rejects.toThrow(/\$handler clause name must be a path, a bare local name, or 'return'/);
+    }
+    // `$` で始まるキーを含むマッピングは節のマッピングではなく「関数に評価される式」として読まれる。
     await expect(
       run(`
-$in:
-  $do:
-  - $std.set: {n: 1}
-  - {$std.get: n}
-$with:
+$handler:
+  "$fail":
+    $fn: m
+    $body: x
+$in: 1
+`),
+    ).rejects.toThrow('unreserved $ key: $fail');
+  });
+
+  it('節の名前も環境の解決なので、束縛の無い名前は undefined reference になる', async () => {
+    // 0.12 は「節に挙げた演算は登録が要らない」だったが、0.13 の節の名前は $handler の位置の
+    // 環境で解決する。ホストが与えていない名前の節は書けない。
+    await expect(
+      run(`
+$handler:
+  vault.read:
+    $fn: key
+    $body: handled-\${key}
+$in: {$vault.read: db/password}
+`),
+    ).rejects.toThrow(/undefined reference: vault/);
+  });
+
+  it('std の演算はホストの演算と同じ演算パイプラインを通る（節で差し替えられる）', async () => {
+    await expect(
+      run(`
+$handler:
   std.get:
     $fn: name
     $body:
@@ -1924,12 +2167,64 @@ $with:
   std.set:
     $fn: cells
     $body: {$resume: null}
+$in:
+  $do:
+  - $std.set: {n: 1}
+  - {$std.get: n}
 `),
     ).resolves.toBe('shadowed-n');
   });
+
+  it('std は普通の束縛なので $let で隠せ、$for の展開もそれに従う', async () => {
+    // 名前空間は環境である。$for の展開が置く $std.each は展開先の環境で解決するので、
+    // std を隠せば選択の束縛もその値を呼ぶ。
+    await expect(
+      run(`
+$do:
+- $let:
+    std:
+      each:
+        $fn: xs
+        $body: \${xs[0]}
+- $for:
+    x: [1, 2, 3]
+- \${x}
+`),
+    ).resolves.toBe(1);
+    // 隠した std の下では標準の演算も見えない。
+    await expect(run('{$let: {std: 1}, $in: {$std.log: x}}')).rejects.toThrow(
+      /cannot access key '\.log' of a non-mapping value/,
+    );
+  });
+
+  it('演算の値は ${std.each} で参照して束縛でき、$.名前 で呼べる', async () => {
+    // 別名を経た呼び出しも同じ演算の作用を起こす。
+    await expect(
+      run(`
+$do:
+- $handler: \${std.list}
+- $let:
+    pick: \${std.each}
+- {$.pick: [1, 2]}
+`),
+    ).resolves.toEqual([1, 2]);
+  });
+
+  it('未定義の参照は評価前に拒まれる（呼び出しの先頭区画と ${...} の参照名）', async () => {
+    await expect(run('{$.nope: 1}')).rejects.toThrow('undefined reference: nope');
+    await expect(run('{$nope.f: 1}')).rejects.toThrow('undefined reference: nope');
+    await expect(run('"${nope}"')).rejects.toThrow('undefined reference: nope');
+    // 出現主義なので、実行されない分岐や $default の中の未定義参照も評価前に拒まれる。
+    await expect(run('{$if: true, $then: ok, $else: "${nope}"}')).rejects.toThrow(
+      'undefined reference: nope',
+    );
+    await expect(run('{$std.log: x, $default: "${nope}"}')).rejects.toThrow(
+      'undefined reference: nope',
+    );
+  });
 });
 
-describe('ホスト演算の失敗通知', () => {
+describe('ホストの値の失敗通知（演算）', () => {
   it('捕捉されなければ、呼び出し位置の std.fail が文書全体のエラーになる', async () => {
     await expect(
       run('{$site.sel: h1}', {
@@ -1942,9 +2237,9 @@ describe('ホスト演算の失敗通知', () => {
     ).rejects.toThrow(/failure: no match: h1/);
   });
 
-  it('$std.opt が捕捉して null になる', async () => {
+  it('$default が捕捉して null になる', async () => {
     await expect(
-      run('{$std.opt: {$site.sel: h1}}', {
+      run('{$site.sel: h1, $default: null}', {
         ops: {
           'site.sel': () => {
             throw new OperationFailure('no match: h1');
@@ -1958,12 +2253,12 @@ describe('ホスト演算の失敗通知', () => {
     await expect(
       run(
         `
-$std.list:
+$handler: \${std.list}
+$in:
   $do:
   - $let:
       v: {$std.each: [a, b, c]}
-  - $std.opt:
-      $site.sel: \${v}
+  - $site.sel: \${v}
     $default: {$std.where: false}
 `,
         {
@@ -1978,20 +2273,20 @@ $std.list:
     ).resolves.toEqual(['a', 'c']);
   });
 
-  it('$with の std.fail 節が $resume で呼び出し位置に代替値を返し、続く計算に反映される', async () => {
+  it('$handler の std.fail 節が $resume で呼び出し位置に代替値を返し、続く計算に反映される', async () => {
     await expect(
       run(
         `
+$handler:
+  std.fail:
+    $fn: msg
+    $body: {$resume: fallback}
 $in:
   $do:
   - $let:
       v:
         $site.sel: h1
   - prefix-\${v}
-$with:
-  std.fail:
-    $fn: msg
-    $body: {$resume: fallback}
 `,
         {
           ops: {
@@ -2011,13 +2306,13 @@ $with:
         throw foreign;
       },
     };
-    await expect(run('{$std.opt: {$site.sel: h1}, $default: none}', { ops })).resolves.toBe('none');
+    await expect(run('{$site.sel: h1, $default: none}', { ops })).resolves.toBe('none');
     await expect(run('{$site.sel: h1}', { ops })).rejects.toThrow('failure: no match: h1');
   });
 
   it('名前が OperationFailure でも value を持たない Error は通知ではなく捕捉できないエラー', async () => {
     await expect(
-      run('{$std.opt: {$site.sel: h1}}', {
+      run('{$site.sel: h1, $default: null}', {
         ops: {
           'site.sel': () => {
             throw Object.assign(new Error('boom'), { name: 'OperationFailure' });
@@ -2027,9 +2322,9 @@ $with:
     ).rejects.toThrow(/boom/);
   });
 
-  it('OperationFailure でない例外は $std.opt でも捕捉されず reject される', async () => {
+  it('OperationFailure でない例外は $default でも捕捉されず reject される', async () => {
     await expect(
-      run('{$std.opt: {$site.sel: h1}}', {
+      run('{$site.sel: h1, $default: null}', {
         ops: {
           'site.sel': () => {
             throw new Error('boom');
@@ -2039,11 +2334,12 @@ $with:
     ).rejects.toThrow(/boom/);
   });
 
-  it('$std.first は失敗した分岐を飛ばして次の分岐の値になる', async () => {
+  it('std.first は失敗した分岐を飛ばして次の分岐の値になる', async () => {
     await expect(
       run(
         `
-$std.first:
+$handler: \${std.first}
+$in:
   $do:
   - $let:
       v: {$std.each: [x, y]}
@@ -2059,6 +2355,108 @@ $std.first:
         },
       ),
     ).resolves.toBe('y');
+  });
+});
+
+describe('ホストの値の失敗通知（関数）', () => {
+  const failing = {
+    'svc.fn': () => {
+      throw new OperationFailure('no match');
+    },
+  };
+
+  it('ホストの関数は同期でも非同期でもよい', async () => {
+    await expect(
+      run('{$svc.fn: abc}', { functions: { 'svc.fn': (s) => `sync-${String(s)}` } }),
+    ).resolves.toBe('sync-abc');
+    await expect(
+      run('{$svc.fn: abc}', { functions: { 'svc.fn': async (s) => `async-${String(s)}` } }),
+    ).resolves.toBe('async-abc');
+  });
+
+  it('関数の失敗通知も呼び出し位置の std.fail になり、$default と std.fail の節で捕捉できる', async () => {
+    await expect(run('{$svc.fn: x}', { functions: failing })).rejects.toThrow('failure: no match');
+    await expect(run('{$svc.fn: x, $default: fallback}', { functions: failing })).resolves.toBe(
+      'fallback',
+    );
+    await expect(
+      run(
+        `
+$handler:
+  std.fail:
+    $fn: m
+    $body: 'caught \${m}'
+$in: {$svc.fn: x}
+`,
+        { functions: failing },
+      ),
+    ).resolves.toBe('caught no match');
+  });
+
+  it('OperationFailure でない例外は関数でも捕捉できない', async () => {
+    await expect(
+      run('{$svc.fn: x, $default: null}', {
+        functions: {
+          'svc.fn': () => {
+            throw new Error('boom');
+          },
+        },
+      }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it('関数は作用ではないので節に書けず、横取りもできない（演算との対比）', async () => {
+    let opCalls = 0;
+    let fnCalls = 0;
+    const host = {
+      ops: {
+        'svc.op': () => {
+          opCalls += 1;
+          return 'from-op';
+        },
+      },
+      functions: {
+        'svc.fn': () => {
+          fnCalls += 1;
+          return 'from-fn';
+        },
+      },
+    };
+    // 演算は作用シグネチャに現れるので、節が横取りでき、そのとき実装は走らない。
+    await expect(
+      run(
+        `
+$handler:
+  svc.op: {$fn: _, $body: intercepted}
+$in: {$svc.op: x}
+`,
+        host,
+      ),
+    ).resolves.toBe('intercepted');
+    expect(opCalls).toBe(0);
+    // 関数は演算ではないので、節の名前にすること自体がエラーである。
+    await expect(
+      run(
+        `
+$handler:
+  svc.fn: {$fn: _, $body: intercepted}
+$in: {$svc.fn: x}
+`,
+        host,
+      ),
+    ).rejects.toThrow("$handler clause 'svc.fn' must name an operation, got: <function>");
+    // 横取りする手立てが無いので、呼べば必ず実装が走る。
+    await expect(run('{$svc.fn: x}', host)).resolves.toBe('from-fn');
+    expect(fnCalls).toBe(1);
+  });
+
+  it('閉包はホストの関数にも演算にも渡せない（評価前の流れの検査）', async () => {
+    await expect(
+      run('{$svc.fn: {$fn: x, $body: "${x}"}}', { functions: { 'svc.fn': () => null } }),
+    ).rejects.toThrow('a function value cannot be passed to a host function: $svc.fn');
+    await expect(
+      run('{$svc.op: {$fn: x, $body: "${x}"}}', { ops: { 'svc.op': () => null } }),
+    ).rejects.toThrow('a function value cannot be passed to a host operation: $svc.op');
   });
 });
 
@@ -2090,7 +2488,8 @@ $in:
   it('右辺の選択は包囲する逐次の全体を分岐させ、選択のハンドラがリストに集める', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $let:
     x: {$std.each: [1, 2]}
   $in: \${x * 10}
@@ -2116,7 +2515,8 @@ $in: ok
   it('$let で束縛した関数の本体の選択も、外側の選択のハンドラが集める', async () => {
     await expect(
       run(`
-$std.list:
+$handler: \${std.list}
+$in:
   $let:
     pick:
       $fn: xs
@@ -2154,30 +2554,31 @@ $do:
 
   it('束縛名にドットは使えない', async () => {
     await expect(run('{$let: {a.b: 1}, $in: null}')).rejects.toThrow(/must not contain a dot/);
+    await expect(run('{$for: {a.b: [1]}, $in: null}')).rejects.toThrow(/must not contain a dot/);
   });
 });
 
-describe('$do の文に置いた文脈の導入（$with と $std.state）', () => {
-  it('先に置いた $with ほど外側のハンドラになる（近い方が勝つ）', async () => {
+describe('$do の文に置いた文脈の導入（$handler と {$std.state: 初期値}）', () => {
+  it('先に置いた $handler ほど外側のハンドラになる（近い方が勝つ）', async () => {
     await expect(
       run(`
 $do:
-- $with:
+- $handler:
     std.fail: {$fn: _, $body: outer}
-- $with:
+- $handler:
     std.fail: {$fn: _, $body: inner}
 - {$std.fail: boom}
 `),
     ).resolves.toBe('inner');
   });
 
-  it('節の本体が起こす作用は自分では捕まらず、外側の $in を省いた $with が処理する', async () => {
+  it('節の本体が起こす作用は自分では捕まらず、外側の $in を省いた $handler が処理する', async () => {
     await expect(
       run(`
 $do:
-- $with:
+- $handler:
     std.fail: {$fn: _, $body: outer}
-- $with:
+- $handler:
     std.fail:
       $fn: _
       $body:
@@ -2193,7 +2594,7 @@ $do:
 $do:
 - $let:
     d: fallback
-- $with:
+- $handler:
     std.fail:
       $fn: _
       $body: \${d}
@@ -2202,13 +2603,13 @@ $do:
     ).resolves.toBe('fallback');
   });
 
-  it('$resume する節を $in を省いた $with で仕掛けると、後続の文の演算を横取りできる', async () => {
+  it('$resume する節を $in を省いた $handler で仕掛けると、後続の文の演算を横取りできる', async () => {
     const logs: Value[] = [];
     await expect(
       run(
         `
 $do:
-- $with:
+- $handler:
     std.log:
       $fn: m
       $body: {$resume: null}
@@ -2221,23 +2622,30 @@ $do:
     expect(logs).toEqual([]);
   });
 
-  it('末尾に置いた文脈の導入の本体は null（$with は return 節を通る）', async () => {
-    await expect(run('{$do: [{$with: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
-    await expect(run('{$do: [{$std.state: {n: 0}}]}')).resolves.toBe(null);
+  it('末尾に置いた文脈の導入の本体は null（$handler は return 節を通る）', async () => {
+    await expect(run('{$do: [{$handler: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
+    await expect(run('{$do: [{$handler: {$std.state: {n: 0}}}]}')).resolves.toBe(null);
     await expect(
       run(`
 $do:
-- $with:
+- $handler:
     return: {$fn: v, $body: wrapped}
 `),
     ).resolves.toBe('wrapped');
   });
 
-  it('$in を省いた $std.state は残りの文に記憶を通し、$in を書いた $std.state は残りの文に及ばない', async () => {
+  it('$in を省いた $handler は残りの文に記憶を通し、$in を書いた形は残りの文に及ばない', async () => {
     await expect(
       run(`
 $do:
-- $std.state: {n: 5}
+- $handler: {$std.state: {n: 5}}
+- {$std.get: n}
+`),
+    ).resolves.toBe(5);
+    await expect(
+      run(`
+$do:
+- $handler: {$std.state: {n: 5}}
   $in: {$std.get: n}
 - done
 `),
@@ -2245,7 +2653,7 @@ $do:
     await expect(
       run(`
 $do:
-- $std.state: {n: 5}
+- $handler: {$std.state: {n: 5}}
   $in: {$std.get: n}
 - {$std.get: n}
 `),
@@ -2254,13 +2662,12 @@ $do:
 
   it('文の位置の外ではエラー', async () => {
     await expect(
-      run('{$do: [{$let: {x: {$with: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
-    ).rejects.toThrow(/\$with without \$in is only allowed as a statement of \$do/);
-    await expect(run('{$do: [{$let: {x: {$std.state: {n: 0}}}}, 1]}')).rejects.toThrow(
-      /\$std\.state without \$in is only allowed as a statement of \$do/,
-    );
+      run('{$do: [{$let: {x: {$handler: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
+    ).rejects.toThrow(/\$handler without \$in is only allowed as a statement of \$do/);
+    await expect(
+      run('{$do: [{$let: {x: {$handler: {$std.state: {n: 0}}}}}, 1]}'),
+    ).rejects.toThrow(/\$handler without \$in is only allowed as a statement of \$do/);
   });
-
 });
 
 describe('__proto__ キーの防御', () => {
@@ -2277,15 +2684,15 @@ describe('__proto__ キーの防御', () => {
     expect((r as { x?: Value }).x).toBeUndefined();
   });
 
-  it('$std.mapping の計算したキーが __proto__ でもエントリになる', async () => {
+  it('std.mapping の計算したキーが __proto__ でもエントリになる', async () => {
     const r = await run(`
-$std.mapping:
-  $let:
-    k:
-      $std.each: [__proto__]
-  $in:
-    key: ${'${k}'}
-    value: {x: 1}
+$handler: \${std.mapping}
+$let:
+  k:
+    $std.each: [__proto__]
+$in:
+  key: \${k}
+  value: {x: 1}
 `);
     expect(Object.keys(r as object)).toEqual(['__proto__']);
     expect(ownProto(r)).toBe(true);
@@ -2305,31 +2712,30 @@ $std.merge:
     expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
   });
 
-  it('$collect の into: mapping でも __proto__ はエントリになり、重複も検出される', async () => {
+  it('$std.collect の into: mapping でも __proto__ はエントリになり、重複も検出される', async () => {
     const r = await run(`
-$collect:
-- __proto__
-$with:
-  $fn: k
-  $body:
-  - key: ${'${k}'}
-    value: {x: 1}
-$into: mapping
+$std.collect:
+  in: [__proto__]
+  with:
+    $fn: k
+    $body:
+    - key: \${k}
+      value: {x: 1}
+  into: mapping
 `);
     expect(ownProto(r)).toBe(true);
     await expect(
       run(`
-$collect:
-- __proto__
-- __proto__
-$with:
-  $fn: k
-  $body:
-  - key: ${'${k}'}
-    value: {x: 1}
-$into: mapping
+$std.collect:
+  in: [__proto__, __proto__]
+  with:
+    $fn: k
+    $body:
+    - key: \${k}
+      value: {x: 1}
+  into: mapping
 `),
-    ).rejects.toThrow(/duplicate key in \$collect: __proto__/);
+    ).rejects.toThrow(/duplicate key in \$std\.collect: __proto__/);
   });
 
   it('グローバルの Object.prototype は汚染されない', async () => {
@@ -2341,7 +2747,6 @@ $into: mapping
 describe('攻撃経路の防御（構造化入力を受け取るホスト向け）', () => {
   const own = (v: Value, k: string): boolean =>
     Object.prototype.hasOwnProperty.call(v as object, k);
-  const at = (v: Value, k: string): Value => (v as { [key: string]: Value })[k]!;
 
   // --- キー：プロトタイプ汚染族 ---
   it('constructor / prototype キーはただのデータで、プロトタイプを汚さない', async () => {
@@ -2374,17 +2779,16 @@ $std.merge:
   it('own の hasOwnProperty キーがあっても内部の重複検査は破られない', async () => {
     await expect(
       run(`
-$collect:
-- hasOwnProperty
-- hasOwnProperty
-$with:
-  $fn: k
-  $body:
-  - key: ${'${k}'}
-    value: 1
-$into: mapping
+$std.collect:
+  in: [hasOwnProperty, hasOwnProperty]
+  with:
+    $fn: k
+    $body:
+    - key: \${k}
+      value: 1
+  into: mapping
 `),
-    ).rejects.toThrow(/duplicate key in \$collect: hasOwnProperty/);
+    ).rejects.toThrow(/duplicate key in \$std\.collect: hasOwnProperty/);
   });
 
   // --- キー：直列化・Promise 族（非呼び出しゆえ無害） ---
@@ -2419,6 +2823,30 @@ $std.merge:
     ).rejects.toThrow(msg);
   });
 
+  it('演算の値も文書の値へ脱出できない', async () => {
+    const msg = /an operation value cannot escape into the document value/;
+    await expect(run('op: "${std.each}"')).rejects.toThrow(msg);
+    // 一段深く隠しても再帰で捕まえる
+    await expect(run('a:\n- nested: {op: "${std.log}"}')).rejects.toThrow(msg);
+    // 文字列への補間もできない
+    await expect(run('op: "x${std.each}"')).rejects.toThrow(
+      /cannot interpolate a list, mapping, null, function, or operation value into a string/,
+    );
+  });
+
+  it('== と != は関数も演算も比較できない', async () => {
+    await expect(
+      run(`
+$let:
+  f: {$fn: x, $body: 1}
+$in: \${f == f}
+`),
+    ).rejects.toThrow("'==' cannot compare a function or operation value, got: <function>");
+    await expect(run('{$let: {e: "${std.each}"}, $in: "${e != e}"}')).rejects.toThrow(
+      "'!=' cannot compare a function or operation value, got: <operation std.each>",
+    );
+  });
+
   it('ホストが param / op で注入した生の JS 関数も、値へ残れば拒まれる', async () => {
     const msg = /a function value cannot escape into the document value/;
     // Value は関数を含まないので、型を欺いて注入するホストを再現するにはキャストが要る。
@@ -2450,15 +2878,19 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
     );
   });
 
-  it('文書の形の誤りに位置が付く（未定義参照・キー走査・型の不一致）', async () => {
-    await expect(run('server:\n  conf: {$.a.self: 1}')).rejects.toThrow(
-      'undefined reference: a (at server.conf)',
-    );
+  it('文書の形の誤りに位置が付く（キー走査・型の不一致）', async () => {
     await expect(run('server:\n  x:\n    $let: {a: 1}\n    $in: {$.a.self: 2}')).rejects.toThrow(
       "cannot access key '.self' of a non-mapping value (at server.x)",
     );
     await expect(run('a:\n  b: {$std.merge: {x: 1}}')).rejects.toThrow(
       '$std.merge requires a list of mappings, got: {"x":1} (at a.b)',
+    );
+  });
+
+  it('評価前に拒まれる誤り（未定義の参照）には失敗位置が付かない', async () => {
+    // 失敗位置は出力の値の中の場所なので、評価を始める前の拒否には位置がない。
+    await expect(run('server:\n  conf: {$.a.self: 1}')).rejects.toThrow(
+      expect.objectContaining({ message: 'undefined reference: a', path: undefined }),
     );
   });
 
@@ -2483,15 +2915,15 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
   });
 
   it('ハンドラに捕まった失敗は値に翻訳されるので、位置は残らない', async () => {
-    await expect(run('a:\n  b: {$std.opt: {$std.fail: boom}, $default: ok}')).resolves.toEqual({
+    await expect(run('a:\n  b: {$std.fail: boom, $default: ok}')).resolves.toEqual({
       a: { b: 'ok' },
     });
     await expect(
       run(`
 a:
   b:
+    $handler: {std.fail: {$fn: m, $body: "caught \${m}"}}
     $in: {$std.fail: boom}
-    $with: {std.fail: {$fn: m, $body: "caught \${m}"}}
 `),
     ).resolves.toEqual({ a: { b: 'caught boom' } });
   });
@@ -2511,7 +2943,7 @@ a:
   });
 
   it('位置は二重に付かない（内側が勝つ）', async () => {
-    const e = await run('a:\n  b:\n  - {$std.list: [{$std.range: x}]}').then(
+    const e = await run('a:\n  b:\n  - $handler: "${std.list}"\n    $in: [{$std.range: x}]').then(
       () => new Error('rejected されなかった'),
       (x: Error) => x,
     );
@@ -2544,10 +2976,6 @@ describe('位置が素通しになる経路', () => {
     );
   });
 
-  it('$std.state の $in の本体で位置が伸びる', async () => {
-    await expect(run('$std.state: {n: 0}\n$in:\n  a: {$std.range: x}')).rejects.toThrow('(at a)');
-  });
-
   it('$if の $then と $else で位置が伸びる', async () => {
     await expect(run('$if: true\n$then:\n  a: {$std.range: x}\n$else: null')).rejects.toThrow(
       '(at a)',
@@ -2557,15 +2985,13 @@ describe('位置が素通しになる経路', () => {
     );
   });
 
-  it('$std.opt の本体で位置が伸びる（捕捉できないエラーはそのまま出る）', async () => {
-    await expect(run('$std.opt:\n  a: {$std.range: x}\n$default: fallback')).rejects.toThrow(
-      '(at a)',
-    );
+  it('$default を添えた本体で位置が伸びる（捕捉できないエラーはそのまま出る）', async () => {
+    await expect(run('$do:\n- a: {$std.range: x}\n$default: fallback')).rejects.toThrow('(at a)');
   });
 
-  it('$std.opt と $std.param の $default で位置が伸びる（失敗時の値がそのまま出力になる）', async () => {
+  it('$default の式で位置が伸びる（失敗時の値がそのまま出力になる）', async () => {
     await expect(
-      run('a:\n  $std.opt: {$std.fail: boom}\n  $default:\n    b: {$std.range: q}'),
+      run('a:\n  $std.fail: boom\n  $default:\n    b: {$std.range: q}'),
     ).rejects.toThrow('(at a.b)');
     await expect(
       run('a:\n  $std.param: nope\n  $default:\n    b: {$std.range: q}'),
@@ -2580,10 +3006,24 @@ describe('位置が素通しになる経路', () => {
 });
 
 describe('位置が凍る経路', () => {
-  it('$std.list の本体は値の形を変えるので凍る', async () => {
-    await expect(run('k:\n  $std.list:\n    a: {$std.range: x}')).rejects.toThrow(
-      expect.objectContaining({ path: 'k' }),
-    );
+  it('関数の式で与えた $handler の本体は凍る（値が呼び出しを経て返るため）', async () => {
+    await expect(
+      run(`
+k:
+  $handler: \${std.list}
+  $in:
+    a: {$std.range: x}
+`),
+    ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
+    // {$std.state: 初期値} も関数の式なので同じに凍る。
+    await expect(
+      run(`
+k:
+  $handler: {$std.state: {n: 0}}
+  $in:
+    a: {$std.range: x}
+`),
+    ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
   });
 
   it('$let の束縛の右辺は凍る', async () => {
@@ -2592,14 +3032,14 @@ describe('位置が凍る経路', () => {
     );
   });
 
-  it('return の節を持つ $with の本体は凍る', async () => {
+  it('return の節を持つ $handler の本体は凍る', async () => {
     await expect(
       run(`
 k:
+  $handler:
+    return: {$fn: v, $body: "\${v}"}
   $in:
     a: {$std.range: x}
-  $with:
-    return: {$fn: v, $body: "\${v}"}
 `),
     ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
   });
@@ -2619,11 +3059,75 @@ k:
     await expect(
       run(`
 k:
-  $std.list:
+  $handler: \${std.list}
+  $in:
     $let: {x: 1}
     $in:
       a: {$std.range: q}
 `),
     ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
+  });
+});
+
+
+describe('関数の式を置いた $handler の名乗りと形の検査', () => {
+  it('std.first の全滅は利用者が書いた $handler: ${std.first} を名乗る', async () => {
+    await expect(
+      run(`
+$handler: \${std.first}
+$for: {x: [1, 2]}
+$in: {$std.where: false}
+`),
+    ).rejects.toThrow('failure: every branch of $handler: ${std.first} failed or was cut');
+  });
+
+  it('$handler の式が演算に評価されたら作用を起こさず形の誤りとして拒む', async () => {
+    await expect(run('{$handler: "${std.each}", $in: 1}')).rejects.toThrow(
+      '$handler requires a mapping of clauses or a function, got: <operation std.each>',
+    );
+  });
+
+  it('$handler の式がデータに評価されたら形の誤りとして拒む', async () => {
+    await expect(run('{$let: {h: 5}, $handler: "${h}", $in: 1}')).rejects.toThrow(
+      '$handler requires a mapping of clauses or a function, got: 5',
+    );
+  });
+
+  it('本体の閉包を受け取る std の関数に関数でない値を直接渡すと、引数の形の誤りとして名乗る', async () => {
+    await expect(run('{$std.list: 5}')).rejects.toThrow(
+      '$std.list requires a function taking the body, got: 5',
+    );
+  });
+
+  it('$default の式は展開により std.fail の節の本体なので、$resume は失敗した位置から再開する', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    x: {$std.fail: boom}
+- got \${x}
+$default: {$resume: recovered}
+`),
+    ).resolves.toBe('got recovered');
+  });
+
+  it('外側の節の本体に書いた $handler の return 節からは、外側の節の $resume が見える', async () => {
+    await expect(
+      run(`
+$handler:
+  ask:
+    $fn: _
+    $body:
+      $handler:
+        return:
+          $fn: v
+          $body: {$resume: "\${v}"}
+      $in: 41
+$in:
+  $let:
+    n: {$.ask: null}
+  $in: \${n + 1}
+`),
+    ).resolves.toBe(42);
   });
 });

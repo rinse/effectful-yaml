@@ -25,7 +25,8 @@ $std.log の中身は標準エラー出力に書く。
 
   file             入力ファイル。省略時と "-" は標準入力。
   -p, --param      起動時パラメータ。値は YAML として解釈する。繰り返し可。
-  --ops            登録演算を定義する ESM モジュールのパス。繰り返し可、後勝ちでマージする。
+  --ops            ホストの値を定義する ESM モジュールのパス。繰り返し可、後勝ちでマージする。
+                   default（または名前つきの ops）export が演算、functions export が関数。
   -o, --output     結果の書き出し先ファイル。省略時は標準出力。
   --check          -o と併用し、出力先が最新か検査する（書き込まない）。
   --version        バージョンを表示する。
@@ -34,22 +35,50 @@ $std.log の中身は標準エラー出力に書く。
 
 type Ops = NonNullable<EvaluateOptions['ops']>;
 
-async function loadOps(paths: string[]): Promise<Ops> {
+/** 名前から実装へのマッピングか。 */
+function asTable(candidate: unknown): Ops | undefined {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    return undefined;
+  }
+  return Object.values(candidate).every((v) => typeof v === 'function')
+    ? (candidate as Ops)
+    : undefined;
+}
+
+/**
+ * `--ops` のモジュールを読む。default（または ops）export がホストの演算、
+ * 任意の functions export がホストの関数である。
+ */
+async function loadHostValues(paths: string[]): Promise<{ ops: Ops; functions: Ops }> {
   const ops: Ops = {};
+  const functions: Ops = {};
   for (const p of paths) {
-    const mod: unknown = await import(pathToFileURL(resolve(p)).href);
-    const candidate = (mod as { default?: unknown; ops?: unknown }).default ?? (mod as { ops?: unknown }).ops;
-    if (
-      typeof candidate !== 'object' ||
-      candidate === null ||
-      Array.isArray(candidate) ||
-      !Object.values(candidate).every((v) => typeof v === 'function')
-    ) {
+    const mod = (await import(pathToFileURL(resolve(p)).href)) as {
+      default?: unknown;
+      ops?: unknown;
+      functions?: unknown;
+    };
+    const exported = mod.default ?? mod.ops;
+    // 関数だけを与えるモジュールは演算の export を省ける。
+    if (exported !== undefined) {
+      const table = asTable(exported);
+      if (table === undefined) {
+        throw new Error(`--ops のモジュールは演算名から関数へのマッピングを default export する必要がある: ${p}`);
+      }
+      Object.assign(ops, table);
+    }
+    if (mod.functions !== undefined) {
+      const fns = asTable(mod.functions);
+      if (fns === undefined) {
+        throw new Error(`--ops のモジュールの functions export は関数名から関数へのマッピングでなければならない: ${p}`);
+      }
+      Object.assign(functions, fns);
+    }
+    if (exported === undefined && mod.functions === undefined) {
       throw new Error(`--ops のモジュールは演算名から関数へのマッピングを default export する必要がある: ${p}`);
     }
-    Object.assign(ops, candidate);
   }
-  return ops;
+  return { ops, functions };
 }
 
 function buildHeader(file: string | undefined, params: string[], ops: string[]): string {
@@ -211,9 +240,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     const file = positionals[0];
     const opsPaths = values.ops ?? [];
     const source = file === undefined || file === '-' ? await readAll(io.stdin) : await readFile(file, 'utf8');
+    const host = await loadHostValues(opsPaths);
     const value = await evaluateYaml(source, {
       params: parseParams(values.param ?? []),
-      ops: await loadOps(opsPaths),
+      ops: host.ops,
+      functions: host.functions,
       onLog: (v) => io.stderr(logLine(v) + '\n'),
     });
     const rendered = renderPreserving(source, value);

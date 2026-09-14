@@ -17,7 +17,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, stringify } from 'yaml';
 import { headKeysWithDataRest, isDollarFormKey } from './desugar.js';
-import { isClosure, type Value } from './types.js';
+import { isNonData, type Value } from './types.js';
 
 /** 原文の [start, end) を text で差し替える指示。文書順に並び、互いに重ならない。 */
 interface Splice {
@@ -60,9 +60,9 @@ function splice(source: string, splices: readonly Splice[]): string {
   return out + source.slice(at);
 }
 
-/** マッピングとして扱える値か。閉包・リストは含まない。 */
+/** マッピングとして扱える値か。関数・演算・リストは含まない。 */
 function isValueMap(v: Value): v is { readonly [key: string]: Value } {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isClosure(v);
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !isNonData(v);
 }
 
 /** マッピングノードの生キー（YAML から読んだままの文字列）。$ 形になれるのは文字列だけ。 */

@@ -1,6 +1,7 @@
 /**
- * 境界に達した選択と、評価前の演算の検査。
- * 仕様: docs/grammar.md「作用境界」「作用の推論」「演算」、docs/usage.md「エラー」。
+ * 境界に達した選択と、評価前の名前の検査。
+ * 仕様: docs/grammar.md（草案 0.13）「作用境界」「作用の推論」「合成と境界」「名前と環境」
+ * 「ホストの値」、docs/usage.md「エラー」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -40,9 +41,9 @@ describe('境界に達した選択', () => {
     expect(e.path).toBe('a.b');
   });
 
-  it('$std.for の選択が境界へ達すると、文言は書いた形と束縛名を名乗る', async () => {
-    const e = await failure('a:\n  $std.for: {x: [1, 2]}\n  v: ${x}\n');
-    expect(e.message).toContain("unhandled choice: $std.for 'x' reached the boundary");
+  it('$for の選択が境界へ達すると、文言は書いた形と束縛名を名乗る', async () => {
+    const e = await failure('a:\n  $for: {x: [1, 2]}\n  v: ${x}\n');
+    expect(e.message).toContain("unhandled choice: $for 'x' reached the boundary");
     expect(e.path).toBe('a');
   });
 
@@ -53,17 +54,19 @@ describe('境界に達した選択', () => {
   });
 
   it('選択のハンドラで包めば値になる', async () => {
-    await expect(run('a:\n  b: {$std.list: {$std.each: [1, 2]}}\n')).resolves.toEqual({
+    await expect(
+      run('a:\n  b: {$handler: "${std.list}", $in: {$std.each: [1, 2]}}\n'),
+    ).resolves.toEqual({
       a: { b: [1, 2] },
     });
-    await expect(run('{$std.first: {$std.each: [1, 2]}}')).resolves.toBe(1);
+    await expect(run('{$handler: "${std.first}", $in: {$std.each: [1, 2]}}')).resolves.toBe(1);
   });
 
-  it('$std.each の節を持つ $with も選択を処理する', async () => {
+  it('$std.each の節を持つ $handler も選択を処理する', async () => {
     await expect(
       run(`
 $in: {$std.each: [1, 2]}
-$with:
+$handler:
   std.each: {$fn: xs, $body: caught}
 `),
     ).resolves.toBe('caught');
@@ -71,8 +74,9 @@ $with:
 });
 
 describe('実行時に決まる呼び先の選択', () => {
-  const doc = (wrapper: string): string => `
-${wrapper}
+  const doc = (head: string): string => `
+${head}
+$in:
   $do:
   - $let:
       fns:
@@ -90,24 +94,26 @@ ${wrapper}
   - {$.f: 10}
 `;
 
-  it('$std.lookup で取り出した関数の本体の選択も、$std.list の下なら値になる', async () => {
-    await expect(run(doc('$std.list:'))).resolves.toEqual([10, 11]);
+  it('$std.lookup で取り出した関数の本体の選択も、std.list のハンドラの下なら値になる', async () => {
+    await expect(run(doc('$handler: "${std.list}"'))).resolves.toEqual([10, 11]);
   });
 
-  it('包まなければ境界に達してエラーになる', async () => {
-    const e = await failure(doc('$std.opt:'));
+  it('選択を処理しないハンドラで包んでも、選択は透過して境界に達しエラーになる', async () => {
+    // 部分処理（grammar.md「合成と境界」）：ハンドラは節に挙げた演算だけを取り除く。
+    // 状態のハンドラは std.each を挙げないので、選択はそのまま境界へ抜ける。
+    const e = await failure(doc('$handler: {$std.state: {}}'));
     expect(e.message).toContain(UNHANDLED);
   });
 });
 
-describe('評価前の演算の検査', () => {
+describe('評価前の名前の検査', () => {
   /** 呼ばれたら記録するホスト演算。評価が始まったかどうかの証拠にする。 */
   const marking = (): { calls: Value[]; ops: EvaluateOptions['ops'] } => {
     const calls: Value[] = [];
     return { calls, ops: { 'log.mark': (v) => (calls.push(v), null) } };
   };
 
-  it('マッピング経由で呼ぶ関数の本体の未登録演算も、評価前に拒否される', async () => {
+  it('マッピング経由で呼ぶ関数の本体がホストの演算へ閉包を渡す形も、評価前に拒否される', async () => {
     const { calls, ops } = marking();
     await expect(
       run(
@@ -115,20 +121,20 @@ describe('評価前の演算の検査', () => {
 $do:
 - $let:
     helpers:
-      read:
-        $fn: key
-        $body: {$vault.read: '\${key}'}
+      send:
+        $fn: f
+        $body: {$vault.write: '\${f}'}
 - {$log.mark: before}
-- {$.helpers.read: db/password}
+- {$.helpers.send: {$fn: x, $body: 1}}
 `,
-        { ops },
+        { ops: { ...ops, 'vault.write': () => null } },
       ),
-    ).rejects.toThrow('unregistered operation: $vault.read');
+    ).rejects.toThrow('a function value cannot be passed to a host operation: $vault.write');
     expect(calls).toEqual([]);
   });
 
-  it('状態のセルを経由して呼ぶ関数の本体の未登録演算も、評価前に拒否される', async () => {
-    // 呼び先が実行時のデータから決まる経路。演算のサイトの表は出現に対して全域なので、
+  it('状態のセルを経由して呼ぶ関数の本体がホストの演算へ閉包を渡す形も、評価前に拒否される', async () => {
+    // 呼び先が実行時のデータから決まる経路。関数値の流れの検査はセルを通る経路も数えるので、
     // ホスト演算が一つも走らないうちに拒否される。
     const { calls, ops } = marking();
     await expect(
@@ -139,37 +145,52 @@ $do:
 - $std.set:
     f:
       $fn: x
-      $body: {$nope.op: '\${x}'}
+      $body: {$vault.write: '\${x}'}
 - $let:
     g: {$std.get: f}
-- {$.g: 1}
+- {$.g: {$fn: y, $body: 1}}
 `,
-        { ops },
+        { ops: { ...ops, 'vault.write': () => null } },
       ),
-    ).rejects.toThrow('unregistered operation: $nope.op');
+    ).rejects.toThrow('a function value cannot be passed to a host operation: $vault.write');
     expect(calls).toEqual([]);
   });
 
-  it('std. 名前空間の綴り違いも拒否される（既定ハンドラが処理する 6 つだけが免除される）', async () => {
-    // ホストは std. 名前空間に登録できないので、免除は既定ハンドラと選択のハンドラが
-    // 処理する演算に限る。名前空間ごと免除すると、この文書が実行時まで通ってしまう。
-    await expect(run('{$std.rnge: 3}')).rejects.toThrow('unregistered operation: $std.rnge');
-    await expect(run('{$std.range: 3}')).resolves.toEqual([0, 1, 2]);
+  it('初期環境に無い束縛名の呼び出しは、実行が到達しない位置にあっても評価前に拒否される', async () => {
+    // 検査は出現主義なので、選ばれない分岐の呼び出しも数える。
+    const { calls, ops } = marking();
+    await expect(
+      run(
+        `
+$do:
+- {$log.mark: before}
+- $if: true
+  $then: safe
+  $else: {$nope.op: 1}
+`,
+        { ops },
+      ),
+    ).rejects.toThrow('undefined reference: nope');
+    expect(calls).toEqual([]);
   });
 
-  it('実行が到達しない位置の未登録演算も拒否される', async () => {
+  it('std. の綴り違いは、先頭区画と違って評価時のパスの解決のエラーになる', async () => {
+    // std は初期環境の普通の束縛であり $let で隠せるので（grammar.md「名前と環境」）、
+    // std.rnge が解決するかどうかは静的に決まらない。評価前に見られるのは先頭区画だけで、
+    // 残りの区画がマッピングに無いことは評価時にエラーの語彙で報告される
+    // （grammar.md「呼び出し」）。名前空間ごと免除されるのではない。
+    const { calls, ops } = marking();
     await expect(
-      run(`
-$if: true
-$then: safe
-$else: {$nope.op: 1}
-`),
-    ).rejects.toThrow('unregistered operation: $nope.op');
+      run('$do:\n- {$log.mark: before}\n- {$std.rnge: 3}\n', { ops }),
+    ).rejects.toThrow("missing key 'rnge'");
+    expect(calls).toEqual(['before']);
+    await expect(run('{$std.range: 3}')).resolves.toEqual([0, 1, 2]);
   });
 
   it('登録すれば通る', async () => {
     await expect(
-      run(`
+      run(
+        `
 $do:
 - $let:
     helpers:
@@ -196,13 +217,13 @@ $do:
     ).rejects.toThrow(/self-application detected: .*\$do\[0\]\.\$let\.selfapp/);
   });
 
-  it('ローカル作用の脱出は未登録演算ではなく脱出として報告される', async () => {
+  it('境界へ達したローカル作用は、パスの解決のエラーではなく脱出として報告される', async () => {
     await expect(
       run(`
 $let:
   f:
     $in: \${throw}
-    $with:
+    $handler:
       throw:
         $fn: msg
         $body: caught \${msg}
@@ -214,30 +235,36 @@ $in:
 });
 
 describe('$do の文脈の導入と節の名前', () => {
-  it('$in を省いた $with の節に挙げた登録演算は、後続の文に現れても事前検査を通る', async () => {
+  it('$in を省いた $handler の節は、後続の文に現れたホストの演算を横取りする', async () => {
     await expect(
-      run(`
+      run(
+        `
 $do:
-- $with:
+- $handler:
     vault.read: {$fn: k, $body: stub}
 - {$vault.read: db/password}
-`),
+`,
+        { ops: { 'vault.read': () => 'host' } },
+      ),
     ).resolves.toBe('stub');
   });
 
-  it('$in を省いた $with の節が選択を処理すれば、選択は境界へ達しない', async () => {
+  it('$in を省いた $handler の節が選択を処理すれば、選択は境界へ達しない', async () => {
     await expect(
       run(`
 $do:
-- $with:
+- $handler:
     std.each: {$fn: xs, $body: first}
 - {$std.each: [a, b]}
 `),
     ).resolves.toBe('first');
   });
 
-  it('文脈を導入する文があっても、残りの文の演算は数え落とされない', async () => {
-    for (const form of ['$std.state: {n: 0}', '$with: {other.op: {$fn: m, $body: x}}']) {
+  it('文脈を導入する文があっても、残りの文の名前は数え落とされない', async () => {
+    for (const form of [
+      '$handler: {$std.state: {n: 0}}',
+      '$handler: {throw: {$fn: m, $body: x}}',
+    ]) {
       const calls: Value[] = [];
       await expect(
         run(
@@ -249,15 +276,15 @@ $do:
 `,
           { ops: { 'log.mark': (v) => (calls.push(v), null) } },
         ),
-      ).rejects.toThrow('unregistered operation: $vault.read');
+      ).rejects.toThrow('undefined reference: vault');
       expect(calls).toEqual([]);
     }
   });
 
-  it('文脈の導入が足す演算（節の本体と $std.state の初期値）も数える', async () => {
+  it('文脈の導入が足す名前（節の本体と $handler の式）も数える', async () => {
     for (const form of [
-      '$std.state: {n: {$vault.read: seed}}',
-      '$with: {other.op: {$fn: m, $body: {$vault.read: seed}}}',
+      '$handler: {$std.state: {n: {$vault.read: seed}}}',
+      '$handler: {throw: {$fn: m, $body: {$vault.read: seed}}}',
     ]) {
       await expect(
         run(`
@@ -265,21 +292,21 @@ $do:
 - ${form}
 - done
 `),
-      ).rejects.toThrow('unregistered operation: $vault.read');
+      ).rejects.toThrow('undefined reference: vault');
     }
   });
 
-  it('文の位置の外の $in なし $std.state も、初期値まで検査が降りる', async () => {
+  it('文の位置の外に置いた $handler でも、その式の中まで検査が降りる', async () => {
     const doc = `
 $do:
 - $let:
-    x: {$std.state: {n: {$vault.read: seed}}}
+    x:
+      $handler: {$std.state: {n: {$vault.read: seed}}}
+      $in: {$std.get: n}
 - \${x}
 `;
-    await expect(run(doc)).rejects.toThrow('unregistered operation: $vault.read');
-    await expect(run(doc, { ops: { 'vault.read': () => 0 } })).rejects.toThrow(
-      /\$std\.state without \$in is only allowed as a statement of \$do/,
-    );
+    await expect(run(doc)).rejects.toThrow('undefined reference: vault');
+    await expect(run(doc, { ops: { 'vault.read': () => 7 } })).resolves.toBe(7);
   });
 });
 

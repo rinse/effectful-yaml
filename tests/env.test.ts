@@ -39,7 +39,7 @@ describe('環境の計算量', () => {
     // 読みが O(束縛数) だと 5 万 x 2 万 = 10^9 ステップになる。
     const stmts: unknown[] = [];
     for (let i = 0; i < 20000; i++) stmts.push({ $let: { [`x${i}`]: i } });
-    stmts.push({ '$std.list': { $do: [{ '$std.each': range(50000) }, '${x0}'] } });
+    stmts.push({ $handler: '${std.list}', $in: { $do: [{ '$std.each': range(50000) }, '${x0}'] } });
     const t0 = performance.now();
     const result = (await evaluate({ $do: stmts })) as number[];
     const elapsed = performance.now() - t0;
@@ -97,16 +97,56 @@ $do:
     // 継続が見えたままであることを確かめる。
     await expect(
       run(`
-$in:
-  $std.log: hello
-$with:
+$handler:
   std.log:
     $fn: msg
     $body:
       $do:
       - $let: {tag: instrumented}
       - $resume: \${tag}
+$in:
+  $std.log: hello
 `),
     ).resolves.toBe('instrumented');
+  });
+});
+
+describe('初期環境の束縛 std', () => {
+  it('std は普通の束縛なので $let で隠せる', async () => {
+    await expect(
+      run(`
+$do:
+- $let:
+    std: {tag: shadowed}
+- \${std.tag}
+`),
+    ).resolves.toBe('shadowed');
+  });
+
+  it('隠した std の下では $std. の呼び出しも隠した束縛をたどる', async () => {
+    // 呼び出しの先頭区画も普通の束縛の解決なので、隠せば標準の演算には届かない。
+    await expect(
+      run(`
+$do:
+- $let:
+    std: {each: 1}
+- {$std.each: [1, 2]}
+`),
+    ).rejects.toThrow('$std.each is not a function: 1');
+  });
+
+  it('$for の展開の $std.each は展開先の環境で解決する', async () => {
+    // 展開が初期環境を直に指していれば選択が起きて、境界に達した選択のエラーになる。
+    // 隠した each が呼ばれるなら、右辺がその引数に渡り、返り値がそのまま x に束縛される。
+    await expect(
+      run(`
+$do:
+- $let:
+    std:
+      each: {$fn: xs, $body: "\${xs[1]}"}
+- $for: {x: [1, 2]}
+- \${x}
+`),
+    ).resolves.toBe(2);
   });
 });
