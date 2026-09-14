@@ -1,9 +1,8 @@
 # 自分で定義した作用をハンドルする
 handling-user-defined-effects:
-  $with:
-    # eff.throw 作用の定義
-    # eff は名前空間
-    eff.throw:
+  $handler:
+    # throw 作用の定義（ローカル作用の宣言）
+    throw:
       $fn: msg
       $body:
         # 例外処理を行う (ログを出して代替の値で続行 or エラー落ちさせる)
@@ -14,18 +13,19 @@ handling-user-defined-effects:
   # 残りのキーが本体
   key1: Hello!
   key2:
-    # eff.throw 作用の利用
-    $eff.throw: Error!
+    # throw 作用の利用
+    $.throw: Error!
   key3: World!
 
 # 標準演算 std.each をハンドルする
 handling-system-defined-effects:
-  $with:
+  $handler:
     std.each:
       $fn: xs
       $body:
-        $std.list:
-          $std.for:
+        $handler: ${std.list}
+        $in:
+          $for:
             x: ${xs}
           $in:
             $resume: ${x * 2}
@@ -33,18 +33,19 @@ handling-system-defined-effects:
   key2: {$std.each: [1, 2, 3]}
   key3: World!
 
-# $std.for は $let と $std.each への展開なので、std.each の節がそのまま処理する
+# $for は $let と std.each への展開なので、std.each の節がそのまま処理する
 handling-for:
-  $with:
+  $handler:
     std.each:
       $fn: xs
       $body:
-        $std.list:
-          $std.for:
+        $handler: ${std.list}
+        $in:
+          $for:
             x: ${xs}
           $in:
             $resume: ${x * 2}
-  $std.for:
+  $for:
     n: [1, 2, 3]
   key1: Hello!
   key2: ${n}

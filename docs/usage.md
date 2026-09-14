@@ -19,7 +19,8 @@ Promise なのは、登録演算のホスト関数が非同期でありうるか
 ## 評価オプション
 
 - **`params`**：`$std.param` が読む起動時パラメータ。名前から値へのマッピング。
-- **`ops`**：登録演算のハンドラ。名前は `vault.read` のようにドットを含み、値は `(引数) => 値 | Promise<値>` のホスト関数である。`std.` 名前空間は標準演算のためにあるので登録できない。
+- **`ops`**：登録演算のハンドラ。名前は `vault.read` のようにドットを含み、値は `(引数) => 値 | Promise<値>` のホスト関数である。呼び出しは作用を起こすので、文書の `$handler` が横取りでき、作用シグネチャに数えられる。`std` は初期環境の束縛のためにあるので、名前の最初の区画に使えない。
+- **`functions`**：ホスト関数のハンドラ。形は `ops` と同じ（`{ 'vault.read': impl }`）だが、呼び出しは演算ではなく通常の関数呼び出しになる（`{$vault.read: 引数}`）。`$handler` は横取りできず、作用シグネチャにも現れない。値は `(引数) => 値 | Promise<値>` でよく、非同期でもよい。名前は `ops` と同じくドットを含み、最初の区画に `std` は使えない。同じ名前を `ops` と `functions` の両方に登録するとエラーになる。
 - **`onLog`**：`$std.log` の値の受け皿。省略すると標準エラー出力に書く。
 
 ## 最小の例
@@ -59,7 +60,7 @@ $do:
 ## 登録演算の失敗
 
 ホスト関数は、値を返す代わりに `OperationFailure` を投げてデータ起因の失敗を通知できる。
-処理系はこれを演算の呼び出し位置で起きた `std.fail`（値はコンストラクタに渡した値）として扱うので、文書側の `$std.opt` や `std.fail` の節を持つ `$with` で捕捉できる。
+処理系はこれを演算の呼び出し位置で起きた `std.fail`（値はコンストラクタに渡した値）として扱うので、文書側の `$default` や `std.fail` の節を持つ `$handler` で捕捉できる。
 捕捉されなければ `failure: メッセージ` で reject される。
 `OperationFailure` 以外の例外は捕捉できないエラーであり、失敗位置を添えてそのまま reject される。
 
@@ -71,7 +72,7 @@ const value = await evaluateYaml(
   `
 db: {$dns.lookup: db}
 cache:
-  $std.opt: {$dns.lookup: cache}
+  $dns.lookup: cache
   $default: localhost
 `,
   {
@@ -91,15 +92,16 @@ cache:
 
 評価の失敗はすべて `EffectfulYamlError` で reject される。
 
-- 言語仕様上のエラー（未定義参照、マッピングでない値のキーの走査、型の不一致など、文書の形の誤り）。捕捉できない。
+- 言語仕様上のエラー（マッピングでない値のキーの走査、型の不一致など、文書の形の誤り）。捕捉できない。
+- 未定義参照：呼び出しや参照のパスの最初の区画がどの束縛（`$let`・`$fn`、`std`、ホストの `ops`・`functions`、`$handler` のローカル作用の宣言）にも解決しない文書は、評価を始める前に `undefined reference: NAME` で拒否される。環境はレキシカルに決まるので、この判定は評価を要しない。
 - 自己適用の拒否：関数値の流れの検査に通らない文書は、評価を始める前に `self-application detected` で拒否される。この検査は、`$` キーを含めて文書の構文をそのまま降りる構文パス（例 `config.$let.f`）で位置を報告する。
-- ホスト演算への閉包：文書内のどの節にも現れない演算の引数に閉包が流れうる文書は、評価を始める前に `a function value cannot be passed to a host operation` で拒否される。節を持つ演算では、実行時にホストへ渡る直前の引数に同じ検査が働く。
+- ホストの値への閉包と演算：閉包や演算の値がホストの実装（`ops`・`functions`）の引数に流れうる文書は、評価を始める前に `a function value cannot be passed to a host operation` で拒否される。実行時にも、ホストへ渡る直前の引数に同じ検査が働く。
 - `return` の予約：レキシカルな呼び出し `$.return`（`$.return.x` を含む）を書いた文書は、評価を始める前に `return is reserved: $.return is not callable` で拒否される。`return` はハンドラの節名として予約されているので、この呼び出しは解決しない。`$let` で `return` に束縛することと `${return}` の参照は妨げない。
-- 未登録演算：既定ハンドラが処理せず、文書内のどのハンドラの節にも現れず、`ops` にも無い演算を含む文書は、評価を始める前に `unregistered operation: $名前` で拒否される。この検査は演算の出現に対して全域であり、実行が到達しない位置の演算も、呼び先が実行時に決まる関数の本体の演算も同じく拒否される。節を持つ演算はこの検査を通るので、その節のハンドラの範囲外で呼ばれた場合だけ、実行時に同じエラーになる。
-- 境界に達した選択：`std.each` を処理するハンドラ（`$std.list`、`$std.mapping`、`$std.first`、`std.each` の節を持つ `$with`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each` で reject される。選択を含む計算はいずれかのハンドラで包む。
-- `$std.fail`：文書内のハンドラ（`$with`、`$std.first`、`$std.opt` など）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
+- `$resume` の位置：節の本体の外（`return` 節、ハンドラの本体、`$handler` の外にある関数の本体）に書いた `$resume` は、評価を始める前に `$resume is only allowed inside a $handler clause` で拒否される。
+- 境界に達した選択：`std.each` を処理するハンドラ（`$handler: ${std.list}`、`$handler: ${std.mapping}`、`$handler: ${std.first}`、`std.each` の節を持つ `$handler`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each` で reject される。選択を含む計算はいずれかのハンドラで包む。
+- `$std.fail`：文書内のハンドラ（`$handler` の節や `$default`）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
 - 関数値の脱出：閉包が文書の値に残るとエラーになる。
-- ローカル作用の脱出：`$with` のドットなしの節名が宣言したローカル作用は、その素通しの関数がハンドラの外へ持ち出されて呼ばれると、どのハンドラにも捕まらずに境界へ達する。このとき未登録演算ではなく `local effect 'throw' escaped its handler (declared at 宣言位置)` で reject される。宣言位置は、内部の演算名を決めるのに使った構文パスである。
+- ローカル作用の脱出：`$handler` のドットなしの節名が宣言したローカル作用は、その演算の値がハンドラの外へ持ち出されて呼ばれると、どのハンドラにも捕まらずに境界へ達する。このとき `local effect 'throw' escaped its handler (declared at 宣言位置)` で reject される。宣言位置は、宣言を書いた `$handler` の構文パスである。
 
 メッセージの末尾には、失敗した値の位置が `(at server.hosts[2])` の形で付く（`EffectfulYamlError` の `path` にも入る）。
 位置は出力の値の中でのその値の場所であり、データのキーと添字だけを連ねる。
@@ -109,15 +111,15 @@ cache:
 この**素通しの経路**は次で尽きる。
 
 - データのマッピングのキーと、リストの添字。
-- `$let`・`$std.for`・`$std.state` の `$in` の本体。
+- `$let`・`$for`・節のマッピングを書いた `$handler` の `$in` の本体。
 - `$do` の最後の文。
 - 文脈の導入の本体、すなわち残り。残りがデータならそのキーで、残りが `$if` などの主形ならその形の素通しの経路で位置が伸びる。
 - `$if` の `$then` と `$else`。
-- `return` の節を持たない `$with` の本体。`$std.opt` の本体もこれにあたる。
-- `$std.opt` と `$std.param` の `$default`。失敗したときはその値がそのまま出力の値になる。
+- `$default` を添えた式の本体（`$default` を除いた残り）。
+- `$default` の式。失敗したときはその値がそのまま出力の値になる。
 
 それ以外の位置では値の形が出力と対応しないので、位置は伸びない。
-束縛の右辺、`$if` の条件、演算と関数の引数、ハンドラの節、`$fn` の本体、`$collect` の対象と関数、`$std.list` と `$std.first` の本体、`return` の節を持つ `$with` の本体がこれにあたる。
+束縛の右辺、`$if` の条件、演算と関数の引数、ハンドラの節、`$fn` の本体、`std.collect` の対象と関数、関数の式を置いた `$handler`（`$handler: ${std.list}` や `$handler: {$std.state: ...}`）の本体、`return` の節を持つ `$handler` の本体がこれにあたる。
 そこで起きた失敗は、それを含む直近の伸びた位置で報告される。
 経路は入れ子で伝わるので、伸びない位置の内側にある `$in` の本体も伸びない。
 

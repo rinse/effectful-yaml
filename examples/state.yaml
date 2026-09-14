@@ -8,19 +8,18 @@ set-and-get:
 # uninitialized cell error をハンドラで回収するには、
 # そのセルを解決する状態ハンドラの位置を内側に持ち込む必要がある。
 catch-uninitialized-cell-error:
-  $std.opt:
-    $std.state: {} # 状態ハンドラの宣言
-    $in:
-      $std.get: x
+  $handler: {$std.state: {}} # 状態ハンドラの宣言
+  $in:
+    $std.get: x
   $default: Uninitialized value!
 
-# std.state で $std.get, $std.set のスコープを明示する。
+# $handler: {$std.state: ...} で std.get・std.set のスコープを明示する。
 # 状態の初期値も与えられる。リストを本体にするときは $in に書く。
 nested-states:
-  $std.state: {x: hello, y: world, z: beautiful}
+  $handler: {$std.state: {x: hello, y: world, z: beautiful}}
   $in:
   - $std.get: x
-  - $std.state: {x: bonjour, y: monde}
+  - $handler: {$std.state: {x: bonjour, y: monde}}
     $in:
       $do:
       - $std.set: {y: marie}
@@ -28,11 +27,9 @@ nested-states:
         - $std.get: y
   - $std.get: y
 
-# $do の文に置けば、状態のスコープはそれ以後の文全体になる。
+# $handler: {$std.state: ...} を $do の文に置けば、状態のスコープはそれ以後の文全体になる。
 with-do:
   $do:
-  - $std.state:
-      x: hello
-      y: world
+  - $handler: {$std.state: {x: hello, y: world}}
   - - $std.get: x
     - $std.get: y

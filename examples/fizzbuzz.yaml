@@ -1,5 +1,6 @@
 # $let が導入した数を、残りの $if が振り分ける
-$std.list:
+$handler: ${std.list}
+$in:
   $let:
     i0: {$std.each: {$std.range: 15}}
     i: ${i0 + 1}

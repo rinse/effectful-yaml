@@ -1,6 +1,7 @@
 # オブジェクトの value に対する map
 mapValues:
-  $std.mapping:
+  $handler: ${std.mapping}
+  $in:
     $let:
       a: {$std.each: {x: hello, y: world}}
     $in:
@@ -9,7 +10,8 @@ mapValues:
 
 # オブジェクトの key に対する map
 mapKeys:
-  $std.mapping:
+  $handler: ${std.mapping}
+  $in:
     $let:
       a: {$std.each: {x: hello, y: world}}
     $in:

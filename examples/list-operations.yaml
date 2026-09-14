@@ -1,13 +1,15 @@
 # リストに対する map
 map:
-  $std.list:
+  $handler: ${std.list}
+  $in:
     $let:
       x: {$std.each: [1, 2, 3]}
     $in: ${x + 1}
 
 # リストに対する filter
 filter:
-  $std.list:
+  $handler: ${std.list}
+  $in:
     $do:
     - $let:
         x: {$std.each: {$std.range: 9}}
@@ -16,7 +18,8 @@ filter:
 
 # リストに対する flatMap
 flatMap:
-  $std.list:
+  $handler: ${std.list}
+  $in:
     $let:
       x: {$std.each: [1, 2, 3]}
       y: {$std.each: ["${x}", "${x}"]}
@@ -24,7 +27,8 @@ flatMap:
 
 firstItem:
   # std.list を std.first に置き換えると、最初の要素のみを返す
-  $std.first:
+  $handler: ${std.first}
+  $in:
     $let:
       x: {$std.each: [1, 2, 3]}
     $in: ${x}

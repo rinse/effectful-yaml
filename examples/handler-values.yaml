@@ -1,14 +1,21 @@
-# ハンドラを値として作り、複数の本体に掛ける
+# 再利用するハンドラを本体の閉包をとる関数として作り、複数の本体に掛ける
 $let:
-  # 失敗を既定値に置き換えるハンドラの値。default は節の本体に捕まる
+  # 失敗を既定値に置き換えるハンドラ。既定値と本体の閉包を受け取るカリー化された関数。default は節の本体に捕まる
   fallback:
-    $fn: default
+    $fn: [default, run]
     $body:
-      $std.handler:
+      $handler:
         std.fail: {$fn: _, $body: "${default}"}
+      $in: {$.run: null}
   zero: {$.fallback: 0}
   empty: {$.fallback: ""}
-# 本体はサンクで渡す
-n: {$.zero: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-s: {$.empty: {$fn: _, $body: {$std.lookup: {in: {}, key: missing}}}}
-ok: {$.zero: {$fn: _, $body: 7}}
+# $handler: ${name} で本体に掛ける
+n:
+  $handler: ${zero}
+  $in: {$std.lookup: {in: {}, key: missing}}
+s:
+  $handler: ${empty}
+  $in: {$std.lookup: {in: {}, key: missing}}
+ok:
+  $handler: ${zero}
+  $in: 7

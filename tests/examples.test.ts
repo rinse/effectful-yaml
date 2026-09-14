@@ -28,7 +28,7 @@ describe('examples', () => {
     ]);
   });
 
-  it('handling-effects.yaml は自作の eff.throw を再開で、標準演算 std.each を自作の節で処理する', async () => {
+  it('handling-effects.yaml は自作のローカル作用 throw を再開で、標準演算 std.each を自作の節で処理する', async () => {
     const logs: unknown[] = [];
     await expect(runExample('handling-effects.yaml', { onLog: (v) => logs.push(v) })).resolves.toEqual({
       'handling-user-defined-effects': { key1: 'Hello!', key2: 'Beautiful', key3: 'World!' },
@@ -38,7 +38,7 @@ describe('examples', () => {
         { key1: 'Hello!', key2: 4, key3: 'World!' },
         { key1: 'Hello!', key2: 6, key3: 'World!' },
       ],
-      // $std.for の展開が起こす std.each も同じ節が受けるので、束縛 n は倍にされる。
+      // $for の展開が起こす std.each も同じ節が受けるので、束縛 n は倍にされる。
       'handling-for': [
         { key1: 'Hello!', key2: 2, key3: 'World!' },
         { key1: 'Hello!', key2: 4, key3: 'World!' },
@@ -48,7 +48,7 @@ describe('examples', () => {
     expect(logs).toEqual(['[WARN] Error!']);
   });
 
-  it('for.yaml は $std.for の map / flatMap / 内包表記 / 表の組み替え / 最初の一致を固定する', async () => {
+  it('for.yaml は $for の map / flatMap / 内包表記 / 表の組み替え / 最初の一致を固定する', async () => {
     await expect(runExample('for.yaml')).resolves.toEqual({
       map: [2, 3, 4],
       flatMap: [1, 1, 2, 2, 3, 3],
@@ -66,7 +66,7 @@ describe('examples', () => {
     });
   });
 
-  it('handler-values.yaml は $std.handler の値を引数で調整して複数の本体に掛ける', async () => {
+  it('handler-values.yaml は本体の閉包を受け取る関数を引数で調整して複数の本体に掛ける', async () => {
     await expect(runExample('handler-values.yaml')).resolves.toEqual({ n: 0, s: '', ok: 7 });
   });
 
@@ -79,7 +79,7 @@ describe('examples', () => {
     });
   });
 
-  it('maybe.yaml は失敗を $std.opt が null または $default に翻訳する', async () => {
+  it('maybe.yaml は失敗を $default が null または既定値に翻訳する', async () => {
     const logs: unknown[] = [];
     await expect(runExample('maybe.yaml', { onLog: (v) => logs.push(v) })).resolves.toEqual({
       'without-default': null,
@@ -96,7 +96,7 @@ describe('examples', () => {
     });
   });
 
-  it('state.yaml は状態の貫流・入れ子・$do 文の $std.state を固定する', async () => {
+  it('state.yaml は状態の貫流・入れ子・$do の文に置いた std.state のハンドラを固定する', async () => {
     await expect(runExample('state.yaml')).resolves.toEqual({
       'set-and-get': 'world',
       'catch-uninitialized-cell-error': 'Uninitialized value!',
