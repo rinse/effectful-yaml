@@ -1,10 +1,11 @@
 /**
- * 検証テスト：docs/reference/std.*.md の「関数による実装」節に書かれた関数が、
- * 組み込みの std の形と同じ振る舞い（値、ログの順序、失敗）をすることを固定する。
+ * 検証テスト：docs/reference/ の「関数による実装」節に書かれた関数が、組み込みの std の関数と
+ * 導出形と同じ振る舞い（値、ログの順序、失敗）をすることを固定する。
  *
  * 関数の定義は各ページの節の最初の YAML ブロックから読み、ページに書かれたとおりの
  * 文書を評価する。テストはその `$let` の定義を取り出し、組み込みと同じ本体に掛けて比較する。
- * std.param の `$default` と $std.handler の展開はページに関数がないので、ここに直接書く。
+ * `$std.param` に添えた `$default` の展開と、関数の式を置いた `$handler` の展開は、
+ * ページに関数がないのでここに直接書く。
  */
 import { readFile } from 'node:fs/promises';
 import { parse } from 'yaml';
@@ -14,11 +15,13 @@ import type { Value } from '../src/types.js';
 
 type Doc = Record<string, Value>;
 
-/** ページの「関数による実装」節の文書と期待値、および `$let` の定義。 */
-async function impl(name: string): Promise<{ doc: Doc; expected: Value; defs: Doc }> {
-  const md = await readFile(new URL(`../docs/reference/std.${name}.md`, import.meta.url), 'utf8');
-  const section = md.split(/^## /m).find((s) => s.startsWith('関数による実装') || s.startsWith('展開と関数による実装'));
-  if (section === undefined) throw new Error(`std.${name}.md has no 関数による実装 section`);
+/** ページの「関数による実装」節の文書と期待値、および `$let` の定義。page は `std.list.md` の形。 */
+async function impl(page: string): Promise<{ doc: Doc; expected: Value; defs: Doc }> {
+  const md = await readFile(new URL(`../docs/reference/${page}`, import.meta.url), 'utf8');
+  const section = md
+    .split(/^## /m)
+    .find((s) => s.startsWith('関数による実装') || s.startsWith('展開と関数による実装'));
+  if (section === undefined) throw new Error(`${page} has no 関数による実装 section`);
   const blocks = [...section.matchAll(/```yaml\n([\s\S]*?)```/g)].map((m) => parse(m[1]!) as Value);
   const doc = blocks[0] as Doc;
   return { doc, expected: blocks[1]!, defs: doc['$let'] as Doc };
@@ -44,10 +47,13 @@ async function bothFail(fn: Value, builtin: Value): Promise<void> {
   await expect(evaluate(builtin)).rejects.toThrow();
 }
 
+/** 本体を `$handler: ${名前}` の下で評価する文書。 */
+const under = (name: string, body: Value): Doc => ({ $handler: `\${${name}}`, $in: body });
+
 describe('std.list の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('list');
-  const fn = (body: Value): Doc => ({ $let: defs, $in: { '$.list': thunk(body) } });
-  const builtin = (body: Value): Doc => ({ '$std.list': body });
+  const { doc, expected, defs } = await impl('std.list.md');
+  const fn = (body: Value): Doc => ({ $let: defs, $in: under('list', body) });
+  const builtin = (body: Value): Doc => under('std.list', body);
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -56,7 +62,7 @@ describe('std.list の関数による実装', async () => {
   it('選択とログの順序、選択のない本体、打ち切りが一致する', async () => {
     const body = y(`
 $do:
-- $std.for:
+- $for:
     x: [1, 2, 3]
 - $std.log: \${x}
 - $std.where: \${x != 2}
@@ -68,16 +74,23 @@ $do:
     expect(await agree(fn(cut), builtin(cut))).toEqual([]);
   });
 
+  it('本体の閉包を直接渡す呼び出しも同じ値になる', async () => {
+    const body = y(`{$do: [{$for: {x: [1, 2]}}, "\${x}"]}`);
+    expect(
+      await agree({ $let: defs, $in: { '$.list': thunk(body) } }, { '$std.list': thunk(body) }),
+    ).toEqual([1, 2]);
+  });
+
   it('分岐の失敗はどちらも全体の失敗になる', async () => {
-    const body = y(`{$do: [{$std.for: {x: [1, 2]}}, {$std.fail: boom}]}`);
+    const body = y(`{$do: [{$for: {x: [1, 2]}}, {$std.fail: boom}]}`);
     await bothFail(fn(body), builtin(body));
   });
 });
 
 describe('std.mapping の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('mapping');
-  const fn = (body: Value): Doc => ({ $let: defs, $in: { '$.mapping': thunk(body) } });
-  const builtin = (body: Value): Doc => ({ '$std.mapping': body });
+  const { doc, expected, defs } = await impl('std.mapping.md');
+  const fn = (body: Value): Doc => ({ $let: defs, $in: under('mapping', body) });
+  const builtin = (body: Value): Doc => under('std.mapping', body);
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -86,7 +99,7 @@ describe('std.mapping の関数による実装', async () => {
   it('$std.where による省略とキー順が一致する', async () => {
     const body = y(`
 $do:
-- $std.for:
+- $for:
     e: {b: 1, a: 2, c: 3}
 - $std.where: \${e.value != 2}
 - key: \${e.key}
@@ -96,15 +109,15 @@ $do:
   });
 
   it('キーの重複はどちらもエラーになる', async () => {
-    const body = y(`{$do: [{$std.for: {x: [1, 2]}}, {key: k, value: 0}]}`);
+    const body = y(`{$do: [{$for: {x: [1, 2]}}, {key: k, value: 0}]}`);
     await bothFail(fn(body), builtin(body));
   });
 });
 
 describe('std.first の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('first');
-  const fn = (body: Value): Doc => ({ $let: defs, $in: { '$.first': thunk(body) } });
-  const builtin = (body: Value): Doc => ({ '$std.first': body });
+  const { doc, expected, defs } = await impl('std.first.md');
+  const fn = (body: Value): Doc => ({ $let: defs, $in: under('first', body) });
+  const builtin = (body: Value): Doc => under('std.first', body);
 
   it('ページの文書がページの値になる（パラメータ未渡し）', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -113,7 +126,7 @@ describe('std.first の関数による実装', async () => {
   it('最初の成功より後の分岐は評価されず、そのログも現れない', async () => {
     const body = y(`
 $do:
-- $std.for:
+- $for:
     v: [1, 2, 3]
 - $if: \${v == 1}
   $then: {$std.fail: boom}
@@ -122,7 +135,7 @@ $do:
 - \${v}
 `);
     const logs: Value[] = [];
-    expect(await agree(fn(body), builtin(body), { onLog: (v) => logs.push(v) })).toBe(2);
+    expect(await agree(fn(body), builtin(body))).toBe(2);
     expect(await evaluate(builtin(body), { onLog: (v) => logs.push(v) })).toBe(2);
     expect(logs).toEqual(['reached-2']);
   });
@@ -131,7 +144,7 @@ $do:
     const body = y(`
 $do:
 - $std.set: {n: 0}
-- $std.for:
+- $for:
     v: [a, b]
 - $let:
     n: {$std.get: n}
@@ -144,7 +157,7 @@ $do:
   });
 
   it('全分岐が失敗または打ち切りならどちらも失敗する', async () => {
-    const body = y(`{$do: [{$std.for: {v: [1, 2]}}, {$std.fail: nope}]}`);
+    const body = y(`{$do: [{$for: {v: [1, 2]}}, {$std.fail: nope}]}`);
     await bothFail(fn(body), builtin(body));
     const cut = y(`{$std.where: false}`);
     await bothFail(fn(cut), builtin(cut));
@@ -152,12 +165,15 @@ $do:
 });
 
 describe('std.state の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('state');
+  const { doc, expected, defs } = await impl('std.state.md');
   const fn = (init: Value, body: Value): Doc => ({
-    $let: { ...defs, run: { '$.state': init } },
-    $in: { '$.run': thunk(body) },
+    $let: defs,
+    $in: { $handler: { '$.state': init }, $in: body },
   });
-  const builtin = (init: Value, body: Value): Doc => ({ '$std.state': init, $in: body });
+  const builtin = (init: Value, body: Value): Doc => ({
+    $handler: { '$std.state': init },
+    $in: body,
+  });
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -178,16 +194,18 @@ $do:
     expect(await agree(fn({ n: 1 }, body), builtin({ n: 1 }, body))).toBe(13);
   });
 
-  it('未初期化のセルの読み出しはどちらも失敗し、$std.opt で捕まる', async () => {
+  it('未初期化のセルの読み出しはどちらも失敗し、$default で捕まる', async () => {
     const body = y(`{$std.get: none}`);
     await bothFail(fn({}, body), builtin({}, body));
-    expect(await agree({ '$std.opt': fn({}, body), $default: 'x' }, { '$std.opt': builtin({}, body), $default: 'x' })).toBe('x');
+    expect(
+      await agree({ ...fn({}, body), $default: 'x' }, { ...builtin({}, body), $default: 'x' }),
+    ).toBe('x');
   });
 
   it('貫流と分岐点で分かれる配置が一致する', async () => {
     const body = y(`
 $do:
-- $std.for:
+- $for:
     x: [a, b]
 - $let:
     i: {$std.get: n}
@@ -195,42 +213,60 @@ $do:
     n: \${i + 1}
 - \${x}\${i}
 `);
-    const through = { '$std.list': body };
+    const through = under('std.list', body);
     expect(await agree(fn({ n: 0 }, through), builtin({ n: 0 }, through))).toEqual(['a0', 'b1']);
-    expect(await agree({ '$std.list': fn({ n: 0 }, body) }, { '$std.list': builtin({ n: 0 }, body) })).toEqual(['a0', 'b0']);
+    expect(
+      await agree(under('std.list', fn({ n: 0 }, body)), under('std.list', builtin({ n: 0 }, body))),
+    ).toEqual(['a0', 'b0']);
   });
 });
 
-describe('std.opt の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('opt');
-  const fn = (body: Value, dflt: Value = null): Doc => ({
-    $let: { ...defs, or: { '$.opt': thunk(dflt) } },
-    $in: { '$.or': thunk(body) },
+describe('$default の関数による実装', async () => {
+  const { doc, expected, defs } = await impl('default.md');
+  const fn = (body: Value, dflt: Value): Doc => ({
+    $let: defs,
+    $in: { $handler: { '$.orElse': thunk(dflt) }, $in: body },
   });
-  const builtin = (body: Value, dflt: Value = null): Doc => ({ '$std.opt': body, $default: dflt });
+  /** 本体が `$` 式ならそこに `$default` を添え、スカラーなら一文の `$do` に包む。 */
+  const builtin = (body: Value, dflt: Value): Doc =>
+    typeof body === 'object' && body !== null && !Array.isArray(body)
+      ? { ...(body as Doc), $default: dflt }
+      : { $do: [body], $default: dflt };
 
-  it('ページの文書がページの値になる', async () => {
+  it('ページの文書がページの値になる（パラメータ未渡し）', async () => {
     expect(await evaluate(doc)).toEqual(expected);
   });
 
-  it('失敗は既定値に、成功は素通しになり、$default は成功時に評価されない', async () => {
+  it('失敗は既定値に、成功は素通しになり、既定値の式は成功時に評価されない', async () => {
     const dflt = y(`{$do: [{$std.log: fell-back}, 0]}`);
     const missing = y(`{$std.lookup: {in: {}, key: k}}`);
     expect(await agree(fn(missing, dflt), builtin(missing, dflt))).toBe(0);
     expect(await agree(fn(7, dflt), builtin(7, dflt))).toBe(7);
-    expect(await agree(fn(missing), { '$std.opt': missing })).toBeNull();
+    expect(await agree(fn(missing, null), builtin(missing, null))).toBeNull();
   });
 
   it('$default: {$std.where: false} の定型は包囲する選択の分岐を打ち切る', async () => {
-    const row = (code: Value): Doc => ({ '$std.list': { $do: [{ '$std.for': { r: [{ code: 'c1' }, {}, { code: 'c3' }] } }, code] } });
+    const row = (code: Value): Doc =>
+      under('std.list', { $do: [{ $for: { r: [{ code: 'c1' }, {}, { code: 'c3' }] } }, code] });
     const cut = y(`{$std.where: false}`);
     const access = y('${r.code}');
     expect(await agree(row(fn(access, cut)), row(builtin(access, cut)))).toEqual(['c1', 'c3']);
   });
+
+  it('$std.param に添えた $default は std.fail の節を持つ $handler への展開と一致する', async () => {
+    const dflt = y(`{$do: [{$std.log: fell-back}, 5432]}`);
+    const sugar = { '$std.param': 'port', $default: dflt };
+    const expansion = {
+      $handler: { 'std.fail': { $fn: '_', $body: dflt } },
+      $in: { '$std.param': 'port' },
+    };
+    expect(await agree(sugar, expansion)).toBe(5432);
+    expect(await agree(sugar, expansion, { params: { port: 80 } })).toBe(80);
+  });
 });
 
 describe('std.where の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('where');
+  const { doc, expected, defs } = await impl('std.where.md');
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -239,16 +275,18 @@ describe('std.where の関数による実装', async () => {
   it('真なら null、偽なら打ち切り、真偽値でなければエラーが一致する', async () => {
     const wrap = (guard: Value): Doc => ({
       $let: defs,
-      $in: { '$std.list': { $do: [{ '$std.for': { x: [1, 2, 3] } }, guard, '${x}'] } },
+      $in: under('std.list', { $do: [{ $for: { x: [1, 2, 3] } }, guard, '${x}'] }),
     });
-    expect(await agree(wrap(y('{$.where: "${x != 2}"}')), wrap(y('{$std.where: "${x != 2}"}')))).toEqual([1, 3]);
+    expect(
+      await agree(wrap(y('{$.where: "${x != 2}"}')), wrap(y('{$std.where: "${x != 2}"}'))),
+    ).toEqual([1, 3]);
     expect(await agree({ $let: defs, $in: { '$.where': true } }, { '$std.where': true })).toBeNull();
     await bothFail(wrap(y('{$.where: 1}')), wrap(y('{$std.where: 1}')));
   });
 });
 
-describe('std.for の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('for');
+describe('$for の関数による実装', async () => {
+  const { doc, expected, defs } = await impl('for.md');
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
@@ -256,29 +294,29 @@ describe('std.for の関数による実装', async () => {
 
   it('二つの束縛は束縛ごとに作った bind の入れ子と一致し、マッピングはエントリを選ぶ', async () => {
     const fn = y(`
-$std.list:
-  $let:
-    forms: {a: [1, 2], b: [3]}
-    entries: {$.for: "\${forms}"}
-  $in:
-    $.entries:
-      $fn: entry
-      $body:
-        $let:
-          labels: {$.for2: "\${entry.value}"}
-        $in:
-          $.labels:
-            $fn: label
-            $body: \${entry.key}\${label}
+$handler: \${std.list}
+$let:
+  forms: {a: [1, 2], b: [3]}
+  entries: {$.for: "\${forms}"}
+$in:
+  $.entries:
+    $fn: entry
+    $body:
+      $let:
+        labels: {$.for2: "\${entry.value}"}
+      $in:
+        $.labels:
+          $fn: label
+          $body: \${entry.key}\${label}
 `);
     const builtin = y(`
-$std.list:
-  $let:
-    forms: {a: [1, 2], b: [3]}
-  $std.for:
-    entry: \${forms}
-    label: \${entry.value}
-  $in: \${entry.key}\${label}
+$handler: \${std.list}
+$let:
+  forms: {a: [1, 2], b: [3]}
+$for:
+  entry: \${forms}
+  label: \${entry.value}
+$in: \${entry.key}\${label}
 `);
     // 同じ for を入れ子に適用すると自己適用として拒まれる（ページの規則）ので、束縛ごとに値を作る。
     const twoFors: Doc = { ...defs, for2: structuredClone(defs['for']!) };
@@ -287,24 +325,26 @@ $std.list:
 });
 
 describe('std.lookup の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('lookup');
-  const fn = (m: Value, k: Value): Doc => ({ $let: { ...defs, at: { '$.lookup': m } }, $in: { '$.at': k } });
+  const { doc, expected, defs } = await impl('std.lookup.md');
+  const fn = (m: Value, k: Value): Doc => ({ $let: defs, $in: { '$.lookup': { in: m, key: k } } });
   const builtin = (m: Value, k: Value): Doc => ({ '$std.lookup': { in: m, key: k } });
 
   it('ページの文書がページの値になる', async () => {
     expect(await evaluate(doc)).toEqual(expected);
   });
 
-  it('在るキーは同じ値、無いキーはどちらも失敗し、$std.opt で同じ既定値になる', async () => {
+  it('在るキーは同じ値、無いキーはどちらも失敗し、$default で同じ既定値になる', async () => {
     const m = { basic: 9, pro: 29 };
     expect(await agree(fn(m, 'pro'), builtin(m, 'pro'))).toBe(29);
     await bothFail(fn(m, 'none'), builtin(m, 'none'));
-    expect(await agree({ '$std.opt': fn(m, 'none'), $default: {} }, { '$std.opt': builtin(m, 'none'), $default: {} })).toEqual({});
+    expect(
+      await agree({ ...fn(m, 'none'), $default: {} }, { ...builtin(m, 'none'), $default: {} }),
+    ).toEqual({});
   });
 });
 
 describe('std.merge の関数による実装', async () => {
-  const { doc, expected, defs } = await impl('merge');
+  const { doc, expected, defs } = await impl('std.merge.md');
   const fn = (ms: Value): Doc => ({ $let: defs, $in: { '$.merge': ms } });
   const builtin = (ms: Value): Doc => ({ '$std.merge': ms });
 
@@ -321,31 +361,31 @@ describe('std.merge の関数による実装', async () => {
   });
 });
 
-describe('std.param の $default の展開', () => {
-  it('{$std.param: 名前, $default: 式} は {$std.opt: {$std.param: 名前}, $default: 式} と一致する', async () => {
-    const dflt = y(`{$do: [{$std.log: fell-back}, 5432]}`);
-    const sugar = { '$std.param': 'port', $default: dflt };
-    const opt = { '$std.opt': { '$std.param': 'port' }, $default: dflt };
-    expect(await agree(sugar, opt)).toBe(5432);
-    expect(await agree(sugar, opt, { params: { port: 80 } })).toBe(80);
-  });
-});
-
-describe('$std.handler の展開', () => {
-  it('{$std.handler: 節} は {$fn: t, $body: {$with: 節, $in: {$.t: null}}} と一致する', async () => {
-    const clauses = y(`
-std.fail: {$fn: _, $body: 0}
-return: {$fn: x, $body: "\${x * 2}"}
+describe('関数の式を置いた $handler の展開', () => {
+  it('{$handler: 関数の式, $in: 本体} は {$let: {h: 関数の式}, $in: {$.h: 本体の閉包}} と一致する', async () => {
+    const orElse = y(`
+$fn: [d, run]
+$body:
+  $handler:
+    std.fail: {$fn: _, $body: "\${d}"}
+    return: {$fn: x, $body: "\${x * 2}"}
+  $in: {$.run: null}
 `);
-    const use = (handler: Value): Doc => ({
-      $let: { h: handler },
+    const missing = y('{$std.lookup: {in: {}, key: missing}}');
+    const sugar: Doc = {
+      $let: { orElse },
       $in: {
-        a: { '$.h': thunk(y('{$std.lookup: {in: {}, key: missing}}')) },
-        b: { '$.h': thunk(7) },
+        a: { $handler: { '$.orElse': 0 }, $in: missing },
+        b: { $handler: { '$.orElse': 0 }, $in: 7 },
       },
-    });
-    expect(
-      await agree(use({ '$std.handler': clauses }), use({ $fn: 't', $body: { $with: clauses, $in: { '$.t': null } } })),
-    ).toEqual({ a: 0, b: 14 });
+    };
+    const expansion: Doc = {
+      $let: { orElse },
+      $in: {
+        a: { $let: { h: { '$.orElse': 0 } }, $in: { '$.h': thunk(missing) } },
+        b: { $let: { h: { '$.orElse': 0 } }, $in: { '$.h': thunk(7) } },
+      },
+    };
+    expect(await agree(sugar, expansion)).toEqual({ a: 0, b: 14 });
   });
 });

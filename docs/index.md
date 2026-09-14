@@ -15,80 +15,67 @@ effectful-yaml のドキュメントの索引である。
 
 ## リファレンス
 
-言語が予約するドットなしのキーは 13 個である。
+言語が予約するドットなしのキーは 12 個である。
 `$then` のような補助キーは、従属する主キーのページで扱う。
-これとは別に、`std.` 名前空間の演算と、その上に定義される std の派生ハンドラを主キーごとのページにまとめる。
-`std.` 名前空間そのものは予約されているが、`std.each` のような個々の名前は予約キーではなく、演算・導出形・派生ハンドラとして定義された名前である。
+これとは別に、`std` の演算と関数を名前ごとのページにまとめる。
+`std` は初期環境の束縛にすぎないので、`std.each` のような名前は予約キーではなく、その束縛のマッピングに入っている値である。
 
 ### 予約キー：束縛と制御
 
 | キー | ページ | 概要 |
 |---|---|---|
 | `$let` `$in` | [let.md](reference/let.md) | 束縛と逐次のカーネル構文（bind 相当を兼ねる） |
-| `$do` | [do.md](reference/do.md) | 文の並び。`$let`・`$std.for`・`$std.state`・`$with` への展開で定まる導出形 |
+| `$do` | [do.md](reference/do.md) | 文の並び。`$let`・`$for`・`$handler` への展開で定まる導出形 |
 | `$if` `$then` `$else` | [if.md](reference/if.md) | 条件分岐 |
+| `$for` | [for.md](reference/for.md) | 選択の束縛を導入する頭。`$let` と `$std.each` への展開で定まる導出形 |
 
 ### 予約キー：関数
 
 | キー | ページ | 概要 |
 |---|---|---|
-| `$fn` `$body` | [fn.md](reference/fn.md) | 関数値の生成、呼び出しと名前空間 |
+| `$fn` `$body` | [fn.md](reference/fn.md) | 関数値の生成、呼び出しとパス |
 
-### 予約キー：畳み込みとハンドラ
+### 予約キー：ハンドラと既定値
 
 | キー | ページ | 概要 |
 |---|---|---|
-| `$collect` `$with` `$into` | [collect.md](reference/collect.md) | 畳み込みの構文。構造を回って一つの構造に組み立てる |
-| `$with` `$in` `$resume` | [with.md](reference/with.md) | 利用者定義ハンドラ、ローカル作用の宣言 |
+| `$handler` `$in` `$resume` | [handler.md](reference/handler.md) | ハンドラのカーネル構文。節のマッピング、関数の式、ローカル作用の宣言 |
+| `$default` | [default.md](reference/default.md) | 失敗を既定値に置き換える補助キー。`$handler` への展開で定まる導出形 |
 
 ### std：作用を起こす演算
 
 | 演算 | 作用 | ページ | 概要 |
 |---|---|---|---|
 | `std.each` | 選択 | [std.each.md](reference/std.each.md) | 要素を一つずつ選ぶ |
-| `std.param` `$default` | パラメータ | [std.param.md](reference/std.param.md) | 起動時パラメータの読み出し |
+| `std.param` | パラメータ | [std.param.md](reference/std.param.md) | 起動時パラメータの読み出し |
 | `std.get` | 状態 | [std.get.md](reference/std.get.md) | セルの読み出し |
 | `std.set` | 状態 | [std.set.md](reference/std.set.md) | セルへの書き込み |
 | `std.log` | ログ | [std.log.md](reference/std.log.md) | ログ出力 |
 | `std.fail` | 失敗 | [std.fail.md](reference/std.fail.md) | 計算の失敗（データ起因の部分性も同じ作用になる） |
 
-### std：選択の導出形
+### std：関数
 
-| 名前 | ページ | 概要 |
+| 関数 | ページ | 概要 |
 |---|---|---|
-| `std.where` | [std.where.md](reference/std.where.md) | 分岐の打ち切り。`$if` と空の `$std.each` への展開で定まる導出形であり、演算ではない |
-| `std.for` | [std.for.md](reference/std.for.md) | 選択の束縛を導入する頭。`$let` と `$std.each` への展開で定まる導出形であり、演算ではない |
-
-### std：計算したキーの照会
-
-| 演算 | ページ | 概要 |
-|---|---|---|
-| `std.lookup` | [std.lookup.md](reference/std.lookup.md) | マッピングを計算したキーで引く（意味は選択による照合への展開で定まる） |
-
-### std：マッピングのマージ
-
-| 演算 | ページ | 概要 |
-|---|---|---|
-| `std.merge` | [std.merge.md](reference/std.merge.md) | 複数のマッピングを一つに重ねる浅いマージ（意味は展開で定まる） |
-
-### std：第一階の演算（作用を起こさない）
-
-| 演算 | ページ | 概要 |
-|---|---|---|
+| `std.where` | [std.where.md](reference/std.where.md) | 分岐の打ち切り。`$if` と空の `$std.each` への展開で定まる |
 | `std.range` | [std.range.md](reference/std.range.md) | 自然数を添字のリストに変える |
+| `std.collect` | [std.collect.md](reference/std.collect.md) | 畳み込み。構造を回って一つの構造に組み立てる |
+| `std.lookup` | [std.lookup.md](reference/std.lookup.md) | マッピングを計算したキーで引く（意味は選択による照合への展開で定まる） |
+| `std.merge` | [std.merge.md](reference/std.merge.md) | マッピングのリストを一つに重ねる浅いマージ（意味は展開で定まる） |
 
-### std：派生ハンドラ
+### std：ハンドラを立てる関数
 
-| キー | 処理する演算 | ページ | 概要 |
+本体の閉包を受け取る関数であり、`$handler` の式に置いて使う（`$handler: ${std.list}`）。
+
+| 関数 | 処理する演算 | ページ | 概要 |
 |---|---|---|---|
-| `$std.list` | `std.each` | [std.list.md](reference/std.list.md) | 全分岐をリストに集める |
-| `$std.mapping` | `std.each` | [std.mapping.md](reference/std.mapping.md) | 全分岐をマッピングに集める |
-| `$std.first` | `std.each` `std.fail` | [std.first.md](reference/std.first.md) | 最初に成功した分岐の値 |
-| `$std.state` `$in` | `std.get` `std.set` | [std.state.md](reference/std.state.md) | 状態のスコープ |
-| `$std.opt` | `std.fail` | [std.opt.md](reference/std.opt.md) | 失敗を既定値（省略時 null）に翻訳する |
-| `$std.handler` | 節に書いた演算 | [std.handler.md](reference/std.handler.md) | 節から一級のハンドラ値を作る |
+| `std.list` | `std.each` | [std.list.md](reference/std.list.md) | 全分岐をリストに集める |
+| `std.mapping` | `std.each` | [std.mapping.md](reference/std.mapping.md) | 全分岐をマッピングに集める |
+| `std.first` | `std.each` `std.fail` | [std.first.md](reference/std.first.md) | 最初に成功した分岐の値 |
+| `std.state` | `std.get` `std.set` | [std.state.md](reference/std.state.md) | 状態のスコープ（初期値と本体を順に受け取る） |
 
-派生ハンドラと導出形の意味論は、すべてカーネルの形への展開で定まる。
-`$do`、`std.where`、`std.for`、`std.handler` のほか、意味を展開で定める演算 `std.lookup` と `std.merge` も同じである。
-各ページはその展開を掲載し、あわせて展開を文書内の関数として書いた「関数による実装」を載せる。`std.first.md` は展開が紙面に収まらないので、関数による実装だけを示す。
-処理系は速度のためにこれらを直接実装しているが、観測できる振る舞いは関数による実装と一致する。
+カーネルは参照 `${...}`・`$let`・`$if`・`$fn`・`$handler` の 5 形である。
+導出形（`$do`、`$for`、`$default`、`$fn` の引数名の列）と `std` の関数の意味論は、すべてカーネルの形への展開か、値から値への規則で定まる。
+各ページはその展開を掲載し、あわせて展開を文書内の関数として書いた「関数による実装」を載せる。
+`std.range` と `std.collect` は導出できない原始なので、展開を持たない。
+処理系は速度のためにこれらを直接実装しているが、観測できる振る舞いは展開と一致する。
