@@ -2,7 +2,7 @@
 /**
  * playground/ を site/ にビルドする。
  * - playground/entry.ts を esbuild でバンドルして site/effectful-yaml.js を作る
- * - index.html / style.css / app.js を site/ へコピー
+ * - index.html / style.css / app.js と highlight.js のテーマ CSS を site/ へコピー
  * - examples/*.yaml を site/examples/ へコピーし、ファイル名一覧を index.json として書き出す
  */
 import * as esbuild from 'esbuild';
@@ -30,6 +30,9 @@ await esbuild.build({
 
 for (const file of ['index.html', 'style.css', 'app.js']) {
   await cp(path.join(root, 'playground', file), path.join(siteDir, file));
+}
+for (const theme of ['github.css', 'github-dark.css']) {
+  await cp(path.join(root, 'node_modules/highlight.js/styles', theme), path.join(siteDir, theme));
 }
 
 const examplesDir = path.join(root, 'examples');

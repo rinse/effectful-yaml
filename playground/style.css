@@ -122,6 +122,29 @@ button#run-button:hover {
   word-break: break-word;
 }
 
+/* 文字を透明にした textarea を、ハイライトした <pre> と同じグリッドのセルに重ねる。
+   セルの高さは内容の多い方に合うので、textarea は伸びてスクロールせず、両者の行がずれない。 */
+.editor {
+  display: grid;
+}
+
+.editor > * {
+  grid-area: 1 / 1;
+  margin: 0;
+  overflow: hidden;
+  resize: none;
+}
+
+.editor > textarea {
+  color: transparent;
+  background: transparent;
+  caret-color: var(--fg);
+}
+
+.editor > textarea::placeholder {
+  color: var(--muted);
+}
+
 #source-input {
   min-height: 320px;
 }

@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>effectful-yaml playground</title>
+  <link rel="stylesheet" href="github.css" media="(prefers-color-scheme: light)" />
+  <link rel="stylesheet" href="github-dark.css" media="(prefers-color-scheme: dark)" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -19,9 +21,15 @@
   <main class="panes">
     <section class="pane">
       <h2>YAML 入力</h2>
-      <textarea id="source-input" class="code" spellcheck="false"></textarea>
+      <div class="editor">
+        <pre class="code" aria-hidden="true"></pre>
+        <textarea id="source-input" class="code" spellcheck="false"></textarea>
+      </div>
       <h2>params（YAML、任意）</h2>
-      <textarea id="params-input" class="code params" spellcheck="false" placeholder="x: 1&#10;y: hello"></textarea>
+      <div class="editor">
+        <pre class="code" aria-hidden="true"></pre>
+        <textarea id="params-input" class="code params" spellcheck="false" placeholder="x: 1&#10;y: hello"></textarea>
+      </div>
     </section>
 
     <section class="pane">

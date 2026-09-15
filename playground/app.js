@@ -1,4 +1,4 @@
-import { evaluateYaml, parse, stringify } from './effectful-yaml.js';
+import { evaluateYaml, highlightYaml, parse, stringify } from './effectful-yaml.js';
 
 const exampleSelect = document.getElementById('example-select');
 const runButton = document.getElementById('run-button');
@@ -11,6 +11,17 @@ const errorPane = document.getElementById('error-pane');
 const FALLBACK_NAME = 'fizzbuzz.yaml';
 // fetch できない（file:// 直開き等）ときの最小限の既定文書。
 const FALLBACK_SOURCE = '$let:\n  x: 1\n$in: ${x + 1}\n';
+
+// textarea の文字は透明にしてあり、直前の <pre> に同じ文字列のハイライトを重ねて見せる。
+function highlightEditor(textarea) {
+  // 末尾が改行のとき <pre> にも最後の空行を描かせるため、改行を 1 つ足す。
+  textarea.previousElementSibling.innerHTML = highlightYaml(textarea.value + '\n');
+}
+
+function setSource(text) {
+  sourceInput.value = text;
+  highlightEditor(sourceInput);
+}
 
 function showError(message) {
   errorPane.textContent = message;
@@ -40,15 +51,15 @@ async function initExamples() {
       exampleSelect.append(option);
     }
     exampleSelect.value = names.includes(FALLBACK_NAME) ? FALLBACK_NAME : names[0];
-    sourceInput.value = await loadExample(exampleSelect.value);
+    setSource(await loadExample(exampleSelect.value));
   } catch {
-    sourceInput.value = FALLBACK_SOURCE;
+    setSource(FALLBACK_SOURCE);
   }
 }
 
 exampleSelect.addEventListener('change', async () => {
   try {
-    sourceInput.value = await loadExample(exampleSelect.value);
+    setSource(await loadExample(exampleSelect.value));
   } catch (error) {
     showError(String(error?.message ?? error));
   }
@@ -85,10 +96,15 @@ async function run() {
         logPane.textContent = logLines.join('\n');
       },
     });
-    outputPane.textContent = stringify(result);
+    outputPane.innerHTML = highlightYaml(stringify(result));
   } catch (error) {
     showError(error?.message ? error.message : String(error));
   }
+}
+
+for (const textarea of [sourceInput, paramsInput]) {
+  textarea.addEventListener('input', () => highlightEditor(textarea));
+  highlightEditor(textarea);
 }
 
 runButton.addEventListener('click', run);
