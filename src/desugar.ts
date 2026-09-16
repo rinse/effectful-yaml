@@ -1,6 +1,6 @@
 /**
  * YAML ノードからカーネルの AST への脱糖。
- * 仕様: docs/grammar.md（草案 0.13）「予約キーとカーネル」「$do」「文脈の導入」
+ * 仕様: docs/grammar/kernel.md・docs/grammar/derived.md（草案 0.13）「$do」「文脈の導入」
  * 「引数名の列と部分適用」「$for」「$handler」「$default」。
  *
  * 仕様は導出形を「カーネルへの展開」で定めるので、展開はここで一度だけ行う。

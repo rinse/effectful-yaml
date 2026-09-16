@@ -44,4 +44,4 @@ port: 5432
 - [$default](default.md)（既定値の補助キーと、その展開）
 - [std.get](std.get.md)（読み出し専用でない状態が必要なとき）
 - [std.fail](std.fail.md)、[$handler](handler.md)（未渡しの読み出しが起こす作用と、その捕捉）
-- [言語仕様の評価モデル](../grammar.md)（既定ハンドラ）
+- [言語仕様の既定ハンドラの節](../grammar/effects.md)

@@ -1,6 +1,6 @@
 /**
  * 評価器。
- * 仕様: docs/grammar.md（草案 0.13）「評価モデル」節、とりわけ「作用境界」「合成と境界」。
+ * 仕様: docs/grammar/effects.md（草案 0.13）、とりわけ「作用境界」「合成・部分処理・境界」。
  *
  * 入力はカーネルの AST（src/desugar.ts）である。導出形はすべて脱糖済みなので、
  * ここで扱うのはカーネルの 5 形（参照・$let・$if・$fn と呼び出し・$handler）と、
@@ -904,7 +904,7 @@ async function drive(
     if (host === undefined) {
       throw attachPath(new EffectfulYamlError(unhandledOpMessage(c.name)), c.path);
     }
-    // 閉包と演算の値はホストへ渡れない（grammar.md ホストの値）。評価前の流れ検査と二重の砦で、
+    // 閉包と演算の値はホストへ渡れない（grammar/host.md）。評価前の流れ検査と二重の砦で、
     // こちらは実際に渡る値を見る正確な検査である。
     if (containsNonData(c.arg)) {
       throw attachPath(
@@ -938,7 +938,7 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
   // 導出形をカーネルへ展開する。形の誤りはここで報告される。
   const ast = desugar(doc);
 
-  // 評価前の検査（grammar.md「名前と環境」「関数値の流れと停止性」「ホストの値」）。
+  // 評価前の検査（grammar/values.md「環境と名前の解決」、grammar/checks.md「関数値の流れと停止性」、grammar/host.md）。
   // 未定義の参照を含む文書、自己適用を含みうる文書、ホストの実装の引数に閉包や演算の値が
   // 流れうる文書を、評価を始める前に拒否する。
   typecheck(ast, Object.keys(ops), Object.keys(functions));

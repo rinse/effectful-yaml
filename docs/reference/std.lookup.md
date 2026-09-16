@@ -102,4 +102,4 @@ $do:
 - [std.first](std.first.md)（展開が使う、最初の成功を採るハンドラ）
 - [std.where](std.where.md)、[$for](for.md)（展開が使う照合）
 - [$fn](fn.md)（表を固定した照会関数を作る部分適用）
-- [言語仕様の std の節](../grammar.md)
+- [言語仕様の std の節](../grammar/std.md)

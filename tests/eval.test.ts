@@ -68,7 +68,7 @@ tls:
   });
 });
 
-describe('選択の基本形（grammar.md 用例）', () => {
+describe('選択の基本形（grammar/examples.md）', () => {
   it('末尾が $std.each なら 18 要素になる', async () => {
     await expect(
       run(`
@@ -295,7 +295,7 @@ port:
     ).resolves.toEqual([1, 2]);
   });
 
-  it('grammar.md の用例（パラメータと条件分岐）', async () => {
+  it('grammar/examples.md（パラメータと条件分岐）', async () => {
     await expect(
       run(
         `

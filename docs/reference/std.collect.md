@@ -101,4 +101,4 @@ db: 5432
 - [std.range](std.range.md)（回数を構造に変えて回す）
 - [$fn](fn.md)
 - [$handler](handler.md)（節の中の閉包から `$resume` を呼ぶ規則が、この関数に渡す関数のために要る）
-- [言語仕様の std の節](../grammar.md)
+- [言語仕様の std の節](../grammar/std.md)

@@ -1,6 +1,6 @@
 /**
  * 境界に達した選択と、評価前の名前の検査。
- * 仕様: docs/grammar.md（草案 0.13）「作用境界」「作用の推論」「合成と境界」「名前と環境」
+ * 仕様: docs/grammar/effects.md「作用境界」「合成・部分処理・境界」、docs/grammar/checks.md「作用の推論」、docs/grammar/values.md「環境と名前の解決」
  * 「ホストの値」、docs/usage.md「エラー」。
  */
 import { parse } from 'yaml';
@@ -99,7 +99,7 @@ $in:
   });
 
   it('選択を処理しないハンドラで包んでも、選択は透過して境界に達しエラーになる', async () => {
-    // 部分処理（grammar.md「合成と境界」）：ハンドラは節に挙げた演算だけを取り除く。
+    // 部分処理（grammar/effects.md「合成・部分処理・境界」）：ハンドラは節に挙げた演算だけを取り除く。
     // 状態のハンドラは std.each を挙げないので、選択はそのまま境界へ抜ける。
     const e = await failure(doc('$handler: {$std.state: {}}'));
     expect(e.message).toContain(UNHANDLED);
@@ -175,10 +175,10 @@ $do:
   });
 
   it('std. の綴り違いは、先頭区画と違って評価時のパスの解決のエラーになる', async () => {
-    // std は初期環境の普通の束縛であり $let で隠せるので（grammar.md「名前と環境」）、
+    // std は初期環境の普通の束縛であり $let で隠せるので（grammar/values.md「環境と名前の解決」）、
     // std.rnge が解決するかどうかは静的に決まらない。評価前に見られるのは先頭区画だけで、
     // 残りの区画がマッピングに無いことは評価時にエラーの語彙で報告される
-    // （grammar.md「呼び出し」）。名前空間ごと免除されるのではない。
+    // （grammar/syntax.md「呼び出し」）。名前空間ごと免除されるのではない。
     const { calls, ops } = marking();
     await expect(
       run('$do:\n- {$log.mark: before}\n- {$std.rnge: 3}\n', { ops }),

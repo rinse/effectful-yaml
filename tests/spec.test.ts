@@ -1,5 +1,5 @@
 /**
- * 受け入れテスト：docs/grammar.md（草案 0.13）と docs/reference/ の「例」節に書かれた文書が、
+ * 受け入れテスト：docs/grammar/（草案 0.13）と docs/reference/ の「例」節に書かれた文書が、
  * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
@@ -445,7 +445,7 @@ $in:
   },
 ];
 
-describe('grammar.md 用例（値の一致）', () => {
+describe('grammar/examples.md 用例（値の一致）', () => {
   it.each(cases)('$name', async (c) => {
     const logs: Value[] = [];
     const result = await evaluateYaml(c.yaml, {
@@ -463,7 +463,7 @@ describe('grammar.md 用例（値の一致）', () => {
   });
 });
 
-describe('grammar.md 用例（そのほかの記述）', () => {
+describe('grammar/examples.md 用例（そのほかの記述）', () => {
   it('長い名前の演算には、引数を素通しする $fn を $let で短い名前に束縛する', async () => {
     const ops = { 'vault.secrets.read': (arg: Value) => `secret:${String(arg)}` };
     const viaLocalName = await evaluateYaml(
@@ -659,7 +659,7 @@ $in: 2
   },
 ];
 
-describe('grammar.md 用例（エラーになる）', () => {
+describe('grammar/examples.md 用例（エラーになる）', () => {
   it.each(errorCases)('$name', async (c) => {
     await expect(evaluateYaml(c.yaml, { params: c.params })).rejects.toThrow(c.messagePattern);
   });
@@ -668,7 +668,7 @@ describe('grammar.md 用例（エラーになる）', () => {
 // -----------------------------------------------------------------------------
 // docs/reference/ 用例：カーネル（do / let / if / fn / handler / for / default）と std の
 // 各ページの「例」節にある実行可能な用例。
-// 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar.md 用例と内容が
+// 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar/examples.md と内容が
 // 重なるものもあるが、各ページの記述を独立に固定する目的でそのまま転記する。
 // -----------------------------------------------------------------------------
 const referenceCases: readonly SpecCase[] = [

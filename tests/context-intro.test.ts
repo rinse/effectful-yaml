@@ -1,7 +1,7 @@
 /**
  * 文脈の導入を伴うマッピング（頭キー `$let`・`$for`・`$handler` を持ち、その頭を除いた
  * 残りが本体になる導出形）の動作確認。
- * 仕様: docs/grammar.md（草案 0.13）「文脈の導入」「$do」「$handler」「$default」。
+ * 仕様: docs/grammar/derived.md（草案 0.13）「文脈の導入」「$do」「$default」、docs/grammar/syntax.md「$handler」。
  */
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ const run = (src: string, options?: EvaluateOptions): Promise<Value> =>
   evaluate(parse(src), options);
 
 // -----------------------------------------------------------------------------
-// 受け入れ（grammar.md 用例）
+// 受け入れ（grammar/examples.md）
 // -----------------------------------------------------------------------------
 
 describe('文脈の導入の受け入れ', () => {
