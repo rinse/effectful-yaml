@@ -24,7 +24,7 @@ import { EffectfulYamlError, type Value } from './types.js';
 // カーネルの AST
 // ---------------------------------------------------------------------------
 
-/** `$let` の束縛。name が null なら値を捨てる文（文書から参照できない私的名）。 */
+/** `$let` の束縛。name が null なら値を捨てる文（文書から参照できない内部名）。 */
 export interface Binding {
   readonly name: string | null;
   readonly rhs: KNode;
@@ -529,7 +529,7 @@ const body = (node: unknown, path: string, spath: string, open: boolean): KNode 
 /**
  * 補助キー `$default` の展開。
  *
- *   {X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 私的名, $body: 式}}, $in: X}
+ *   {X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 内部名, $body: 式}}, $in: X}
  *
  * 残り X をそのまま脱糖し、既定値の式を返す `std.fail` の節で包む。節が `$resume` を
  * 呼ばずに式へ達するので、失敗した時点で X は打ち切られる。既定値の式は X の外側にあり、
@@ -745,7 +745,7 @@ function clausesOf(
  * 関数に評価される式のどちらかである。後者は本体の閉包を渡す呼び出しへ展開する。
  *
  *   {$handler: 関数の式, $in: 本体}
- *     ≡ {$let: {私的名: 関数の式}, $in: {$.私的名: {$fn: 捨て名, $body: 本体}}}
+ *     ≡ {$let: {内部名: 関数の式}, $in: {$.内部名: {$fn: 捨て名, $body: 本体}}}
  *
  * mkBody は本体の脱糖（引数は素通しの open）。節のマッピングなら `return` 節の有無で決まり、
  * 関数の式なら値が呼び出しを経て返るので素通しにならない。
@@ -773,7 +773,7 @@ function desugarHandler(
       `$handler requires a mapping of clauses or an expression evaluating to a function, got: ${JSON.stringify(hnode)}`,
     );
   }
-  // 私的名と捨て名には識別子に使えない `@` を含めるので、利用者の束縛を隠さない。
+  // 内部名と捨て名には識別子に使えない `@` を含めるので、利用者の束縛を隠さない。
   const hpath = childPath(spath, key);
   const priv = '_@handler';
   return {
@@ -793,7 +793,7 @@ function desugarHandler(
 }
 
 /**
- * 関数の式を置いた `$handler` の展開が名乗る形。展開の私的名ではなく、利用者が書いた
+ * 関数の式を置いた `$handler` の展開が名乗る形。展開の内部名ではなく、利用者が書いた
  * `$handler: ${std.first}` や `$handler: {$std.state: ...}` を名乗る。
  */
 function handlerWhat(hnode: unknown): string {

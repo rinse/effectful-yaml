@@ -21,10 +21,10 @@ $default: 式
 ## 展開
 
 意味は次の展開で定める。
-私的名は文書から参照できない捨て名である。
+内部名は処理系内部の捨て名であり、文書から参照できない。
 
 ```
-{X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 私的名, $body: 式}}, $in: X}
+{X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 内部名, $body: 式}}, $in: X}
 ```
 
 `$default` を除いた残り X が `$` 式全体である。
