@@ -13,7 +13,7 @@
  *   - spath: 構文パス。`$` 式の内側へも降りる。関数値の流れの検査のエラー位置と、
  *            ローカル作用の宣言位置に使う。必要とするノード（`$fn`）だけが持つ。
  *
- * 形の誤り（主キーの重複、補助キーの過不足、予約されていない `$` キー、節名の形など）は
+ * 構文の誤り（主キーの重複、補助キーの過不足、予約されていない `$` キー、節名の綴りの誤りなど）は
  * ここで報告する。ただし「$do の文の位置でだけ書ける形」を位置の外で見つけたときだけは、
  * その場で投げずに Err ノードを置く。検査が初期値や節まで走査してから、
  * 評価がその位置に達したときに初めて拒む、という順序にするためである。
@@ -106,7 +106,7 @@ export type KNode =
       readonly what: string;
       /**
        * 呼び先が関数でなければならない呼び出し（関数の式を置いた `$handler` の展開）。
-       * 演算にたどり着いたら作用を起こさず、形の誤りとして拒む。
+       * 演算にたどり着いたら作用を起こさず、型の誤りとして拒む。
        */
       readonly functionOnly?: true;
     }
@@ -203,7 +203,7 @@ type DollarKeyKind =
  * ドットを含まない名前は予約キーであり、予約されていなければエラーである。
  * ドットを含む名前は環境にある値の呼び出しで、最初の区画が束縛を解決し、残りの区画が
  * その値のマッピングをキーでたどる。先頭区画が空の `$.名前` は、一区画のパスを
- * 予約キーと区別して書く形である。
+ * 予約キーと区別して書く書き方である。
  * `$let` の束縛名にドットを使えない（束縛と制御の節）ので、名前の中のドットは常に
  * 「束縛名の終わり・キーアクセスの始まり」の区切りとして読める。
  * それ以外（空区画・記号・添字）はエラーにする。添字アクセスは対象外で、
@@ -222,7 +222,7 @@ function classifyDollarKey(nameAfterDollar: string): DollarKeyKind {
     );
   }
   const [head, ...keys] = name.split('.');
-  // return はハンドラの節名として予約されている。呼び出しの形で書かれたら形の誤りである
+  // return はハンドラの節名として予約されている。呼び出しとして書かれたら構文の誤りである
   // （束縛としての `$let: {return: ...}` と `${return}` の参照は合法）。
   if (head === 'return') {
     throw new EffectfulYamlError('return is reserved: $.return is not callable');
@@ -353,7 +353,7 @@ function analyzeMapping(rawKeys: readonly string[]): MappingShape {
   return { kind: 'reserved', main: mainKind.main, mainRaw, aux };
 }
 
-/** 節名の分類。形の誤りはエラー。spath は宣言位置（ローカル作用の同一性の出所）。 */
+/** 節名の分類。構文の誤りはエラー。spath は宣言位置（ローカル作用の同一性の出所）。 */
 function classifyClauseName(name: string, spath: string): 'return' | ClauseKey {
   if (name === 'return') return 'return';
   if (DOTTED.test(name)) {
@@ -712,7 +712,7 @@ function forBindings(bindings: unknown, path: string, spath: string): Binding[] 
 /**
  * literal な節のマッピングから節と `return` を組む。key はそのマッピングを値に持つキーで、
  * 節の構文パスに使う。節の名前の解決は評価時（`$handler` の位置の環境）に行うので、
- * ここで決まるのは名前の形だけである。
+ * ここで決まるのは名前の綴りによる分類だけである。
  * ローカル作用の宣言（ドットを含まない名前）は spath を持ち回り、評価のたびに
  * 新しい演算の値を作って本体に束縛する（同一性は値が持つ）。
  *

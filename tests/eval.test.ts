@@ -751,19 +751,19 @@ $do:
     ).resolves.toBe(42);
   });
 
-  it('空の列は形の誤り', async () => {
+  it('空の列は構文の誤り', async () => {
     await expect(run('{$fn: [], $body: 1}')).rejects.toThrow(/\$fn parameter/);
   });
 
-  it('名前の重複は形の誤り', async () => {
+  it('名前の重複は構文の誤り', async () => {
     await expect(run('{$fn: [a, a], $body: 1}')).rejects.toThrow(/duplicate \$fn parameter/);
   });
 
-  it('文字列でない要素は形の誤り', async () => {
+  it('文字列でない要素は構文の誤り', async () => {
     await expect(run('{$fn: [a, 1], $body: 2}')).rejects.toThrow(/\$fn parameter/);
   });
 
-  it('実行されない分岐の形の誤りも検査される（出現主義）', async () => {
+  it('実行されない分岐の構文の誤りも検査される（出現主義）', async () => {
     await expect(
       run(`
 $if: true
@@ -1774,7 +1774,7 @@ $in:
     ).resolves.toEqual([1, 1]);
   });
 
-  it("'in' がマッピングでなければエラーになり、$default でも捕捉できない（形の誤り）", async () => {
+  it("'in' がマッピングでなければエラーになり、$default でも捕捉できない（型の誤り）", async () => {
     await expect(run('{$std.lookup: {in: [1, 2, 3], key: a}}')).rejects.toThrow(
       /'in' must be a mapping/,
     );
@@ -1783,7 +1783,7 @@ $in:
     ).rejects.toThrow(/'in' must be a mapping/);
   });
 
-  it('key が文字列でなければエラーになり、$default でも捕捉できない（形の誤り）', async () => {
+  it('key が文字列でなければエラーになり、$default でも捕捉できない（型の誤り）', async () => {
     await expect(run('{$std.lookup: {in: {a: 1}, key: 1}}')).rejects.toThrow(
       /\$std\.lookup key must be a string/,
     );
@@ -1858,7 +1858,7 @@ $do:
     ).resolves.toEqual({ a: 2, b: 3 });
   });
 
-  it('引数がリストでない・要素がマッピングでないのは形の誤りで、$default でも捕捉できない', async () => {
+  it('引数がリストでない・要素がマッピングでないのは型の誤りで、$default でも捕捉できない', async () => {
     await expect(run('{$std.merge: {a: 1}}')).rejects.toThrow(
       /\$std\.merge requires a list of mappings/,
     );
@@ -2878,7 +2878,7 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
     );
   });
 
-  it('文書の形の誤りに位置が付く（キー走査・型の不一致）', async () => {
+  it('文書の誤りに位置が付く（キー走査・型の不一致）', async () => {
     await expect(run('server:\n  x:\n    $let: {a: 1}\n    $in: {$.a.self: 2}')).rejects.toThrow(
       "cannot access key '.self' of a non-mapping value (at server.x)",
     );
@@ -3070,7 +3070,7 @@ k:
 });
 
 
-describe('関数の式を置いた $handler の名乗りと形の検査', () => {
+describe('関数の式を置いた $handler の名乗りと型の検査', () => {
   it('std.first の全滅は利用者が書いた $handler: ${std.first} を名乗る', async () => {
     await expect(
       run(`
@@ -3081,19 +3081,19 @@ $in: {$std.where: false}
     ).rejects.toThrow('failure: every branch of $handler: ${std.first} failed or was cut');
   });
 
-  it('$handler の式が演算に評価されたら作用を起こさず形の誤りとして拒む', async () => {
+  it('$handler の式が演算に評価されたら作用を起こさず型の誤りとして拒む', async () => {
     await expect(run('{$handler: "${std.each}", $in: 1}')).rejects.toThrow(
       '$handler requires a mapping of clauses or a function, got: <operation std.each>',
     );
   });
 
-  it('$handler の式がデータに評価されたら形の誤りとして拒む', async () => {
+  it('$handler の式がデータに評価されたら型の誤りとして拒む', async () => {
     await expect(run('{$let: {h: 5}, $handler: "${h}", $in: 1}')).rejects.toThrow(
       '$handler requires a mapping of clauses or a function, got: 5',
     );
   });
 
-  it('本体の閉包を受け取る std の関数に関数でない値を直接渡すと、引数の形の誤りとして名乗る', async () => {
+  it('本体の閉包を受け取る std の関数に関数でない値を直接渡すと、引数の型の誤りとして名乗る', async () => {
     await expect(run('{$std.list: 5}')).rejects.toThrow(
       '$std.list requires a function taking the body, got: 5',
     );

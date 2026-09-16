@@ -92,7 +92,7 @@ const bindAt = (path: string, c: Comp, f: (v: Value) => Comp): Comp =>
 const isValueMap = (v: Value): v is ValueMap =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && !isNonData(v);
 
-/** パスの残りの区画（マッピングのキーアクセス）をたどる。形の誤りはエラーの語彙で報せる。 */
+/** パスの残りの区画（マッピングのキーアクセス）をたどる。たどれないことは文書の誤りなのでエラーの語彙で報せる。 */
 function walkKeys(cur: Value, keys: readonly string[]): Value {
   for (const seg of keys) {
     if (!isValueMap(cur)) {
@@ -129,7 +129,7 @@ function entriesOf(arg: Value, what: string): Value[] {
 
 /**
  * $std.lookup の意味（展開と等価な O(1) の照会）。無いキーは呼び出し位置の std.fail。
- * in がマッピングでない・key が文字列でないのは形の誤りなのでエラー。
+ * in がマッピングでない・key が文字列でないのは型の誤りなのでエラー。
  */
 function lookupComp(arg: Value, path: string, what: string): Comp {
   if (!isValueMap(arg)) {
@@ -147,7 +147,7 @@ function lookupComp(arg: Value, path: string, what: string): Comp {
 
 /**
  * $std.merge の意味（展開と等価な直接のマージ）。値は後勝ち、キーの位置は初出。
- * 引数がリストでない・要素がマッピングでないのは形の誤りなのでエラー。
+ * 引数がリストでない・要素がマッピングでないのは型の誤りなのでエラー。
  */
 function mergeComp(arg: Value, what: string): Comp {
   if (!Array.isArray(arg)) {
@@ -378,7 +378,7 @@ export interface EvaluateOptions {
    */
   ops?: Record<string, HostImpl>;
   /**
-   * ホストの関数。名前の形は演算と同じだが、作用ではないので横取りできず、
+   * ホストの関数。名前の綴りは演算と同じだが、作用ではないので横取りできず、
    * 作用シグネチャにも現れない。実装は非同期でもよい。
    */
   functions?: Record<string, HostImpl>;
@@ -410,7 +410,7 @@ const hostFnOp = (name: string): string => `${name}${HOST_FN_MARK}`;
 
 /**
  * 本体の閉包を受け取る関数（std.list など）の引数を本体として走らせる。
- * 引数が関数でなければ、呼び出しではなく引数の形の誤りとして名乗る。
+ * 引数が関数でなければ、呼び出しではなく引数の型の誤りとして名乗る。
  */
 function runBody(run: Value, ctx: NativeCtx): Comp {
   if (!isFunctionValue(run)) {
@@ -627,7 +627,7 @@ class Evaluator {
         return pure(node.value);
       case 'str':
         // 欠落したキーと添字は失敗作用（捕捉できる）。束縛の未定義や非コンテナの走査、
-        // 型の不一致は文書の形の誤りなので、そのままエラーとして投げ抜ける。
+        // 型の不一致は文書の誤りなので、そのままエラーとして投げ抜ける。
         try {
           return pure(interpolate(node.raw, env));
         } catch (e) {
@@ -697,7 +697,7 @@ class Evaluator {
 
   /**
    * 呼び出し。値が関数（閉包・Native）なら適用し、演算なら作用を起こす。
-   * データにたどり着けば形の誤りである。引数も本体も合成である。
+   * データにたどり着けば文書の誤りである。引数も本体も合成である。
    */
   private apply(f: Value, arg: Value, what: string, path: string): Comp {
     if (isClosure(f)) return this.enter(f, extendEnv(f.env, f.params[0]!, arg));
@@ -812,7 +812,7 @@ function cellsOf(cells: Value): PMap<Value> {
 /**
  * エントリの列をマッピングにする（std.collect の into: mapping の契約）。
  * std.mapping はこの上の導出なので、集めた分岐にも同じ検査が効く。
- * 契約違反はデータの変動ではなく文書の形の誤りなので、失敗作用ではなくエラーにする。
+ * 契約違反はデータの変動ではなく文書の誤りなので、失敗作用ではなくエラーにする。
  */
 function toMapping(entries: readonly Value[]): Value {
   const out: ValueMap = {};
@@ -935,7 +935,7 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
   const functions = options.functions ?? {};
   validateHostNames(ops, functions);
 
-  // 導出形をカーネルへ展開する。形の誤りはここで報告される。
+  // 導出形をカーネルへ展開する。構文の誤りはここで報告される。
   const ast = desugar(doc);
 
   // 評価前の検査（grammar/values.md「環境と名前の解決」、grammar/checks.md「関数値の流れと停止性」、grammar/host.md）。

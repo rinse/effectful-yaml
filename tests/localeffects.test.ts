@@ -298,7 +298,7 @@ $do:
       ).rejects.toThrow('undefined reference: throw');
     });
 
-    it('節名の形の誤りは $do の文に置いた $handler でもエラーになる', async () => {
+    it('節名の構文の誤りは $do の文に置いた $handler でもエラーになる', async () => {
       // $ で始まるキーは節名になりえない（節のマッピングは $ キーを持たない）。
       await expect(
         run(`

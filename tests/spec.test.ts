@@ -630,7 +630,7 @@ $in: "\${f == f}"
     messagePattern: /unreserved \$ key: \$each/,
   },
   {
-    name: '$.return の呼び出しは形の誤り（return は節の名前として予約されている）',
+    name: '$.return の呼び出しは構文の誤り（return は節の名前として予約されている）',
     yaml: `{$.return: 1}`,
     messagePattern: /return is reserved: \$\.return is not callable/,
   },
@@ -640,7 +640,7 @@ $in: "\${f == f}"
     messagePattern: /undefined reference: nope/,
   },
   {
-    name: '節の本体の外に書いた $resume は形の誤り',
+    name: '節の本体の外に書いた $resume は構文の誤り',
     yaml: `
 $handler:
   std.fail: {$fn: _, $body: 0}

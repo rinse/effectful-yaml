@@ -6,7 +6,7 @@
 - 種別：std の関数（ハンドラを立てる）
 - 処理する演算：`std.each` `std.fail`
 
-## 形
+## 構文
 
 ```yaml
 $handler: ${std.first}

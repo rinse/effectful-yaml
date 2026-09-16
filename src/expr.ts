@@ -10,7 +10,7 @@ import { describe, EffectfulYamlError, isNonData, lookupEnv, type Env, type Valu
 
 /**
  * データ起因の部分性：存在しないキーと添字。
- * 文書の形の誤り（未定義の束縛、非コンテナの走査、型の不一致）とは区別され、
+ * 文書の誤り（未定義の束縛、非コンテナの走査、型の不一致）とは区別され、
  * 評価器がこれを失敗作用 std.fail に翻訳するのでハンドラで捕捉できる。
  */
 export class MissingPathError extends EffectfulYamlError {}
