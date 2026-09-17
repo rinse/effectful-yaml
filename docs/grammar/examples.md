@@ -388,4 +388,4 @@ handled
 
 ---
 
-［[言語仕様](index.md)］　前: [ホストの値](host.md)
+［[言語仕様](index.md)］　前: [キーの順序](order.md)

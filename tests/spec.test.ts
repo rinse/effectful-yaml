@@ -666,6 +666,278 @@ describe('grammar/examples.md 用例（エラーになる）', () => {
 });
 
 // -----------------------------------------------------------------------------
+// grammar/order.md 用例：例の文書と、本文が述べる「キーを入れ替えた形」の値。
+// 「並びの意味が未定義の場合」の例は値を定めないので転記しない。
+// -----------------------------------------------------------------------------
+const letOrder = (first: string, second: string): string => `
+$handler: {$std.state: {n: 0}}
+$in:
+  $handler: \${std.list}
+  $let:
+    ${first}
+    ${second}
+    _: {$std.set: {n: "\${x}"}}
+  $in: \${a}
+`;
+
+const orderCases: readonly SpecCase[] = [
+  {
+    name: '主形の補助キーと $in の位置は意味を持たない',
+    yaml: `
+$in:
+  $else: small
+  $if: \${x > 1}
+  $then: large
+$let:
+  x: 2
+`,
+    expected: 'large',
+  },
+  {
+    name: '$default の位置は意味を持たない',
+    yaml: `
+$default: 9
+$std.param: missing
+`,
+    expected: 9,
+  },
+  {
+    name: '別々の演算に解決する節どうしの位置は意味を持たない',
+    yaml: `
+a:
+  $handler:
+    std.fail: {$fn: _, $body: failed}
+    std.each: {$fn: _, $body: chose}
+  $in: {$std.each: [1]}
+b:
+  $handler:
+    std.each: {$fn: _, $body: chose}
+    std.fail: {$fn: _, $body: failed}
+  $in: {$std.each: [1]}
+`,
+    expected: { a: 'chose', b: 'chose' },
+  },
+  {
+    name: '$let：std.each より前に書いた右辺は選択の前に一度だけ評価される',
+    yaml: letOrder('a: {$std.get: n}', 'x: {$std.each: [1, 2]}'),
+    expected: [0, 0],
+  },
+  {
+    name: '$let：std.each より後に書いた右辺は分岐ごとに評価される',
+    yaml: letOrder('x: {$std.each: [1, 2]}', 'a: {$std.get: n}'),
+    expected: [0, 1],
+  },
+  {
+    name: '$for：先に書いた束縛が外側の選択になる',
+    yaml: `
+$handler: \${std.list}
+$for:
+  i: [1, 2]
+  j: [a, b]
+$in: \${i}\${j}
+`,
+    expected: ['1a', '1b', '2a', '2b'],
+  },
+  {
+    name: '$for：束縛を入れ替えると分岐の並びが変わる',
+    yaml: `
+$handler: \${std.list}
+$for:
+  j: [a, b]
+  i: [1, 2]
+$in: \${i}\${j}
+`,
+    expected: ['1a', '2a', '1b', '2b'],
+  },
+  {
+    name: '頭キー：先に書いた $handler が後に書いた $for の選択を処理する',
+    yaml: `
+$handler: \${std.list}
+$for:
+  i: [1, 2]
+v: \${i}
+`,
+    expected: [{ v: 1 }, { v: 2 }],
+  },
+  {
+    name: '頭キー：先に書いた $let の束縛は後に書いた $handler の式から見える',
+    yaml: `
+$let:
+  h: \${std.list}
+$handler: \${h}
+$for:
+  i: [1, 2]
+$in: \${i}
+`,
+    expected: [1, 2],
+  },
+  {
+    name: '頭キー：先に書いた $handler のローカル作用の宣言は後に書いた $let の右辺から見える',
+    yaml: `
+$handler:
+  throw: {$fn: m, $body: "caught \${m}"}
+$let:
+  t: \${throw}
+$in: {$.t: boom}
+`,
+    expected: 'caught boom',
+  },
+  {
+    name: '頭キー：評価したマッピングは頭キーを除いた残りのキーを文書順に保つ',
+    yaml: `
+z: 1
+$let:
+  x: 2
+a: \${x}
+m: 3
+`,
+    expected: { z: 1, a: 2, m: 3 },
+    expectedKeyOrder: ['z', 'a', 'm'],
+  },
+  {
+    name: 'データのマッピング：同じ境界の中では状態の読み書きが書いた順に起きる',
+    yaml: `
+$handler: {$std.state: {n: 0}}
+a: {$std.set: {n: 1}}
+b: {$std.get: n}
+`,
+    expected: { a: null, b: 1 },
+    expectedKeyOrder: ['a', 'b'],
+  },
+  {
+    name: 'データのマッピング：読み出しを先に書くと書き込み前の値を読む',
+    yaml: `
+$handler: {$std.state: {n: 0}}
+b: {$std.get: n}
+a: {$std.set: {n: 1}}
+`,
+    expected: { b: 0, a: null },
+    expectedKeyOrder: ['b', 'a'],
+  },
+  {
+    name: 'データのマッピング：先に書いたキーが外側の選択になる',
+    yaml: `
+$handler: \${std.list}
+a: {$std.each: [1, 2]}
+b: {$std.each: [x, y]}
+`,
+    expected: [
+      { a: 1, b: 'x' },
+      { a: 1, b: 'y' },
+      { a: 2, b: 'x' },
+      { a: 2, b: 'y' },
+    ],
+  },
+  {
+    name: 'データのマッピング：キーを入れ替えると b: x の二つの分岐が先に並ぶ',
+    yaml: `
+$handler: \${std.list}
+b: {$std.each: [x, y]}
+a: {$std.each: [1, 2]}
+`,
+    expected: [
+      { b: 'x', a: 1 },
+      { b: 'x', a: 2 },
+      { b: 'y', a: 1 },
+      { b: 'y', a: 2 },
+    ],
+  },
+  {
+    name: '兄弟の境界：状態を共有しないので値は並びに依存しない',
+    yaml: `
+b: {$do: [{$std.set: {n: 1}}, {$std.get: n}]}
+a: {$do: [{$std.set: {n: 2}}, {$std.get: n}]}
+`,
+    expected: { b: 1, a: 2 },
+  },
+  {
+    name: '兄弟の境界：ログは文書順に流れる',
+    yaml: `
+b: {$do: [{$std.log: first}, 1]}
+a: {$do: [{$std.log: second}, 2]}
+`,
+    expected: { b: 1, a: 2 },
+    expectedLogs: ['first', 'second'],
+  },
+  {
+    name: 'std.first は文書順で最初に成功したエントリを採る',
+    yaml: `
+$handler: \${std.first}
+$for:
+  e: {b: 2, a: 1}
+$in: \${e.key}
+`,
+    expected: 'b',
+  },
+];
+
+describe('grammar/order.md 用例（値の一致）', () => {
+  it.each(orderCases)('$name', async (c) => {
+    const logs: Value[] = [];
+    const result = await evaluateYaml(c.yaml, { onLog: (v) => logs.push(v) });
+    expect(result).toEqual(c.expected);
+    if (c.expectedLogs !== undefined) {
+      expect(logs).toEqual(c.expectedLogs);
+    }
+    if (c.expectedKeyOrder !== undefined) {
+      expect(Object.keys(result as object)).toEqual(c.expectedKeyOrder);
+    }
+  });
+});
+
+const orderErrorCases: readonly ErrorCase[] = [
+  {
+    name: '$let：後に書いた束縛は先の右辺から見えない',
+    yaml: `{$let: {y: "\${x}", x: 1}, $in: "\${y}"}`,
+    messagePattern: /undefined reference: x/,
+  },
+  {
+    name: '頭キー：$for を $handler より先に書くと選択が境界へ達する',
+    yaml: `
+$for:
+  i: [1, 2]
+$handler: \${std.list}
+v: \${i}
+`,
+    messagePattern: /unhandled choice/,
+  },
+  {
+    name: '頭キー：後に書いた $let の束縛は先に書いた $handler の式から見えない',
+    yaml: `
+$handler: \${h}
+$let:
+  h: \${std.list}
+$for:
+  i: [1, 2]
+$in: \${i}
+`,
+    messagePattern: /undefined reference: h/,
+  },
+  {
+    name: '兄弟の境界：先に書いた a の失敗が報告される',
+    yaml: `
+a: {$std.fail: A}
+b: {$std.fail: B}
+`,
+    messagePattern: /failure: A/,
+  },
+  {
+    name: '兄弟の境界：キーを入れ替えると b の失敗が報告される',
+    yaml: `
+b: {$std.fail: B}
+a: {$std.fail: A}
+`,
+    messagePattern: /failure: B/,
+  },
+];
+
+describe('grammar/order.md 用例（エラーになる）', () => {
+  it.each(orderErrorCases)('$name', async (c) => {
+    await expect(evaluateYaml(c.yaml)).rejects.toThrow(c.messagePattern);
+  });
+});
+
+// -----------------------------------------------------------------------------
 // docs/reference/ 用例：カーネル（do / let / if / fn / handler / for / default）と std の
 // 各ページの「例」節にある実行可能な用例。
 // 期待値・パラメータ・ログはページの記述をそのまま転記する。grammar/examples.md と内容が

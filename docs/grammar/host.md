@@ -25,4 +25,4 @@ password: {$vault.read: secret/db/password}
 
 ---
 
-［[言語仕様](index.md)］　前: [std](std.md)　／　次: [用例](examples.md)
+［[言語仕様](index.md)］　前: [std](std.md)　／　次: [キーの順序](order.md)
