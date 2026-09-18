@@ -2,10 +2,10 @@
 $let:
   # 失敗を既定値に置き換えるハンドラ。既定値と本体の閉包を受け取るカリー化された関数。default は節の本体に捕まる
   fallback:
-    $fn: [default, run]
-    $body:
+    $param: [default, run]
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: "${default}"}
+        std.fail: {$fn: "${default}"}
       $in: {$.run: null}
   zero: {$.fallback: 0}
   empty: {$.fallback: ""}

@@ -31,8 +31,8 @@ $std.lookup:
 ```yaml
 $let:
   lookup:
-    $fn: arg
-    $body:
+    $param: arg
+    $fn:
       $handler: ${std.first}
       $in:
         $do:

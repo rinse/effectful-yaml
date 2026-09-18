@@ -31,8 +31,8 @@
 ```yaml
 $let:
   where:
-    $fn: cond
-    $body:
+    $param: cond
+    $fn:
       $if: ${cond}
       $then: null
       $else: {$std.each: []}

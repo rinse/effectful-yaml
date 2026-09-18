@@ -31,8 +31,8 @@ $std.merge: マッピングのリストの式
 ```yaml
 $let:
   merge2:
-    $fn: [a, b]
-    $body:
+    $param: [a, b]
+    $fn:
       $handler: ${std.mapping}
       $in:
         $do:
@@ -68,16 +68,16 @@ $let:
               $default: ${e.value}
             $else: ${e.value}
   merge:
-    $fn: ms
-    $body:
+    $param: ms
+    $fn:
       $handler: {$std.state: {acc: {}}}
       $in:
         $do:
         - $std.collect:
             in: ${ms}
             with:
-              $fn: m
-              $body:
+              $param: m
+              $fn:
                 $do:
                 - $let:
                     cur: {$std.get: acc}
@@ -120,7 +120,7 @@ $std.merge: [{b: 2, a: 1, keep: base}, {b: 9, c: 3}]
 $let:
   defaults: {timeout: 30, retries: 3}
   overrides:
-    $std.param: config
+    $std.input: config
     $default: {}
 $in:
   $std.merge:
@@ -132,7 +132,7 @@ $in:
 {timeout: 30, retries: 3}
 ```
 
-`config` パラメータが渡されなければ `overrides` は `{}` になり、結果は `defaults` のままになる。
+`config` の入力が渡されなければ `overrides` は `{}` になり、結果は `defaults` のままになる。
 
 マージは浅いので、入れ子のマッピングを重ねたいときは、その階層に明示的に `std.merge` を書く。
 

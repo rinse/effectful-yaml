@@ -1,6 +1,6 @@
 /**
- * 受け入れテスト：docs/grammar/（草案 0.13）と docs/reference/ の「例」節に書かれた文書が、
- * そのままの入力・パラメータでページに明記された結果になることを独立に検証する。
+ * 受け入れテスト：docs/grammar/（草案 0.14）と docs/reference/ の「例」節に書かれた文書が、
+ * そのままの入力でページに明記された結果になることを独立に検証する。
  *
  * 期待値はドキュメントの記述をそのまま転記する。実装の挙動に合わせて曲げない。
  * ページの例が誤っていて実行結果と食い違う場合も、テストは曲げず、そのまま失敗させて報告する。
@@ -14,7 +14,7 @@ import { evaluateYaml, type Value } from '../src/index.js';
 interface SpecCase {
   readonly name: string;
   readonly yaml: string;
-  readonly params?: Record<string, Value>;
+  readonly input?: Record<string, Value>;
   readonly ops?: Record<string, (arg: Value) => Value | Promise<Value>>;
   readonly expected: Value;
   readonly expectedLogs?: readonly Value[];
@@ -33,10 +33,10 @@ const cases: readonly SpecCase[] = [
     yaml: `
 $let:
   fallback:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: 0}
+        std.fail: {$fn: 0}
       $in: {$.run: null}
 $in:
   a:
@@ -53,8 +53,8 @@ $in:
     yaml: `
 $handler:
   throw:
-    $fn: msg
-    $body: caught \${msg}
+    $param: msg
+    $fn: caught \${msg}
 $in:
   $do:
   - {$.throw: boom}
@@ -67,8 +67,8 @@ $in:
     yaml: `
 $handler:
   throw:
-    $fn: m
-    $body:
+    $param: m
+    $fn:
       $resume: outer \${m}
 $in:
   $do:
@@ -76,8 +76,8 @@ $in:
       up: \${throw}
   - $handler:
       throw:
-        $fn: m
-        $body:
+        $param: m
+        $fn:
           $resume: inner \${m}
     a: {$.throw: x}
     b: {$.up: y}
@@ -90,8 +90,8 @@ $in:
 $std.collect:
   in: [1, 2, 3]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - \${x}
     - \${x}
 `,
@@ -164,15 +164,15 @@ value:
     name: 'パラメータと条件分岐',
     yaml: `
 server:
-  host: {$std.param: db_host}
-  port: {$std.param: db_port, $default: 5432}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port, $default: 5432}
   tls:
-    $if: {$std.param: use_tls}
+    $if: {$std.input: use_tls}
     $then:
       cert: /etc/ssl/cert.pem
     $else: null
 `,
-    params: { db_host: 'example.com', use_tls: false },
+    input: { db_host: 'example.com', use_tls: false },
     expected: { server: { host: 'example.com', port: 5432, tls: null } },
   },
   {
@@ -235,8 +235,7 @@ $in:
   $std.collect:
     in: {$std.range: 5}
     with:
-      $fn: _
-      $body:
+      $fn:
         $do:
         - $let:
             v: {$std.get: acc}
@@ -251,11 +250,11 @@ $in:
     yaml: `
 $let:
   double:
-    $fn: x
-    $body: \${x * 2}
+    $param: x
+    $fn: \${x * 2}
   succ:
-    $fn: x
-    $body: \${x + 1}
+    $param: x
+    $fn: \${x + 1}
 $in:
   $.succ:
     $.double: 20
@@ -263,12 +262,12 @@ $in:
     expected: 41,
   },
   {
-    name: '$fn の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
+    name: '$param の列と部分適用（先頭の引数だけを与えると残りを待つ閉包になる）',
     yaml: `
 $let:
   add:
-    $fn: [a, b]
-    $body: \${a + b}
+    $param: [a, b]
+    $fn: \${a + b}
   succ:
     $.add: 1
 $in:
@@ -283,8 +282,8 @@ $handler: \${std.list}
 $let:
   codes: {ja: 81, us: 1}
   look:
-    $fn: [m, k]
-    $body:
+    $param: [m, k]
+    $fn:
       $std.lookup:
         in: \${m}
         key: \${k}
@@ -303,13 +302,13 @@ $in:
 port:
   $handler:
     std.fail:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         $do:
         - $std.log: \${msg}
         - 5432
   $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
   $if: \${p <= 0 || p > 65535}
   $then:
     $std.fail: invalid port \${p}
@@ -323,10 +322,10 @@ port:
     yaml: `
 $let:
   orElse:
-    $fn: [d, run]
-    $body:
+    $param: [d, run]
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: "\${d}"}
+        std.fail: {$fn: "\${d}"}
       $in: {$.run: null}
 $in:
   a:
@@ -344,7 +343,7 @@ $in:
 log_level:
   $handler: \${std.first}
   $for:
-    v: [{$std.param: log_level, $default: null}, {$std.param: fallback_log_level, $default: null}, info]
+    v: [{$std.input: log_level, $default: null}, {$std.input: fallback_log_level, $default: null}, info]
   $do:
   - $std.where: \${v != null}
   - \${v}
@@ -356,7 +355,7 @@ log_level:
     yaml: `
 $do:
 - $handler:
-    std.fail: {$fn: _, $body: 0}
+    std.fail: {$fn: 0}
 - $std.lookup: {in: {}, key: missing}
 `,
     expected: 0,
@@ -378,7 +377,7 @@ $do:
     yaml: `
 $let:
   registry: ghcr.io/acme
-  env: {$std.param: env, $default: dev}
+  env: {$std.input: env, $default: dev}
 name: api
 image: \${registry}/api:\${env}
 replicas:
@@ -393,11 +392,11 @@ replicas:
     yaml: `
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
-  host: {$std.param: db_host}
-  port: {$std.param: db_port}
+    std.fail: {$fn: {$resume: null}}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port}
 `,
-    params: { db_host: 'db' },
+    input: { db_host: 'db' },
     expected: { database: { host: 'db', port: null } },
   },
   {
@@ -425,18 +424,16 @@ $else:
     yaml: `
 $let:
   run:
-    $fn: sig
-    $body:
+    $param: sig
+    $fn:
       $handler:
         .sig:
-          $fn: _
-          $body: handled
+          $fn: handled
       $in: {$.sig: null}
   outer:
     $handler:
       signal:
-        $fn: _
-        $body: unreachable
+        $fn: unreachable
     $in: \${signal}
 $in:
   $.run: \${outer}
@@ -449,7 +446,7 @@ describe('grammar/examples.md 用例（値の一致）', () => {
   it.each(cases)('$name', async (c) => {
     const logs: Value[] = [];
     const result = await evaluateYaml(c.yaml, {
-      params: c.params,
+      input: c.input,
       ops: c.ops,
       onLog: (v) => logs.push(v),
     });
@@ -464,15 +461,15 @@ describe('grammar/examples.md 用例（値の一致）', () => {
 });
 
 describe('grammar/examples.md 用例（そのほかの記述）', () => {
-  it('長い名前の演算には、引数を素通しする $fn を $let で短い名前に束縛する', async () => {
+  it('長い名前の演算には、引数を素通しする $param を $let で短い名前に束縛する', async () => {
     const ops = { 'vault.secrets.read': (arg: Value) => `secret:${String(arg)}` };
     const viaLocalName = await evaluateYaml(
       `
 $do:
 - $let:
     read:
-      $fn: key
-      $body: {$vault.secrets.read: '\${key}'}
+      $param: key
+      $fn: {$vault.secrets.read: '\${key}'}
 - {$.read: db/password}
 `,
       { ops },
@@ -501,7 +498,7 @@ code:
     ]);
   });
 
-  it('$handler: ${std.list} と {$std.list: {$fn: 捨て名, $body: 本体}} は同じ意味である', async () => {
+  it('$handler: ${std.list} と {$std.list: {$param: 捨て名, $fn: 本体}} は同じ意味である', async () => {
     const viaHandler = await evaluateYaml(`
 $handler: "\${std.list}"
 $in:
@@ -512,8 +509,7 @@ $in:
 `);
     const viaCall = await evaluateYaml(`
 $std.list:
-  $fn: _
-  $body:
+  $fn:
     $do:
     - $let:
         x: {$std.each: [1, 2, 3]}
@@ -548,7 +544,7 @@ $in:
 interface ErrorCase {
   readonly name: string;
   readonly yaml: string;
-  readonly params?: Record<string, Value>;
+  readonly input?: Record<string, Value>;
   readonly messagePattern: RegExp;
 }
 
@@ -558,10 +554,10 @@ const errorCases: readonly ErrorCase[] = [
     yaml: `
 $let:
   h:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: 0}
+        std.fail: {$fn: 0}
       $in: {$.run: null}
 $in:
   $handler: \${h}
@@ -576,10 +572,10 @@ $in:
     yaml: `
 $let:
   h:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        throw: {$fn: m, $body: "caught \${m}"}
+        throw: {$param: m, $fn: "caught \${m}"}
       $in: {$.run: null}
 $in:
   $handler: \${h}
@@ -592,7 +588,7 @@ $in:
     yaml: `
 $do:
 - $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
 - $if: \${p <= 0}
   $then:
     $std.fail: invalid port \${p}
@@ -602,7 +598,7 @@ $do:
   },
   {
     name: '閉包が境界の外へ出て文書の値に残るのはエラー',
-    yaml: `{$fn: x, $body: '\${x}'}`,
+    yaml: `{$param: x, $fn: '\${x}'}`,
     messagePattern: /function value cannot escape/,
   },
   {
@@ -614,7 +610,7 @@ $do:
     name: '関数と演算を == で比較するのはエラー',
     yaml: `
 $let:
-  f: {$fn: x, $body: "\${x}"}
+  f: {$param: x, $fn: "\${x}"}
 $in: "\${f == f}"
 `,
     messagePattern: /cannot compare a function or operation value/,
@@ -643,7 +639,7 @@ $in: "\${f == f}"
     name: '節の本体の外に書いた $resume は構文の誤り',
     yaml: `
 $handler:
-  std.fail: {$fn: _, $body: 0}
+  std.fail: {$fn: 0}
 $in: {$resume: 1}
 `,
     messagePattern: /\$resume is only allowed inside a \$handler clause/,
@@ -652,7 +648,7 @@ $in: {$resume: 1}
     name: '節の解決先が演算でなければエラー',
     yaml: `
 $handler:
-  std.list: {$fn: x, $body: 1}
+  std.list: {$param: x, $fn: 1}
 $in: 2
 `,
     messagePattern: /\$handler clause 'std\.list' must name an operation/,
@@ -661,7 +657,7 @@ $in: 2
 
 describe('grammar/examples.md 用例（エラーになる）', () => {
   it.each(errorCases)('$name', async (c) => {
-    await expect(evaluateYaml(c.yaml, { params: c.params })).rejects.toThrow(c.messagePattern);
+    await expect(evaluateYaml(c.yaml, { input: c.input })).rejects.toThrow(c.messagePattern);
   });
 });
 
@@ -697,7 +693,7 @@ $let:
     name: '$default の位置は意味を持たない',
     yaml: `
 $default: 9
-$std.param: missing
+$std.input: missing
 `,
     expected: 9,
   },
@@ -706,13 +702,13 @@ $std.param: missing
     yaml: `
 a:
   $handler:
-    std.fail: {$fn: _, $body: failed}
-    std.each: {$fn: _, $body: chose}
+    std.fail: {$fn: failed}
+    std.each: {$fn: chose}
   $in: {$std.each: [1]}
 b:
   $handler:
-    std.each: {$fn: _, $body: chose}
-    std.fail: {$fn: _, $body: failed}
+    std.each: {$fn: chose}
+    std.fail: {$fn: failed}
   $in: {$std.each: [1]}
 `,
     expected: { a: 'chose', b: 'chose' },
@@ -775,7 +771,7 @@ $in: \${i}
     name: '頭キー：先に書いた $handler のローカル作用の宣言は後に書いた $let の右辺から見える',
     yaml: `
 $handler:
-  throw: {$fn: m, $body: "caught \${m}"}
+  throw: {$param: m, $fn: "caught \${m}"}
 $let:
   t: \${throw}
 $in: {$.t: boom}
@@ -966,16 +962,40 @@ $in: \${x * y}
     expected: 6,
   },
   {
-    name: 'if.md の例（$std.param の真偽値で分岐する）',
+    name: 'if.md の例（$std.input の真偽値で分岐する）',
     yaml: `
 tls:
-  $if: {$std.param: use_tls}
+  $if: {$std.input: use_tls}
   $then:
     cert: /etc/ssl/cert.pem
   $else: null
 `,
-    params: { use_tls: false },
+    input: { use_tls: false },
     expected: { tls: null },
+  },
+  {
+    name: 'fn.md の例（$param を省いた 0 引数の関数を null で呼ぶ）',
+    yaml: `
+$do:
+- $let:
+    greet:
+      $fn:
+        $do:
+        - $std.log: called
+        - hello
+- {$.greet: null}
+`,
+    expected: 'hello',
+    expectedLogs: ['called'],
+  },
+  {
+    name: 'fn.md の例（引数を使わない節を 0 引数の形で書く）',
+    yaml: `
+$handler:
+  std.fail: {$fn: 0}
+$in: {$std.lookup: {in: {}, key: missing}}
+`,
+    expected: 0,
   },
   {
     name: 'fn.md の例（$let で束縛した関数を $.名前 で呼ぶ）',
@@ -983,8 +1003,8 @@ tls:
 $do:
 - $let:
     double:
-      $fn: x
-      $body: \${x * 2}
+      $param: x
+      $fn: \${x * 2}
 - {$.double: 21}
 `,
     expected: 42,
@@ -996,8 +1016,8 @@ $do:
 - $let:
     helpers:
       double:
-        $fn: x
-        $body: \${x * 2}
+        $param: x
+        $fn: \${x * 2}
 - {$.helpers.double: 21}
 `,
     expected: 42,
@@ -1009,8 +1029,8 @@ $do:
 - $let:
     codes: {ja: 81, us: 1}
     look:
-      $fn: [m, k]
-      $body:
+      $param: [m, k]
+      $fn:
         $std.lookup:
           in: \${m}
           key: \${k}
@@ -1027,13 +1047,13 @@ $do:
 port:
   $handler:
     std.fail:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         $do:
         - $std.log: \${msg}
         - 5432
   $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
   $if: \${p <= 0}
   $then:
     $std.fail: invalid port \${p}
@@ -1047,8 +1067,8 @@ port:
     yaml: `
 $handler:
   std.log:
-    $fn: msg
-    $body:
+    $param: msg
+    $fn:
       $do:
       - $std.log: 'app: \${msg}'
       - {$resume: null}
@@ -1064,8 +1084,8 @@ $do:
     yaml: `
 $handler:
   throw:
-    $fn: msg
-    $body: caught \${msg}
+    $param: msg
+    $fn: caught \${msg}
 $in:
   $do:
   - {$.throw: boom}
@@ -1078,10 +1098,10 @@ $in:
     yaml: `
 $let:
   fallback:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: 0}
+        std.fail: {$fn: 0}
       $in: {$.run: null}
 $in:
   a: {$handler: "\${fallback}", $in: {$std.lookup: {in: {}, key: missing}}}
@@ -1094,10 +1114,10 @@ $in:
     yaml: `
 $let:
   orElse:
-    $fn: [d, run]
-    $body:
+    $param: [d, run]
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: "\${d}"}
+        std.fail: {$fn: "\${d}"}
       $in: {$.run: null}
   zero: {$.orElse: 0}
   empty: {$.orElse: ""}
@@ -1165,8 +1185,8 @@ code:
 $std.collect:
   in: [1, 2, 3]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - \${x}
     - \${x}
 `,
@@ -1178,8 +1198,8 @@ $std.collect:
 $std.collect:
   in: [1, 2, 3, 4, 5]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
       $if: \${x % 2 == 0}
       $then:
       - \${x}
@@ -1195,8 +1215,8 @@ $std.collect:
   - {name: web, value: 80}
   - {name: db, value: 5432}
   with:
-    $fn: e
-    $body:
+    $param: e
+    $fn:
     - key: \${e.name}
       value: \${e.value}
   into: mapping
@@ -1355,12 +1375,12 @@ $in:
     expectedKeyOrder: ['svc-web', 'svc-db'],
   },
   {
-    name: 'std.param.md の例（渡されたパラメータと $default）',
+    name: 'std.input.md の例（渡されたパラメータと $default）',
     yaml: `
-host: {$std.param: db_host}
-port: {$std.param: db_port, $default: 5432}
+host: {$std.input: db_host}
+port: {$std.input: db_port, $default: 5432}
 `,
-    params: { db_host: 'example.com' },
+    input: { db_host: 'example.com' },
     expected: { host: 'example.com', port: 5432 },
   },
   {
@@ -1376,8 +1396,7 @@ $in:
   $std.collect:
     in: {$std.range: 5}
     with:
-      $fn: _
-      $body:
+      $fn:
         $do:
         - $let:
             v: {$std.get: acc}
@@ -1526,7 +1545,7 @@ log_level:
   $in:
     $do:
     - $let:
-        v: {$std.each: [{$std.param: log_level, $default: null}, info]}
+        v: {$std.each: [{$std.input: log_level, $default: null}, info]}
     - $std.where: \${v != null}
     - \${v}
 `,
@@ -1556,7 +1575,7 @@ describe('docs/reference/ 用例（値の一致）', () => {
   it.each(referenceCases)('$name', async (c) => {
     const logs: Value[] = [];
     const result = await evaluateYaml(c.yaml, {
-      params: c.params,
+      input: c.input,
       ops: c.ops,
       onLog: (v) => logs.push(v),
     });
@@ -1576,7 +1595,7 @@ const referenceErrorCases: readonly ErrorCase[] = [
     yaml: `
 $do:
 - $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
 - $if: \${p <= 0}
   $then:
     $std.fail: invalid port \${p}
@@ -1588,6 +1607,6 @@ $do:
 
 describe('docs/reference/ 用例（エラーになる）', () => {
   it.each(referenceErrorCases)('$name', async (c) => {
-    await expect(evaluateYaml(c.yaml, { params: c.params })).rejects.toThrow(c.messagePattern);
+    await expect(evaluateYaml(c.yaml, { input: c.input })).rejects.toThrow(c.messagePattern);
   });
 });

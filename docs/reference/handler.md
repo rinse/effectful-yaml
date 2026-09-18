@@ -16,11 +16,11 @@
 ```yaml
 $handler:
   演算名:
-    $fn: 引数名
-    $body: 節の本体
+    $param: 引数名
+    $fn: 節の本体
   return:
-    $fn: 値名
-    $body: 式
+    $param: 値名
+    $fn: 式
 $in: 本体の式
 ```
 
@@ -91,19 +91,19 @@ $in: 本体の式
 
 再利用するハンドラは、本体の閉包を受け取る関数として書く。
 `$handler` の値が節のマッピングでなければ、意味は次の展開で定まる。
-内部名と捨て名は処理系内部の名前であり、文書から参照できない。
+内部名は処理系内部の名前であり、文書から参照できない。本体の閉包は引数を取らないので、`$param` を省いた 0 引数の形になる。
 
 ```
-{$handler: 関数の式, $in: 本体} ≡ {$let: {内部名: 関数の式}, $in: {$.内部名: {$fn: 捨て名, $body: 本体}}}
+{$handler: 関数の式, $in: 本体} ≡ {$let: {内部名: 関数の式}, $in: {$.内部名: {$fn: 本体}}}
 ```
 
 ```yaml
 $let:
   fallback:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: 0}
+        std.fail: {$fn: 0}
       $in: {$.run: null}
 $in:
   a:
@@ -120,17 +120,17 @@ b: 7
 ```
 
 - 本体を閉包で渡すのは、呼び出しが値渡しだからである。`{$.fallback: 本体}` と書けば本体の作用は引数の評価で周囲へ合流し、`fallback` の節には届かない。`$handler` と `$in` はカーネルにある唯一の遅延位置であり、本体の閉包化はここで済む。
-- `std.list`・`std.mapping`・`std.first`・`std.state` の値はこの形の関数である。`$handler: ${std.list}` と `{$std.list: {$fn: 捨て名, $body: 本体}}` は同じ意味である。
+- `std.list`・`std.mapping`・`std.first`・`std.state` の値はこの形の関数である。`$handler: ${std.list}` と `{$std.list: {$fn: 本体}}` は同じ意味である。
 - 引数で節を調整するハンドラは、カリー化した関数で書き、`$handler: {$.orElse: 0}` のように部分適用の呼び出しを式に置く。節の本体は定義位置の束縛を捕まえるので、引数が節から見える。
 - 関数値の流れの検査は、本体の閉包を受け取る関数を、その閉包の本体の中で再び使う形を自己適用として拒む。入れ子にしたいときは、`$let` で値を二つ作るか、内側を literal な節で書く。`std` の関数はホストの値であり `$fn` ではないので、`std.list` の中に `std.list` を重ねることはこの制限を受けない。
 
 ```yaml
 $let:
   orElse:
-    $fn: [d, run]
-    $body:
+    $param: [d, run]
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: "${d}"}
+        std.fail: {$fn: "${d}"}
       $in: {$.run: null}
 $in:
   a:
@@ -172,8 +172,8 @@ $in: 本体
 ```yaml
 $handler:
   throw:
-    $fn: msg
-    $body: caught ${msg}
+    $param: msg
+    $fn: caught ${msg}
 $in:
   $do:
   - {$.throw: boom}
@@ -192,8 +192,8 @@ caught boom
 ```yaml
 $handler:
   throw:
-    $fn: m
-    $body:
+    $param: m
+    $fn:
       $resume: outer ${m}
 $in:
   $do:
@@ -201,8 +201,8 @@ $in:
       up: ${throw}
   - $handler:
       throw:
-        $fn: m
-        $body:
+        $param: m
+        $fn:
           $resume: inner ${m}
     a: {$.throw: x}
     b: {$.up: y}
@@ -221,18 +221,16 @@ b: outer y
 ```yaml
 $let:
   run:
-    $fn: sig
-    $body:
+    $param: sig
+    $fn:
       $handler:
         .sig:
-          $fn: _
-          $body: handled
+          $fn: handled
       $in: {$.sig: null}
   outer:
     $handler:
       signal:
-        $fn: _
-        $body: unreachable
+        $fn: unreachable
     $in: ${signal}
 $in:
   $.run: ${outer}
@@ -282,13 +280,13 @@ $do:
 port:
   $handler:
     std.fail:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         $do:
         - $std.log: ${msg}
         - 5432
   $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
   $if: ${p <= 0 || p > 65535}
   $then:
     $std.fail: invalid port ${p}
@@ -308,9 +306,9 @@ port: 5432
 ```yaml
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
-  host: {$std.param: db_host}
-  port: {$std.param: db_port}
+    std.fail: {$fn: {$resume: null}}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port}
 ```
 
 `db_host: db` を渡して評価すると次になる。
@@ -321,7 +319,7 @@ database:
   port: null
 ```
 
-節が `$resume: null` で再開するので、マッピングの中の未渡しのパラメータがそれぞれ null になる。
+節が `$resume: null` で再開するので、マッピングの中の未渡しの入力がそれぞれ null になる。
 
 演算を加工して呼び直す転送の形である。
 節の本体で起こした `std.log` は自分では捕まらず、外側で処理される。
@@ -329,8 +327,8 @@ database:
 ```yaml
 $handler:
   std.log:
-    $fn: msg
-    $body:
+    $param: msg
+    $fn:
       $do:
       - $std.log: 'app: ${msg}'
       - {$resume: null}

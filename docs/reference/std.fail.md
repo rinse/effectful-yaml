@@ -26,7 +26,7 @@ $std.fail: 式
 
 - パスをたどる参照（`${x.y}` や `${xs[0]}`）でキーや添字が存在しないとき。
 - `std.lookup` で無いキーを引いたとき。
-- `std.param` で渡されていないパラメータを、`$default` なしで読んだとき。
+- `std.input` で渡されていない入力を、`$default` なしで読んだとき。
 - `std.get` で未初期化のセルを読んだとき。
 - ホストが与えた値の呼び出しが、値の代わりに失敗を通知したとき。
 
@@ -41,7 +41,7 @@ $std.fail: 式
 ```yaml
 $do:
 - $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
 - $if: ${p <= 0}
   $then:
     $std.fail: invalid port ${p}

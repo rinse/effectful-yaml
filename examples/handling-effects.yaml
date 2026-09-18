@@ -3,8 +3,8 @@ handling-user-defined-effects:
   $handler:
     # throw 作用の定義（ローカル作用の宣言）
     throw:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         # 例外処理を行う (ログを出して代替の値で続行 or エラー落ちさせる)
         $do:
           - $std.log: "[WARN] ${msg}"
@@ -21,8 +21,8 @@ handling-user-defined-effects:
 handling-system-defined-effects:
   $handler:
     std.each:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $handler: ${std.list}
         $in:
           $for:
@@ -37,8 +37,8 @@ handling-system-defined-effects:
 handling-for:
   $handler:
     std.each:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $handler: ${std.list}
         $in:
           $for:

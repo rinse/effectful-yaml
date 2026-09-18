@@ -1,10 +1,10 @@
 # 外部パラメータを文書の先頭の $let で束縛
 $let:
   x:
-    $std.param: x
+    $std.input: x
     $default: 80
   y:
-    $std.param: y
+    $std.input: y
     $default: { yaml: false } # オブジェクトの受け取り
 # 外部から受け取った値の利用
 param:

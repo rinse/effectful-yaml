@@ -19,8 +19,8 @@ describe('ローカル作用の宣言', () => {
       run(`
 $handler:
   throw:
-    $fn: msg
-    $body: caught \${msg}
+    $param: msg
+    $fn: caught \${msg}
 $in:
   $.throw: hi
 `),
@@ -32,16 +32,16 @@ $in:
       run(`
 $handler:
   throw:
-    $fn: msg
-    $body: outer \${msg}
+    $param: msg
+    $fn: outer \${msg}
 $in:
   $let:
     t: \${throw}
   $in:
     $handler:
       throw:
-        $fn: msg
-        $body: inner \${msg}
+        $param: msg
+        $fn: inner \${msg}
     $in:
       $.t: x
 `),
@@ -56,18 +56,18 @@ $in:
 $do:
 - $let:
     mk:
-      $fn: [tag, run]
-      $body:
+      $param: [tag, run]
+      $fn:
         $handler:
           sig:
-            $fn: m
-            $body: {$resume: "\${tag} \${m}"}
+            $param: m
+            $fn: {$resume: "\${tag} \${m}"}
         $in: {$.run: "\${sig}"}
 - $let:
     first: {$.mk: one}
     second: {$.mk: two}
-- a: {$.first: {$fn: s, $body: {$.s: x}}}
-  b: {$.second: {$fn: s, $body: {$.s: y}}}
+- a: {$.first: {$param: s, $fn: {$.s: x}}}
+  b: {$.second: {$param: s, $fn: {$.s: y}}}
 `),
     ).resolves.toEqual({ a: 'one x', b: 'two y' });
   });
@@ -78,10 +78,9 @@ $do:
     const doc = (call: string) => `
 $let:
   mk:
-    $fn: _
-    $body:
+    $fn:
       $handler:
-        sig: {$fn: m, $body: {$resume: "caught \${m}"}}
+        sig: {$param: m, $fn: {$resume: "caught \${m}"}}
       $in: "\${sig}"
 $in:
   $let:
@@ -89,12 +88,12 @@ $in:
     q: {$.mk: null}
   $in:
     $handler:
-      .p: {$fn: m, $body: {$resume: "p handled \${m}"}}
+      .p: {$param: m, $fn: {$resume: "p handled \${m}"}}
     $in: {${call}: 1}
 `;
     await expect(run(doc('$.p'))).resolves.toBe('p handled 1');
     await expect(run(doc('$.q'))).rejects.toThrow(
-      "local effect 'sig' escaped its handler (declared at $let.mk.$body)",
+      "local effect 'sig' escaped its handler (declared at $let.mk.$fn)",
     );
   });
 
@@ -103,18 +102,16 @@ $in:
       run(`
 $let:
   run:
-    $fn: sig
-    $body:
+    $param: sig
+    $fn:
       $handler:
         .sig:
-          $fn: _
-          $body: handled
+          $fn: handled
       $in: {$.sig: null}
   outer:
     $handler:
       signal:
-        $fn: _
-        $body: unreachable
+        $fn: unreachable
     $in: \${signal}
 $in:
   $.run: \${outer}
@@ -131,8 +128,8 @@ $do:
 - $std.log: side effect
 - $let:
     return:
-      $fn: v
-      $body: \${v}
+      $param: v
+      $fn: \${v}
   $in:
     $.return: 1
 `,
@@ -148,8 +145,8 @@ $do:
 $do:
 - $handler:
     throw:
-      $fn: m
-      $body: caught \${m}
+      $param: m
+      $fn: caught \${m}
 - "$throw@$do.0#0": forged
 `),
     ).rejects.toThrow(/unreserved \$ key: \$throw@\$do\.0#0/);
@@ -162,8 +159,8 @@ $let:
   f:
     $handler:
       throw:
-        $fn: msg
-        $body: caught \${msg}
+        $param: msg
+        $fn: caught \${msg}
     $in: \${throw}
 $in:
   $.f: hi
@@ -177,8 +174,7 @@ $in:
         run(`
 $handler:
   get:
-    $fn: _
-    $body: {$resume: 42}
+    $fn: {$resume: 42}
 $in:
   $let:
     v: {$.get: null}
@@ -192,8 +188,7 @@ $in:
         run(`
 $handler:
   pick:
-    $fn: _
-    $body:
+    $fn:
       $let:
         r1: {$resume: 10}
         r2: {$resume: 20}
@@ -214,8 +209,8 @@ $in:
 $do:
 - $handler:
     throw:
-      $fn: m
-      $body: \${m}
+      $param: m
+      $fn: \${m}
   $in: ok
 - {$.throw: late}
 `),
@@ -227,8 +222,8 @@ $do:
         run(`
 $handler:
   throw:
-    $fn: msg
-    $body: {$.throw: nested}
+    $param: msg
+    $fn: {$.throw: nested}
 $in:
   $.throw: hi
 `),
@@ -240,11 +235,11 @@ $in:
         run(`
 $handler:
   throw:
-    $fn: m
-    $body: caught \${m}
+    $param: m
+    $fn: caught \${m}
   return:
-    $fn: v
-    $body:
+    $param: v
+    $fn:
       $.throw: \${v}
 $in: hi
 `),
@@ -257,13 +252,13 @@ $in: hi
       run(`
 $handler:
   throw:
-    $fn: m
-    $body: outer \${m}
+    $param: m
+    $fn: outer \${m}
 $in:
   $handler:
     throw:
-      $fn: m
-      $body: inner \${m}
+      $param: m
+      $fn: inner \${m}
   $in:
     $.throw: x
 `),
@@ -277,8 +272,8 @@ $in:
 $do:
 - $handler:
     throw:
-      $fn: m
-      $body: caught \${m}
+      $param: m
+      $fn: caught \${m}
 - {$.throw: boom}
 `),
       ).resolves.toBe('caught boom');
@@ -291,8 +286,8 @@ $do:
 - {$.throw: too-early}
 - $handler:
     throw:
-      $fn: m
-      $body: caught \${m}
+      $param: m
+      $fn: caught \${m}
 - never
 `),
       ).rejects.toThrow('undefined reference: throw');
@@ -305,8 +300,8 @@ $do:
 $do:
 - $handler:
     $finally:
-      $fn: m
-      $body: x
+      $param: m
+      $fn: x
 - 1
 `),
       ).rejects.toThrow('unreserved $ key: $finally');
@@ -316,8 +311,8 @@ $do:
 $do:
 - $handler:
     a..b:
-      $fn: m
-      $body: x
+      $param: m
+      $fn: x
 - 1
 `),
       ).rejects.toThrow(
@@ -330,7 +325,7 @@ $do:
     await expect(
       run(`
 $handler:
-  std.list: {$fn: x, $body: 1}
+  std.list: {$param: x, $fn: 1}
 $in: 1
 `),
     ).rejects.toThrow("$handler clause 'std.list' must name an operation, got: <function>");
@@ -341,16 +336,16 @@ $in: 1
       run(`
 $handler:
   std.fail:
-    $fn: msg
-    $body:
+    $param: msg
+    $fn:
       $resume: 100
   bump:
-    $fn: n
-    $body:
+    $param: n
+    $fn:
       $resume: \${n + 1}
   return:
-    $fn: v
-    $body: got \${v}
+    $param: v
+    $fn: got \${v}
 $in:
   $do:
   - $let:
@@ -382,8 +377,8 @@ $do:
 - $let:
     return:
       x:
-        $fn: v
-        $body: \${v}
+        $param: v
+        $fn: \${v}
   $in:
     $.return.x: 1
 `,
@@ -398,13 +393,13 @@ $do:
       run(`
 $handler:
   apply:
-    $fn: f
-    $body: {$.f: 41}
+    $param: f
+    $fn: {$.f: 41}
 $in:
   $let:
     inc:
-      $fn: x
-      $body: \${x + 1}
+      $param: x
+      $fn: \${x + 1}
   $in:
     $.apply: \${inc}
 `),
@@ -416,12 +411,12 @@ $in:
       run(`
 $handler:
   log2:
-    $fn: n
-    $body:
+    $param: n
+    $fn:
       $resume: \${n * 2}
   throw:
-    $fn: n
-    $body:
+    $param: n
+    $fn:
       $resume: \${n + 1}
 $in:
   $do:

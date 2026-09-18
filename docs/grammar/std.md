@@ -6,7 +6,7 @@
 | 名前 | 種類 | 意味 |
 |---|---|---|
 | `std.each` | 演算 | 要素を一つずつ選ぶ。値は選ばれた要素。 |
-| `std.param` | 演算 | 起動時に与えられたパラメータを読む。 |
+| `std.input` | 演算 | 起動時に与えられた入力を読む。 |
 | `std.get` | 演算 | セルの現在値を読む。 |
 | `std.set` | 演算 | セルに値を書く。値は null。 |
 | `std.log` | 演算 | 値をログに流す。値は null。 |
@@ -31,7 +31,7 @@
 その意味は、[既定ハンドラ](effects.md)と標準のハンドラの節が与える。
 
 - `std.each` の引数がリストなら各要素を、マッピングなら各エントリを `{key: キー, value: 値}` の形で、文書順に選ぶ。`$std.each: ${xs}` のようにデータ駆動の反復が書ける。空のリストやマッピングは分岐 0 本を意味し、その分岐は打ち切りになる。選ばれた要素に名前を付けるのは頭 `$for` である。
-- `std.param` の引数は名前の文字列である。渡されていないパラメータの読み出しは、呼び出し位置で `std.fail` を起こす。既定値を添えるには `$default` を使う。
+- `std.input` の引数は名前の文字列である。渡されていない入力の読み出しは、呼び出し位置で `std.fail` を起こす。既定値を添えるには `$default` を使う。
 - `std.get` の名前空間は `$let` の束縛とは別である。同名でも互いに関係しない。未初期化のセルの読み出しは `std.fail` を起こす。この失敗は `std.state` の展開の節の本体で起こるので、そのセルを解決する状態ハンドラの位置で生じる。既定の状態ハンドラは境界にあるため、文書内で捕捉するには、明示の `std.state` を捕捉するハンドラの内側に置く。
 - `std.set` は複数のセルを文書順に書ける。
 - `std.log` の既定ハンドラは値をホストのログ出力に流す。
@@ -49,8 +49,8 @@ $std.where: 条件式
 
 ```yaml
 # std.where の値
-$fn: cond
-$body:
+$param: cond
+$fn:
   $if: ${cond}
   $then: null
   $else: {$std.each: []}
@@ -92,8 +92,8 @@ $std.collect:
 $std.collect:
   in: [1, 2, 3]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - ${x}
     - ${x}
 ```
@@ -121,8 +121,8 @@ $std.lookup:
 
 ```yaml
 # std.lookup の値
-$fn: arg
-$body:
+$param: arg
+$fn:
   $handler: ${std.first}
   $in:
     $do:
@@ -225,23 +225,23 @@ $in: 本体の式
 
 ```yaml
 # std.state の値
-$fn: [init, run]
-$body:
+$param: [init, run]
+$fn:
   $let:
     step:
       $handler:
         std.get:
-          $fn: name
-          $body:
-            $fn: s
-            $body:
+          $param: name
+          $fn:
+            $param: s
+            $fn:
               $let:
                 hits:
                   $std.collect:
                     in: ${s}
                     with:
-                      $fn: e
-                      $body:
+                      $param: e
+                      $fn:
                         $if: ${e.key == name}
                         $then:
                         - ${e.value}
@@ -251,10 +251,10 @@ $body:
               $in:
                 $.k: ${s}
         std.set:
-          $fn: m
-          $body:
-            $fn: s
-            $body:
+          $param: m
+          $fn:
+            $param: s
+            $fn:
               $let:
                 s2:
                   $std.collect:
@@ -262,23 +262,23 @@ $body:
                     - ${m}
                     - ${s}
                     with:
-                      $fn: part
-                      $body:
+                      $param: part
+                      $fn:
                         $std.collect:
                           in: ${part}
                           with:
-                            $fn: e
-                            $body:
+                            $param: e
+                            $fn:
                             - ${e}
                 k:
                   $resume: null
               $in:
                 $.k: ${s2}
         return:
-          $fn: x
-          $body:
-            $fn: s
-            $body: ${x}
+          $param: x
+          $fn:
+            $param: s
+            $fn: ${x}
       $in: {$.run: null}
   $in:
     $.step: ${init}
@@ -318,21 +318,21 @@ $in:
 
 ```yaml
 # std.list の値
-$fn: run
-$body:
+$param: run
+$fn:
   $handler:
     std.each:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $std.collect:
           in: ${xs}
           with:
-            $fn: x
-            $body:
+            $param: x
+            $fn:
               $resume: ${x}
     return:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
       - ${x}
   $in: {$.run: null}
 ```
@@ -348,15 +348,15 @@ $body:
 
 ```yaml
 # std.mapping の値
-$fn: run
-$body:
+$param: run
+$fn:
   $std.collect:
     in:
       $handler: ${std.list}
       $in: {$.run: null}
     with:
-      $fn: e
-      $body:
+      $param: e
+      $fn:
       - ${e}
     into: mapping
 ```
@@ -381,56 +381,53 @@ $body:
 
 ```yaml
 # std.first の値
-$fn: run
-$body:
+$param: run
+$fn:
   $let:
     step:
       $handler:
         taken:
-          $fn: _
-          $body:
-            $fn: t
-            $body:
+          $fn:
+            $param: t
+            $fn:
               $let:
                 k:
                   $resume: ${t}
               $in:
                 $.k: ${t}
         mark:
-          $fn: _
-          $body:
-            $fn: t
-            $body:
+          $fn:
+            $param: t
+            $fn:
               $let:
                 k:
                   $resume: null
               $in:
                 $.k: true
         return:
-          $fn: x
-          $body:
-            $fn: t
-            $body: ${x}
+          $param: x
+          $fn:
+            $param: t
+            $fn: ${x}
       $in:
         $handler:
           std.each:
-            $fn: xs
-            $body:
+            $param: xs
+            $fn:
               $std.collect:
                 in: ${xs}
                 with:
-                  $fn: x
-                  $body:
+                  $param: x
+                  $fn:
                     $if: {$.taken: null}
                     $then: []
                     $else:
                       $resume: ${x}
           std.fail:
-            $fn: _
-            $body: []
+            $fn: []
           return:
-            $fn: x
-            $body:
+            $param: x
+            $fn:
               $do:
               - $.mark: null
               - - ${x}

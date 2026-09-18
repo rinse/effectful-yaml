@@ -20,7 +20,7 @@ describe('文脈の導入の受け入れ', () => {
     const yaml = `
 $let:
   registry: ghcr.io/acme
-  env: {$std.param: env, $default: dev}
+  env: {$std.input: env, $default: dev}
 name: api
 image: \${registry}/api:\${env}
 replicas:
@@ -33,7 +33,7 @@ replicas:
       image: 'ghcr.io/acme/api:dev',
       replicas: 1,
     });
-    await expect(run(yaml, { params: { env: 'prod' } })).resolves.toEqual({
+    await expect(run(yaml, { input: { env: 'prod' } })).resolves.toEqual({
       name: 'api',
       image: 'ghcr.io/acme/api:prod',
       replicas: 3,
@@ -46,11 +46,11 @@ replicas:
         `
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
-  host: {$std.param: db_host}
-  port: {$std.param: db_port}
+    std.fail: {$fn: {$resume: null}}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port}
 `,
-        { params: { db_host: 'db' } },
+        { input: { db_host: 'db' } },
       ),
     ).resolves.toEqual({ database: { host: 'db', port: null } });
   });
@@ -95,9 +95,9 @@ $in:
   $for:
     k: "\${ks}"
   $handler:
-    std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+    std.fail: {$fn: {$resume: "\${base}"}}
   seed: "\${base + k}"
-  missing: {$std.param: nope}
+  missing: {$std.input: nope}
 `),
     ).resolves.toEqual([
       { seed: 41, missing: 40 },
@@ -132,7 +132,7 @@ $in:
     await expect(
       run(`
 $handler:
-  std.fail: {$fn: _, $body: 0}
+  std.fail: {$fn: 0}
 $in:
   $std.lookup: {in: {}, key: missing}
 `),
@@ -185,7 +185,7 @@ $handler: {$std.state: {n: "\${base + 2}"}}
     for (const yaml of both) await expect(run(yaml)).resolves.toBe(42);
   });
 
-  it('$fn と同居する $let は関数全体を包む', async () => {
+  it('$param と同居する $let は関数全体を包む', async () => {
     // 束縛は関数の外で一度だけ評価されるので、二度呼んでもログは一つである。
     const logs: Value[] = [];
     await expect(
@@ -193,9 +193,9 @@ $handler: {$std.state: {n: "\${base + 2}"}}
         `
 $let:
   f:
-    $fn: a
+    $param: a
     $let: {y: {$std.log: made}}
-    $body: \${a}
+    $fn: \${a}
 $in:
 - {$.f: 1}
 - {$.f: 2}
@@ -209,9 +209,9 @@ $in:
       run(`
 $let:
   f:
-    $fn: a
+    $param: a
     $let: {y: "\${a}"}
-    $body: \${y}
+    $fn: \${y}
 $in: {$.f: 1}
 `),
     ).rejects.toThrow('undefined reference: a');
@@ -224,7 +224,7 @@ $let:
   x: 1
 $in: {$.throw: boom}
 $handler:
-  throw: {$fn: m, $body: "caught \${m} \${x}"}
+  throw: {$param: m, $fn: "caught \${m} \${x}"}
 `),
     ).resolves.toBe('caught boom 1');
   });
@@ -327,7 +327,7 @@ describe('文脈の導入の展開との等価性', () => {
     const omitted = `
 $let:
   registry: ghcr.io/acme
-  env: {$std.param: env, $default: dev}
+  env: {$std.input: env, $default: dev}
 name: api
 image: \${registry}/api:\${env}
 replicas:
@@ -338,7 +338,7 @@ replicas:
     const expanded = `
 $let:
   registry: ghcr.io/acme
-  env: {$std.param: env, $default: dev}
+  env: {$std.input: env, $default: dev}
 $in:
   name: api
   image: \${registry}/api:\${env}
@@ -356,19 +356,19 @@ $in:
     const omitted = `
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
-  host: {$std.param: db_host}
-  port: {$std.param: db_port}
+    std.fail: {$fn: {$resume: null}}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port}
 `;
     const expanded = `
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
+    std.fail: {$fn: {$resume: null}}
   $in:
-    host: {$std.param: db_host}
-    port: {$std.param: db_port}
+    host: {$std.input: db_host}
+    port: {$std.input: db_port}
 `;
-    const options: EvaluateOptions = { params: { db_host: 'db' } };
+    const options: EvaluateOptions = { input: { db_host: 'db' } };
     const omittedLogs: Value[] = [];
     const expandedLogs: Value[] = [];
     const a = await run(omitted, { ...options, onLog: (v) => omittedLogs.push(v) });
@@ -434,9 +434,9 @@ $in:
   $for:
     k: "\${ks}"
   $handler:
-    std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+    std.fail: {$fn: {$resume: "\${base}"}}
   seed: "\${base + k}"
-  missing: {$std.param: nope}
+  missing: {$std.input: nope}
 `;
     const expanded = `
 $handler: "\${std.list}"
@@ -449,10 +449,10 @@ $in:
       k: "\${ks}"
     $in:
       $handler:
-        std.fail: {$fn: _, $body: {$resume: "\${base}"}}
+        std.fail: {$fn: {$resume: "\${base}"}}
       $in:
         seed: "\${base + k}"
-        missing: {$std.param: nope}
+        missing: {$std.input: nope}
 `;
     const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
@@ -506,7 +506,7 @@ $in:
   it('$handler の頭と $in の本体', async () => {
     const omitted = `
 $handler:
-  std.fail: {$fn: _, $body: 0}
+  std.fail: {$fn: 0}
 $in:
   $std.lookup: {in: {}, key: missing}
 `;
@@ -514,7 +514,7 @@ $in:
 $in:
   $std.lookup: {in: {}, key: missing}
 $handler:
-  std.fail: {$fn: _, $body: 0}
+  std.fail: {$fn: 0}
 `;
     const a = await run(omitted);
     expect(a).toEqual(await run(expanded));
@@ -622,12 +622,12 @@ describe('$handler の頭は節のマッピングでも関数の式でも同じ�
     const statement = `
 $do:
 - $handler:
-    std.each: {$fn: xs, $body: "\${xs[0]}"}
+    std.each: {$param: xs, $fn: "\${xs[0]}"}
 - {$std.each: [a, b]}
 `;
     const withIn = `
 $handler:
-  std.each: {$fn: xs, $body: "\${xs[0]}"}
+  std.each: {$param: xs, $fn: "\${xs[0]}"}
 $in: {$std.each: [a, b]}
 `;
     const a = await run(statement);
@@ -675,7 +675,7 @@ describe('文脈の導入に添えた $default', () => {
     await expect(
       run(`
 $let:
-  x: {$std.param: nope}
+  x: {$std.input: nope}
 $in: "\${x}"
 $default: fallback
 `),
@@ -684,7 +684,7 @@ $default: fallback
       run(`
 $let:
   x: 1
-$in: {$std.param: nope}
+$in: {$std.input: nope}
 $default: fallback
 `),
     ).resolves.toBe('fallback');
@@ -696,7 +696,7 @@ $default: fallback
       run(`
 $let:
   x: 1
-$in: {$std.param: nope}
+$in: {$std.input: nope}
 $default: "\${x}"
 `),
     ).rejects.toThrow('undefined reference: x');
@@ -715,9 +715,8 @@ $let:
   fallback: none
 $handler:
   std.fail:
-    $fn: _
-    $body: {$resume: "\${fallback}"}
-host: {$std.param: db_host}
+    $fn: {$resume: "\${fallback}"}
+host: {$std.input: db_host}
 `),
     ).resolves.toEqual({ host: 'none' });
   });
@@ -727,11 +726,10 @@ host: {$std.param: db_host}
       run(`
 $handler:
   std.fail:
-    $fn: _
-    $body: {$resume: "\${fallback}"}
+    $fn: {$resume: "\${fallback}"}
 $let:
   fallback: none
-host: {$std.param: db_host}
+host: {$std.input: db_host}
 `),
     ).rejects.toThrow('undefined reference: fallback');
   });
@@ -800,8 +798,8 @@ describe('文脈の導入とローカル作用', () => {
       run(`
 $handler:
   throw:
-    $fn: m
-    $body: caught \${m}
+    $param: m
+    $fn: caught \${m}
 a: {$.throw: boom}
 `),
     ).resolves.toBe('caught boom');
@@ -814,8 +812,8 @@ $let:
   f:
     $handler:
       throw:
-        $fn: msg
-        $body: caught \${msg}
+        $param: msg
+        $fn: caught \${msg}
     v: \${throw}
 $in:
   $.f.v: hi
@@ -827,8 +825,8 @@ $let:
   services:
     $handler:
       throw:
-        $fn: msg
-        $body: caught \${msg}
+        $param: msg
+        $fn: caught \${msg}
     v: \${throw}
 $in:
   $.services.v: hi
@@ -847,8 +845,8 @@ describe('文脈の導入と自己適用の検査', () => {
       run(`
 $let:
   f:
-    $fn: g
-    $body: {$.g: "\${g}"}
+    $param: g
+    $fn: {$.g: "\${g}"}
 v: {$.f: "\${f}"}
 `),
     ).rejects.toThrow(
@@ -867,7 +865,7 @@ describe('$ キーとデータのキーの混在', () => {
     ['完結した $if', '{$if: true, $then: 1, $else: 2, k: v}'],
     ['$do', '{$do: [1], k: v}'],
     ['呼び出し', '{$std.log: hi, k: v}'],
-    ['補助キーを伴う呼び出し', '{$std.param: x, name: api}'],
+    ['補助キーを伴う呼び出し', '{$std.input: x, name: api}'],
   ])('%s は $ key mixed with plain keys で拒否される', async (_label, yaml) => {
     await expect(run(yaml)).rejects.toThrow('$ key mixed with plain keys');
   });
@@ -877,7 +875,7 @@ describe('残りが空の頭', () => {
   it.each([
     ['$let', '{$let: {b: 1}}'],
     ['$for', '{$for: {x: [1]}}'],
-    ['$handler', '{$handler: {std.fail: {$fn: _, $body: 0}}}'],
+    ['$handler', '{$handler: {std.fail: {$fn: 0}}}'],
   ])('頭だけの %s は $do の文の位置でだけ書ける', async (head, yaml) => {
     await expect(run(yaml)).rejects.toThrow(
       `${head} without $in is only allowed as a statement of $do`,
@@ -905,14 +903,14 @@ $do:
     await expect(
       run(`
 $do:
-- {$handler: {std.fail: {$fn: _, $body: caught}}, $in: {$std.fail: x}}
+- {$handler: {std.fail: {$fn: caught}}, $in: {$std.fail: x}}
 - done
 `),
     ).resolves.toBe('done');
     await expect(
       run(`
 $do:
-- {$handler: {std.fail: {$fn: _, $body: caught}}, $in: 1}
+- {$handler: {std.fail: {$fn: caught}}, $in: 1}
 - {$std.fail: boom}
 `),
     ).rejects.toThrow('failure: boom');

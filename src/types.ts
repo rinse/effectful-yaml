@@ -255,7 +255,7 @@ export const userFacingOpName = (name: string): string => name.split('@')[0]!;
  * 関数を収めたマッピングであり、評価器（eval.ts）と評価前の検査（typecheck.ts）が
  * 同じ一覧から初期環境を組む。
  */
-export const STD_OPS: readonly string[] = ['each', 'param', 'get', 'set', 'log', 'fail'];
+export const STD_OPS: readonly string[] = ['each', 'input', 'get', 'set', 'log', 'fail'];
 
 /** std の関数の名前（`std.` を除いた区画）。 */
 export const STD_FUNCTIONS: readonly string[] = [

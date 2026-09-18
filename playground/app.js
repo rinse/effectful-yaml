@@ -3,7 +3,7 @@ import { evaluateYaml, highlightYaml, parse, stringify } from './effectful-yaml.
 const exampleSelect = document.getElementById('example-select');
 const runButton = document.getElementById('run-button');
 const sourceInput = document.getElementById('source-input');
-const paramsInput = document.getElementById('params-input');
+const inputInput = document.getElementById('launch-input');
 const outputPane = document.getElementById('output-pane');
 const logPane = document.getElementById('log-pane');
 const errorPane = document.getElementById('error-pane');
@@ -70,27 +70,27 @@ async function run() {
   outputPane.textContent = '';
   logPane.textContent = '';
 
-  let params;
-  const paramsText = paramsInput.value.trim();
-  if (paramsText !== '') {
+  let input;
+  const inputText = inputInput.value.trim();
+  if (inputText !== '') {
     let parsed;
     try {
-      parsed = parse(paramsText);
+      parsed = parse(inputText);
     } catch (error) {
-      showError(`params の YAML 解析に失敗しました: ${error?.message ?? error}`);
+      showError(`入力の YAML 解析に失敗しました: ${error?.message ?? error}`);
       return;
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      showError('params はオブジェクト（マッピング）である必要があります。');
+      showError('入力はオブジェクト（マッピング）である必要があります。');
       return;
     }
-    params = parsed;
+    input = parsed;
   }
 
   const logLines = [];
   try {
     const result = await evaluateYaml(sourceInput.value, {
-      params,
+      input,
       onLog: (value) => {
         logLines.push(typeof value === 'string' ? value : stringify(value).trimEnd());
         logPane.textContent = logLines.join('\n');
@@ -102,7 +102,7 @@ async function run() {
   }
 }
 
-for (const textarea of [sourceInput, paramsInput]) {
+for (const textarea of [sourceInput, inputInput]) {
   textarea.addEventListener('input', () => highlightEditor(textarea));
   highlightEditor(textarea);
 }

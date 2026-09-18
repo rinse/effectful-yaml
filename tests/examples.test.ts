@@ -11,12 +11,12 @@ async function runExample(name: string, options?: EvaluateOptions) {
 }
 
 describe('examples', () => {
-  it('external-params.yaml は未渡しなら $default、渡せばその値を使う', async () => {
-    await expect(runExample('external-params.yaml')).resolves.toEqual({
+  it('external-input.yaml は未渡しなら $default、渡せばその値を使う', async () => {
+    await expect(runExample('external-input.yaml')).resolves.toEqual({
       param: { number: 80, object: { yaml: false } },
     });
     await expect(
-      runExample('external-params.yaml', { params: { x: 8080, y: { yaml: true } } }),
+      runExample('external-input.yaml', { input: { x: 8080, y: { yaml: true } } }),
     ).resolves.toEqual({
       param: { number: 8080, object: { yaml: true } },
     });

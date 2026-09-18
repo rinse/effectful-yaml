@@ -37,8 +37,7 @@ $in:
   $std.collect:
     in: {$std.range: 5}
     with:
-      $fn: _
-      $body:
+      $fn:
         $do:
         - $let:
             v: {$std.get: acc}

@@ -13,7 +13,7 @@ $handler: ${std.first}
 $in: 本体の式
 ```
 
-`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.first: {$fn: 捨て名, $body: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
+`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.first: {$fn: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
 
 ## 規則
 
@@ -44,56 +44,53 @@ $in: 本体の式
 ```yaml
 $let:
   first:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $let:
         step:
           $handler:
             taken:
-              $fn: _
-              $body:
-                $fn: t
-                $body:
+              $fn:
+                $param: t
+                $fn:
                   $let:
                     k:
                       $resume: ${t}
                   $in:
                     $.k: ${t}
             mark:
-              $fn: _
-              $body:
-                $fn: t
-                $body:
+              $fn:
+                $param: t
+                $fn:
                   $let:
                     k:
                       $resume: null
                   $in:
                     $.k: true
             return:
-              $fn: x
-              $body:
-                $fn: t
-                $body: ${x}
+              $param: x
+              $fn:
+                $param: t
+                $fn: ${x}
           $in:
             $handler:
               std.each:
-                $fn: xs
-                $body:
+                $param: xs
+                $fn:
                   $std.collect:
                     in: ${xs}
                     with:
-                      $fn: x
-                      $body:
+                      $param: x
+                      $fn:
                         $if: {$.taken: null}
                         $then: []
                         $else:
                           $resume: ${x}
               std.fail:
-                $fn: _
-                $body: []
+                $fn: []
               return:
-                $fn: x
-                $body:
+                $param: x
+                $fn:
                   $do:
                   - $.mark: null
                   - - ${x}
@@ -104,12 +101,12 @@ $in:
   $handler: ${first}
   $do:
   - $for:
-      v: [{$std.param: log_level, $default: null}, info]
+      v: [{$std.input: log_level, $default: null}, info]
   - $std.where: ${v != null}
   - ${v}
 ```
 
-パラメータを何も渡さずに評価すると次になる。
+入力を何も渡さずに評価すると次になる。
 
 ```yaml
 info
@@ -136,13 +133,13 @@ info
 log_level:
   $handler: ${std.first}
   $for:
-    v: [{$std.param: log_level, $default: null}, {$std.param: fallback_log_level, $default: null}, info]
+    v: [{$std.input: log_level, $default: null}, {$std.input: fallback_log_level, $default: null}, info]
   $do:
   - $std.where: ${v != null}
   - ${v}
 ```
 
-パラメータを何も渡さずに評価すると次になる。
+入力を何も渡さずに評価すると次になる。
 
 ```yaml
 log_level: info

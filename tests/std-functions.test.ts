@@ -4,7 +4,7 @@
  *
  * 関数の定義は各ページの節の最初の YAML ブロックから読み、ページに書かれたとおりの
  * 文書を評価する。テストはその `$let` の定義を取り出し、組み込みと同じ本体に掛けて比較する。
- * `$std.param` に添えた `$default` の展開と、関数の式を置いた `$handler` の展開は、
+ * `$std.input` に添えた `$default` の展開と、関数の式を置いた `$handler` の展開は、
  * ページに関数がないのでここに直接書く。
  */
 import { readFile } from 'node:fs/promises';
@@ -28,7 +28,7 @@ async function impl(page: string): Promise<{ doc: Doc; expected: Value; defs: Do
 }
 
 const y = (src: string): Value => parse(src) as Value;
-const thunk = (body: Value): Doc => ({ $fn: '_', $body: body });
+const thunk = (body: Value): Doc => ({ $fn: body });
 
 /** 関数版と組み込みを評価し、値とログの列が一致することを確かめて値を返す。 */
 async function agree(fn: Value, builtin: Value, options: EvaluateOptions = {}): Promise<Value> {
@@ -253,15 +253,15 @@ describe('$default の関数による実装', async () => {
     expect(await agree(row(fn(access, cut)), row(builtin(access, cut)))).toEqual(['c1', 'c3']);
   });
 
-  it('$std.param に添えた $default は std.fail の節を持つ $handler への展開と一致する', async () => {
+  it('$std.input に添えた $default は std.fail の節を持つ $handler への展開と一致する', async () => {
     const dflt = y(`{$do: [{$std.log: fell-back}, 5432]}`);
-    const sugar = { '$std.param': 'port', $default: dflt };
+    const sugar = { '$std.input': 'port', $default: dflt };
     const expansion = {
-      $handler: { 'std.fail': { $fn: '_', $body: dflt } },
-      $in: { '$std.param': 'port' },
+      $handler: { 'std.fail': { $fn: dflt } },
+      $in: { '$std.input': 'port' },
     };
     expect(await agree(sugar, expansion)).toBe(5432);
-    expect(await agree(sugar, expansion, { params: { port: 80 } })).toBe(80);
+    expect(await agree(sugar, expansion, { input: { port: 80 } })).toBe(80);
   });
 });
 
@@ -300,14 +300,14 @@ $let:
   entries: {$.for: "\${forms}"}
 $in:
   $.entries:
-    $fn: entry
-    $body:
+    $param: entry
+    $fn:
       $let:
         labels: {$.for2: "\${entry.value}"}
       $in:
         $.labels:
-          $fn: label
-          $body: \${entry.key}\${label}
+          $param: label
+          $fn: \${entry.key}\${label}
 `);
     const builtin = y(`
 $handler: \${std.list}
@@ -364,11 +364,11 @@ describe('std.merge の関数による実装', async () => {
 describe('関数の式を置いた $handler の展開', () => {
   it('{$handler: 関数の式, $in: 本体} は {$let: {h: 関数の式}, $in: {$.h: 本体の閉包}} と一致する', async () => {
     const orElse = y(`
-$fn: [d, run]
-$body:
+$param: [d, run]
+$fn:
   $handler:
-    std.fail: {$fn: _, $body: "\${d}"}
-    return: {$fn: x, $body: "\${x * 2}"}
+    std.fail: {$fn: "\${d}"}
+    return: {$param: x, $fn: "\${x * 2}"}
   $in: {$.run: null}
 `);
     const missing = y('{$std.lookup: {in: {}, key: missing}}');

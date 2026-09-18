@@ -50,11 +50,11 @@ describe('環境の計算量', () => {
   }, 60000);
 
   it('b. 1 万個の関数を平坦に束ねた文書が二乗にならない', async () => {
-    // 解析器は $fn ごとに定義時点の SEnv を捕まえる。捕獲が複製だと i 件目で i 個写すので
+    // 解析器は $param ごとに定義時点の SEnv を捕まえる。捕獲が複製だと i 件目で i 個写すので
     // 総計 Sigma i = O(n^2)。木なら参照ひとつで O(1)。
     const stmts: unknown[] = [];
     for (let i = 0; i < 10000; i++) {
-      stmts.push({ $let: { [`f${i}`]: { $fn: 'x', $body: '${x}' } } });
+      stmts.push({ $let: { [`f${i}`]: { $param: 'x', $fn: '${x}' } } });
     }
     stmts.push({ '$.f9999': 1 });
     const t0 = performance.now();
@@ -84,8 +84,8 @@ $do:
 - $let: {x: 1}
 - $let:
     f:
-      $fn: 'y'
-      $body: \${x + y}
+      $param: 'y'
+      $fn: \${x + y}
 - $let: {x: 100}
 - {$.f: 1}
 `),
@@ -99,8 +99,8 @@ $do:
       run(`
 $handler:
   std.log:
-    $fn: msg
-    $body:
+    $param: msg
+    $fn:
       $do:
       - $let: {tag: instrumented}
       - $resume: \${tag}
@@ -143,7 +143,7 @@ $do:
 $do:
 - $let:
     std:
-      each: {$fn: xs, $body: "\${xs[1]}"}
+      each: {$param: xs, $fn: "\${xs[1]}"}
 - $for: {x: [1, 2]}
 - \${x}
 `),

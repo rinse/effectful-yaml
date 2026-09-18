@@ -17,7 +17,7 @@ $else: 式
 
 - 条件の値が真なら `$then` を、偽なら `$else` を評価する。評価されるのは一方だけである。
 - `$else` は省略できない。「暗黙の null を作らない」原則による。
-- 条件は真偽値でなければならない。真偽値への暗黙の変換は行わない。条件には呼び出しも書ける（`$if: {$std.param: use_tls}`）。
+- 条件は真偽値でなければならない。真偽値への暗黙の変換は行わない。条件には呼び出しも書ける（`$if: {$std.input: use_tls}`）。
 - データの位置にも `$do` の文としても書ける。
 - 作用の推論は出現主義なので、実行されない側の分岐の演算も作用シグネチャに数える。ただし実際に起きる作用は選ばれた側のものだけであり、`$then` にだけ選択が現れる `$if` は、`$else` 側が選ばれれば選択を起こさない。
 
@@ -25,7 +25,7 @@ $else: 式
 
 ```yaml
 tls:
-  $if: {$std.param: use_tls}
+  $if: {$std.input: use_tls}
   $then:
     cert: /etc/ssl/cert.pem
   $else: null
@@ -41,4 +41,4 @@ tls: null
 
 - [std.where](std.where.md)（分岐でなく打ち切りが必要なとき）
 - [$default](default.md)（失敗したときだけ評価される、もう一つの遅延位置）
-- [std.param](std.param.md)
+- [std.input](std.input.md)

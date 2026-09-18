@@ -369,8 +369,8 @@ function handleState(comp: Comp, init: PMap<Value>): Comp {
 // ---------------------------------------------------------------------------
 
 export interface EvaluateOptions {
-  /** 起動時パラメータ（$std.param が読む）。 */
-  params?: Record<string, Value>;
+  /** 起動時の入力（$std.input が読む）。 */
+  input?: Record<string, Value>;
   /**
    * ホストの演算。名前はドット入り（vault.read 等）で、初期環境の束縛になる。
    * 文書の `$handler` が横取りでき、境界に達したときだけこの実装が既定ハンドラとして走る。
@@ -567,18 +567,18 @@ function validateHostNames(
 
 class Evaluator {
   constructor(
-    private readonly params: Record<string, Value>,
+    private readonly input: Record<string, Value>,
     private readonly onLog: (v: Value) => void,
   ) {}
 
   /**
    * 作用境界（文書全体、およびデータの中に現れた最も外側の `$` 式）。
-   * 残る作用を既定ハンドラ一式（失敗・パラメータ・ログ・状態）で処理し尽くす。
+   * 残る作用を既定ハンドラ一式（失敗・入力・ログ・状態）で処理し尽くす。
    * 選択と失敗と登録演算だけは外（トップレベルのドライバ）へ委ねる。
    * 選択を処理するのは明示のハンドラだけなので、境界に達した選択はドライバのエラーになる。
    */
   private boundary(comp: Comp): Comp {
-    return this.handleParam(this.handleLog(handleState(comp, empty)));
+    return this.handleInput(this.handleLog(handleState(comp, empty)));
   }
 
   private handleLog(comp: Comp): Comp {
@@ -596,18 +596,18 @@ class Evaluator {
     );
   }
 
-  /** パラメータ表を読むだけの全域なハンドラ。未渡しは ABSENT で返す（判断は呼び出し位置）。 */
-  private handleParam(comp: Comp): Comp {
+  /** 入力の表を読むだけの全域なハンドラ。未渡しは ABSENT で返す（判断は呼び出し位置）。 */
+  private handleInput(comp: Comp): Comp {
     return handleOps(
       comp,
       new Map<string, Handler>([
         [
-          'std.param',
+          'std.input',
           (arg, k) => {
-            const name = requireString(arg, '$std.param name');
+            const name = requireString(arg, '$std.input name');
             return k(
-              Object.prototype.hasOwnProperty.call(this.params, name)
-                ? this.params[name]!
+              Object.prototype.hasOwnProperty.call(this.input, name)
+                ? this.input[name]!
                 : ABSENT,
             );
           },
@@ -705,11 +705,11 @@ class Evaluator {
       return f.impl(arg, { apply: (g, a, w) => this.apply(g, a, w, path), path, what });
     }
     if (isOperation(f)) {
-      // std.param だけは未渡しの判定が呼び出し位置に属する（$default が捕捉できる位置で失敗させる）。
-      if (f.name === 'std.param') {
+      // std.input だけは未渡しの判定が呼び出し位置に属する（$default が捕捉できる位置で失敗させる）。
+      if (f.name === 'std.input') {
         const key = requireString(arg, `${what} name`);
-        return bind(perform('std.param', key, path, what), (v) =>
-          v === ABSENT ? perform('std.fail', `parameter not provided: ${key}`, path) : pure(v),
+        return bind(perform('std.input', key, path, what), (v) =>
+          v === ABSENT ? perform('std.fail', `input not provided: ${key}`, path) : pure(v),
         );
       }
       return perform(f.name, arg, path, what);
@@ -840,7 +840,7 @@ function toMapping(entries: readonly Value[]): Value {
 
 /**
  * 関数と演算が文書の値に残ることはエラー。
- * 閉包と Native に加え、ホストが params で注入した生の関数も拒む。
+ * 閉包と Native に加え、ホストが input で注入した生の関数も拒む。
  */
 function assertNoNonData(v: Value): void {
   if (isOperation(v)) {
@@ -944,7 +944,7 @@ export async function evaluate(doc: unknown, options: EvaluateOptions = {}): Pro
   typecheck(ast, Object.keys(ops), Object.keys(functions));
 
   const evaluator = new Evaluator(
-    options.params ?? {},
+    options.input ?? {},
     options.onLog ?? ((v) => console.error(describe(v))),
   );
   const value = await drive(evaluator.eval(ast, initialEnv(ops, functions)), ops, functions);

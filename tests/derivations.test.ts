@@ -39,59 +39,59 @@ function block(yaml: string, col: number): string {
 
 /** grammar/std.md「std.list の値」 */
 const LIST_FN = `
-$fn: run
-$body:
+$param: run
+$fn:
   $handler:
     std.each:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $std.collect:
           in: \${xs}
           with:
-            $fn: x
-            $body:
+            $param: x
+            $fn:
               $resume: \${x}
     return:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
       - \${x}
   $in: {$.run: null}
 `;
 
 /** grammar/std.md「std.mapping の値」 */
 const MAPPING_FN = `
-$fn: run
-$body:
+$param: run
+$fn:
   $std.collect:
     in:
       $handler: \${std.list}
       $in: {$.run: null}
     with:
-      $fn: e
-      $body:
+      $param: e
+      $fn:
       - \${e}
     into: mapping
 `;
 
 /** grammar/std.md「std.state の値」（初期値と本体の閉包をとるカリー化された関数） */
 const STATE_FN = `
-$fn: [init, run]
-$body:
+$param: [init, run]
+$fn:
   $let:
     step:
       $handler:
         std.get:
-          $fn: name
-          $body:
-            $fn: s
-            $body:
+          $param: name
+          $fn:
+            $param: s
+            $fn:
               $let:
                 hits:
                   $std.collect:
                     in: \${s}
                     with:
-                      $fn: e
-                      $body:
+                      $param: e
+                      $fn:
                         $if: \${e.key == name}
                         $then:
                         - \${e.value}
@@ -101,10 +101,10 @@ $body:
               $in:
                 $.k: \${s}
         std.set:
-          $fn: m
-          $body:
-            $fn: s
-            $body:
+          $param: m
+          $fn:
+            $param: s
+            $fn:
               $let:
                 s2:
                   $std.collect:
@@ -112,23 +112,23 @@ $body:
                     - \${m}
                     - \${s}
                     with:
-                      $fn: part
-                      $body:
+                      $param: part
+                      $fn:
                         $std.collect:
                           in: \${part}
                           with:
-                            $fn: e
-                            $body:
+                            $param: e
+                            $fn:
                             - \${e}
                 k:
                   $resume: null
               $in:
                 $.k: \${s2}
         return:
-          $fn: x
-          $body:
-            $fn: s
-            $body: \${x}
+          $param: x
+          $fn:
+            $param: s
+            $fn: \${x}
       $in: {$.run: null}
   $in:
     $.step: \${init}
@@ -146,50 +146,47 @@ $body:
 const FIRST_STEP = `
 $handler:
   taken:
-    $fn: _
-    $body:
-      $fn: t
-      $body:
+    $fn:
+      $param: t
+      $fn:
         $let:
           k:
             $resume: \${t}
         $in:
           $.k: \${t}
   mark:
-    $fn: _
-    $body:
-      $fn: t
-      $body:
+    $fn:
+      $param: t
+      $fn:
         $let:
           k:
             $resume: null
         $in:
           $.k: true
   return:
-    $fn: x
-    $body:
-      $fn: t
-      $body: \${x}
+    $param: x
+    $fn:
+      $param: t
+      $fn: \${x}
 $in:
   $handler:
     std.each:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $std.collect:
           in: \${xs}
           with:
-            $fn: x
-            $body:
+            $param: x
+            $fn:
               $if: {$.taken: null}
               $then: []
               $else:
                 $resume: \${x}
     std.fail:
-      $fn: _
-      $body: []
+      $fn: []
     return:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
         $do:
         - {$.mark: null}
         - - \${x}
@@ -197,8 +194,8 @@ $in:
 `;
 
 const FIRST_FN = `
-$fn: run
-$body:
+$param: run
+$fn:
   $let:
     step:${block(FIRST_STEP, 6)}
     results: {$.step: false}
@@ -459,7 +456,7 @@ describe('std.first の展開との等価性', () => {
     const body = `
 $do:
 - $let:
-    v: {$std.each: [{$std.param: log_level, $default: null}, info]}
+    v: {$std.each: [{$std.input: log_level, $default: null}, info]}
 - $std.where: \${v != null}
 - \${v}
 `;
@@ -517,7 +514,7 @@ $do:
 
 // -----------------------------------------------------------------------------
 // 5. $default（grammar/derived.md「$default」）
-//   {主形 ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 内部名, $body: 式}}, $in: 主形}
+//   {主形 ∪ {$default: 式}} ≡ {$handler: {std.fail: {$param: 内部名, $fn: 式}}, $in: 主形}
 // -----------------------------------------------------------------------------
 
 describe('$default の展開との等価性', () => {
@@ -534,7 +531,7 @@ $do:
 - $let:
     m: {}
 - $handler:
-    std.fail: {$fn: _, $body: fallback}
+    std.fail: {$fn: fallback}
   $in:
     $std.lookup: {in: "\${m}", key: nope}
 `);
@@ -562,8 +559,7 @@ $for:${rows}date: \${row.date}
 code:
   $handler:
     std.fail:
-      $fn: _
-      $body: {$std.where: false}
+      $fn: {$std.where: false}
   $in:
     $std.lookup: {in: "\${row}", key: code}
 `);
@@ -594,8 +590,7 @@ $in:
       row: {$std.each: [{}, {code: c3}]}
   - $handler:
       std.fail:
-        $fn: _
-        $body: {$std.where: false}
+        $fn: {$std.where: false}
     $in:
       $std.lookup: {in: "\${row}", key: code}
 `);
@@ -686,8 +681,8 @@ $in:
   - $std.collect:
       in: [3, 1, 4, 1, 5]
       with:
-        $fn: x
-        $body:
+        $param: x
+        $fn:
           $do:
           - $let:
               a: {$std.get: acc}
@@ -701,11 +696,11 @@ $in:
 });
 
 // -----------------------------------------------------------------------------
-// 8. $fn の列（カリー化の導出形、grammar/syntax.md「引数名の列と部分適用」）
+// 8. $param の列（カリー化の導出形、grammar/syntax.md「引数名の列と部分適用」）
 // -----------------------------------------------------------------------------
 
-describe('$fn の列のカリー化展開', () => {
-  it('列の形と入れ子の $fn は同じ値になる（3 引数、順に部分適用）', async () => {
+describe('$param の列のカリー化展開', () => {
+  it('列の形と入れ子の $param は同じ値になる（3 引数、順に部分適用）', async () => {
     const use = `
 - $let:
     f1: {$.f: 100}
@@ -716,18 +711,18 @@ describe('$fn の列のカリー化展開', () => {
 $do:
 - $let:
     f:
-      $fn: [a, b, c]
-      $body: ${'$'}{a + b + c}${use}`);
+      $param: [a, b, c]
+      $fn: ${'$'}{a + b + c}${use}`);
     const nested = await run(`
 $do:
 - $let:
     f:
-      $fn: a
-      $body:
-        $fn: b
-        $body:
-          $fn: c
-          $body: ${'$'}{a + b + c}${use}`);
+      $param: a
+      $fn:
+        $param: b
+        $fn:
+          $param: c
+          $fn: ${'$'}{a + b + c}${use}`);
     expect(listed).toBe(123);
     expect(nested).toBe(123);
   });
@@ -739,8 +734,8 @@ $do:
 $do:
 - $let:
     tag:
-      $fn: [prefix, x]
-      $body:
+      $param: [prefix, x]
+      $fn:
         $do:
         - $std.log: body
         - ${'$'}{prefix}-${'$'}{x}
@@ -774,8 +769,8 @@ function lookupExpanded(inFlow: string, keyScalar: string): string {
   return `
 $let:
   myLookup:
-    $fn: arg
-    $body:
+    $param: arg
+    $fn:
       $handler: \${std.first}
       $in:
         $do:
@@ -839,8 +834,8 @@ describe('$do の文に置いた文脈の導入の展開との等価性', () => 
 $do:
 - $handler:
     std.fail:
-      $fn: m
-      $body:
+      $param: m
+      $fn:
         $do:
         - $std.log: 'caught: \${m}'
         - recovered
@@ -850,8 +845,8 @@ $do:
     const expanded = `
 $handler:
   std.fail:
-    $fn: m
-    $body:
+    $param: m
+    $fn:
       $do:
       - $std.log: 'caught: \${m}'
       - recovered

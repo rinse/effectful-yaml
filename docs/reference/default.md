@@ -9,7 +9,7 @@
 ## 構文
 
 ```yaml
-$std.param: 名前
+$std.input: 名前
 $default: 式
 ```
 
@@ -21,10 +21,10 @@ $default: 式
 ## 展開
 
 意味は次の展開で定める。
-内部名は処理系内部の捨て名であり、文書から参照できない。
+節は引数を受け取らない（`$param` を省いた 0 引数の形である）。
 
 ```
-{X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 内部名, $body: 式}}, $in: X}
+{X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 式}}, $in: X}
 ```
 
 `$default` を除いた残り X が `$` 式全体である。
@@ -34,7 +34,7 @@ $default: 式
 
 - 添えられるのは `$` 式、すなわち `$` で始まるキーを持つマッピングである。`$` 式の形の判定は `$default` を除いてから行うので、主形にも文脈の導入を伴うマッピングにも添えられる。後者では、頭と本体をまとめて包む。
 - スカラーには添えられない。`${spec.pre}` のような参照の欠落を既定値で埋めるには、そのスカラーを一文の [$do](do.md) に包んで `$` 式にする（`{$do: ["${spec.pre}"], $default: ''}`）か、`std.lookup` で引くか、[$let](let.md) で束縛してその文脈の導入を伴うマッピングに添える（下の例）。
-- 捕捉するのは `std.fail` だけである。渡されていないパラメータ、欠落したキーと添字、未初期化のセルの読み出し、失敗を通知したホストの値の呼び出しは、いずれもこの作用なので一律に埋められる。選択や状態は捕捉しない。
+- 捕捉するのは `std.fail` だけである。渡されていない入力、欠落したキーと添字、未初期化のセルの読み出し、失敗を通知したホストの値の呼び出しは、いずれもこの作用なので一律に埋められる。選択や状態は捕捉しない。
 - `$default` は遅延位置である。本体が失敗しなければ評価されず、その中の作用も起きない（`$if` の選ばれない分岐と同じ）。
 - 作用の推論は出現主義なので、評価されない場合でも `$default` の中の演算は作用集合に数える。展開のとおり、本体の `std.fail` は除かれ、既定値の式の作用が加わる。
 - 既定値の式は展開により `std.fail` の節の本体なので、そこに書いた `$resume` は失敗した位置から本体を再開する（`$default: {$resume: null}` は失敗を null で埋めて続行する）。
@@ -61,33 +61,32 @@ $default: {$std.where: false}
 ```yaml
 $let:
   orElse:
-    $fn: [d, run]
-    $body:
+    $param: [d, run]
+    $fn:
       $handler:
         std.fail:
-          $fn: _
-          $body: {$.d: null}
+          $fn: {$.d: null}
       $in: {$.run: null}
 $in:
-  $handler: {$.orElse: {$fn: _, $body: 5432}}
-  $in: {$std.param: db_port}
+  $handler: {$.orElse: {$fn: 5432}}
+  $in: {$std.input: db_port}
 ```
 
-パラメータを何も渡さずに評価すると次になる。
+入力を何も渡さずに評価すると次になる。
 
 ```yaml
 5432
 ```
 
-既定値を素の値で受け取る関数（`{$fn: [d, run], $body: {$handler: {std.fail: {$fn: _, $body: "${d}"}}, $in: {$.run: null}}}`）も書けるが、そちらは既定値が本体より先に一度だけ評価されるので、`$default` の遅延位置とは振る舞いが異なる。
+既定値を素の値で受け取る関数（`{$param: [d, run], $fn: {$handler: {std.fail: {$fn: "${d}"}}, $in: {$.run: null}}}`）も書けるが、そちらは既定値が本体より先に一度だけ評価されるので、`$default` の遅延位置とは振る舞いが異なる。
 
 ## 例
 
-渡されていないパラメータを既定値で埋める。
+渡されていない入力を既定値で埋める。
 
 ```yaml
-host: {$std.param: db_host}
-port: {$std.param: db_port, $default: 5432}
+host: {$std.input: db_host}
+port: {$std.input: db_port, $default: 5432}
 ```
 
 `db_host: example.com` だけを渡して評価する。
@@ -141,6 +140,6 @@ pre: ''
 
 - [$handler](handler.md)（展開先。`std.fail` 以外の演算を捕まえたいとき）
 - [std.fail](std.fail.md)（捕捉する作用）
-- [std.param](std.param.md)、[std.lookup](std.lookup.md)、[std.get](std.get.md)（`$default` で埋められる失敗の出所）
+- [std.input](std.input.md)、[std.lookup](std.lookup.md)、[std.get](std.get.md)（`$default` で埋められる失敗の出所）
 - [std.where](std.where.md)（`$default: {$std.where: false}` の定型）
 - [$if](if.md)（もう一つの遅延位置）

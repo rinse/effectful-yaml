@@ -18,7 +18,7 @@ Promise なのは、登録演算のホスト関数が非同期でありうるか
 
 ## 評価オプション
 
-- **`params`**：`$std.param` が読む起動時パラメータ。名前から値へのマッピング。
+- **`input`**：`$std.input` が読む起動時の入力。名前から値へのマッピング。
 - **`ops`**：登録演算のハンドラ。名前は `vault.read` のようにドットを含み、値は `(引数) => 値 | Promise<値>` のホスト関数である。呼び出しは作用を起こすので、文書の `$handler` が横取りでき、作用シグネチャに数えられる。`std` は初期環境の束縛のためにあるので、名前の最初の区画に使えない。
 - **`functions`**：ホスト関数のハンドラ。形は `ops` と同じ（`{ 'vault.read': impl }`）だが、呼び出しは演算ではなく通常の関数呼び出しになる（`{$vault.read: 引数}`）。`$handler` は横取りできず、作用シグネチャにも現れない。値は `(引数) => 値 | Promise<値>` でよく、非同期でもよい。名前は `ops` と同じくドットを含み、最初の区画に `std` は使えない。同じ名前を `ops` と `functions` の両方に登録するとエラーになる。
 - **`onLog`**：`$std.log` の値の受け皿。省略すると標準エラー出力に書く。
@@ -31,10 +31,10 @@ import { evaluateYaml } from './src/index.js';
 const value = await evaluateYaml(
   `
 server:
-  host: {$std.param: db_host}
-  port: {$std.param: db_port, $default: 5432}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port, $default: 5432}
 `,
-  { params: { db_host: 'example.com' } },
+  { input: { db_host: 'example.com' } },
 );
 // value: { server: { host: 'example.com', port: 5432 } }
 ```
@@ -99,7 +99,7 @@ cache:
 - `return` の予約：レキシカルな呼び出し `$.return`（`$.return.x` を含む）を書いた文書は、評価を始める前に `return is reserved: $.return is not callable` で拒否される。`return` はハンドラの節名として予約されているので、この呼び出しは解決しない。`$let` で `return` に束縛することと `${return}` の参照は妨げない。
 - `$resume` の位置：節の本体の外（`return` 節、ハンドラの本体、`$handler` の外にある関数の本体）に書いた `$resume` は、評価を始める前に `$resume is only allowed inside a $handler clause` で拒否される。
 - 境界に達した選択：`std.each` を処理するハンドラ（`$handler: ${std.list}`、`$handler: ${std.mapping}`、`$handler: ${std.first}`、`std.each` の節を持つ `$handler`）に捕まらずに作用境界へ達した選択は、`unhandled choice: $std.each reached the boundary; no enclosing handler handles std.each` で reject される。選択を含む計算はいずれかのハンドラで包む。
-- `$std.fail`：文書内のハンドラ（`$handler` の節や `$default`）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていないパラメータ、未初期化セルの読み出しもこの失敗作用になる。
+- `$std.fail`：文書内のハンドラ（`$handler` の節や `$default`）に捕まらず既定ハンドラへ達すると、`failure: メッセージ` で reject される。存在しないキーと添字、渡されていない入力、未初期化セルの読み出しもこの失敗作用になる。
 - `$handler` の式：節のマッピングでも関数でもない値（データや演算）に評価されると、`$handler requires a mapping of clauses or a function, got: 値` で reject される。
 - 関数値と演算の値の脱出：閉包が文書の値に残ると `a function value cannot escape into the document value` で、演算の値が残ると `an operation value cannot escape into the document value` で reject される。
 - ローカル作用の脱出：`$handler` のドットなしの節名が宣言したローカル作用は、その演算の値がハンドラの外へ持ち出されて呼ばれると、どのハンドラにも捕まらずに境界へ達する。このとき `local effect 'throw' escaped its handler (declared at 宣言位置)` で reject される。宣言位置は、宣言を書いた `$handler` の構文パスである。

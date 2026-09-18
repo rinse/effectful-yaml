@@ -12,7 +12,7 @@ $handler: ${std.mapping}
 $in: 本体の式
 ```
 
-`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.mapping: {$fn: 捨て名, $body: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
+`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.mapping: {$fn: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
 
 ## 規則
 
@@ -28,15 +28,15 @@ $in: 本体の式
 ```yaml
 $let:
   mapping:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $std.collect:
         in:
           $handler: ${std.list}
           $in: {$.run: null}
         with:
-          $fn: e
-          $body:
+          $param: e
+          $fn:
           - ${e}
         into: mapping
 $in:

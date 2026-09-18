@@ -100,9 +100,9 @@ c: 3
   it('スカラーに評価される島は島の位置にスカラーが置かれる', async () => {
     const src = `# 挨拶
 greeting:
-  $std.param: user
+  $std.input: user
 `;
-    await expect(render(src, { params: { user: 'rinse' } })).resolves.toBe(`# 挨拶
+    await expect(render(src, { input: { user: 'rinse' } })).resolves.toBe(`# 挨拶
 greeting:
   rinse
 `);
@@ -157,7 +157,7 @@ image: ghcr.io/acme/api
 
   it('$for の頭も、$std.each の節を持つ $handler より内側なら残るのはデータのキーだけ', async () => {
     const src = `$handler:
-  std.each: {$fn: xs, $body: {$resume: "\${xs[0]}"}}
+  std.each: {$param: xs, $fn: {$resume: "\${xs[0]}"}}
 $for:
   x: [1]
 a: \${x}   # 行内
@@ -173,7 +173,7 @@ a: \${x}   # 行内
   base: 41
 $handler: {$std.state: {n: "\${base}"}}
 seed: {$std.get: n}   # 状態
-missing: {$std.param: nope, $default: "\${base}"}
+missing: {$std.input: nope, $default: "\${base}"}
 `;
     await expect(render(src)).resolves.toBe(`seed: 41   # 状態
 missing: 41
@@ -246,8 +246,8 @@ describe('形が合わない場合は置換の退化', () => {
   it('$in を省いた $handler の節が本体を打ち切ると、島の置換に退化する', async () => {
     const src = `$handler:
   throw:
-    $fn: m
-    $body: caught \${m}
+    $param: m
+    $fn: caught \${m}
 a: {$.throw: boom}   # 消える
 `;
     await expect(render(src)).resolves.toBe(stringify('caught boom'));

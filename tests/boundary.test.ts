@@ -67,7 +67,7 @@ describe('境界に達した選択', () => {
       run(`
 $in: {$std.each: [1, 2]}
 $handler:
-  std.each: {$fn: xs, $body: caught}
+  std.each: {$param: xs, $fn: caught}
 `),
     ).resolves.toBe('caught');
   });
@@ -81,8 +81,8 @@ $in:
   - $let:
       fns:
         pick:
-          $fn: x
-          $body:
+          $param: x
+          $fn:
             $std.each:
             - \${x}
             - \${x + 1}
@@ -122,10 +122,10 @@ $do:
 - $let:
     helpers:
       send:
-        $fn: f
-        $body: {$vault.write: '\${f}'}
+        $param: f
+        $fn: {$vault.write: '\${f}'}
 - {$log.mark: before}
-- {$.helpers.send: {$fn: x, $body: 1}}
+- {$.helpers.send: {$param: x, $fn: 1}}
 `,
         { ops: { ...ops, 'vault.write': () => null } },
       ),
@@ -144,11 +144,11 @@ $do:
 - {$log.mark: before}
 - $std.set:
     f:
-      $fn: x
-      $body: {$vault.write: '\${x}'}
+      $param: x
+      $fn: {$vault.write: '\${x}'}
 - $let:
     g: {$std.get: f}
-- {$.g: {$fn: y, $body: 1}}
+- {$.g: {$param: y, $fn: 1}}
 `,
         { ops: { ...ops, 'vault.write': () => null } },
       ),
@@ -195,8 +195,8 @@ $do:
 - $let:
     helpers:
       read:
-        $fn: key
-        $body: {$vault.read: '\${key}'}
+        $param: key
+        $fn: {$vault.read: '\${key}'}
 - {$.helpers.read: db/password}
 `,
         { ops: { 'vault.read': (k) => `secret(${String(k)})` } },
@@ -210,8 +210,8 @@ $do:
 $do:
 - $let:
     selfapp:
-      $fn: g
-      $body: {$.g: 1}
+      $param: g
+      $fn: {$.g: 1}
 - $.selfapp: \${selfapp}
 `),
     ).rejects.toThrow(/self-application detected: .*\$do\[0\]\.\$let\.selfapp/);
@@ -225,8 +225,8 @@ $let:
     $in: \${throw}
     $handler:
       throw:
-        $fn: msg
-        $body: caught \${msg}
+        $param: msg
+        $fn: caught \${msg}
 $in:
   $.f: hi
 `),
@@ -241,7 +241,7 @@ describe('$do の文脈の導入と節の名前', () => {
         `
 $do:
 - $handler:
-    vault.read: {$fn: k, $body: stub}
+    vault.read: {$param: k, $fn: stub}
 - {$vault.read: db/password}
 `,
         { ops: { 'vault.read': () => 'host' } },
@@ -254,7 +254,7 @@ $do:
       run(`
 $do:
 - $handler:
-    std.each: {$fn: xs, $body: first}
+    std.each: {$param: xs, $fn: first}
 - {$std.each: [a, b]}
 `),
     ).resolves.toBe('first');
@@ -263,7 +263,7 @@ $do:
   it('文脈を導入する文があっても、残りの文の名前は数え落とされない', async () => {
     for (const form of [
       '$handler: {$std.state: {n: 0}}',
-      '$handler: {throw: {$fn: m, $body: x}}',
+      '$handler: {throw: {$param: m, $fn: x}}',
     ]) {
       const calls: Value[] = [];
       await expect(
@@ -284,7 +284,7 @@ $do:
   it('文脈の導入が足す名前（節の本体と $handler の式）も数える', async () => {
     for (const form of [
       '$handler: {$std.state: {n: {$vault.read: seed}}}',
-      '$handler: {throw: {$fn: m, $body: {$vault.read: seed}}}',
+      '$handler: {throw: {$param: m, $fn: {$vault.read: seed}}}',
     ]) {
       await expect(
         run(`
@@ -317,7 +317,7 @@ describe('走査の規模', () => {
     for (let i = 0; i < 20; i++) {
       body = {
         $do: [
-          { $let: { f: { $fn: 'x', $body: body } } },
+          { $let: { f: { $param: 'x', $fn: body } } },
           { $if: false, $then: { '$.f': 1 }, $else: { '$.f': 2 } },
         ],
       };
@@ -330,10 +330,10 @@ describe('走査の規模', () => {
     async () => {
       let body: unknown = 'leaf';
       for (let i = 0; i < 18; i++) {
-        const arg = (): unknown => ({ $fn: 'y', $body: 'leaf' });
+        const arg = (): unknown => ({ $param: 'y', $fn: 'leaf' });
         body = {
           $do: [
-            { $let: { f: { $fn: 'x', $body: body } } },
+            { $let: { f: { $param: 'x', $fn: body } } },
             { $if: false, $then: { '$.f': arg() }, $else: { '$.f': arg() } },
           ],
         };

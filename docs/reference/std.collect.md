@@ -24,7 +24,7 @@ $std.collect:
 - `std.collect` 自身は作用を起こさず、演算ではないのでハンドラで捕捉できない。作用は引数の式と `with` の関数本体の作用の合併である（関数呼び出しと同じ規則）。
 - 対象が有限である限り適用は有限回なので、`std.collect` は停止性を壊さない。
 - 関数を引数に取るので導出できないが、意味は値から値への規則で定まり、評価器が実装する。
-- `with` は処理系が一引数で呼ぶ位置である。引数 2 個以上の `$fn` を書くと閉包が結果の要素になり、多くの場合そのまま関数値の脱出のエラーへ至る（[$fn](fn.md)）。
+- `with` は処理系が一引数で呼ぶ位置である。引数 2 個以上の関数を書くと閉包が結果の要素になり、多くの場合そのまま関数値の脱出のエラーへ至る（[$fn](fn.md)）。
 
 ## 位置づけ
 
@@ -46,8 +46,8 @@ $std.collect:
 $std.collect:
   in: [1, 2, 3]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - ${x}
     - ${x}
 ```
@@ -62,8 +62,8 @@ $std.collect:
 $std.collect:
   in: [1, 2, 3, 4, 5]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
       $if: ${x % 2 == 0}
       $then:
       - ${x}
@@ -82,8 +82,8 @@ $std.collect:
   - {name: web, value: 80}
   - {name: db, value: 5432}
   with:
-    $fn: e
-    $body:
+    $param: e
+    $fn:
     - key: ${e.name}
       value: ${e.value}
   into: mapping

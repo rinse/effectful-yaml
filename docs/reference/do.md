@@ -64,7 +64,7 @@ hello, world
 ```yaml
 $do:
 - $handler:
-    std.fail: {$fn: _, $body: 0}
+    std.fail: {$fn: 0}
 - $std.lookup: {in: {}, key: missing}
 ```
 

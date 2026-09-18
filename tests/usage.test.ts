@@ -11,10 +11,10 @@ describe('docs/usage.md の例', () => {
       evaluateYaml(
         `
 server:
-  host: {$std.param: db_host}
-  port: {$std.param: db_port, $default: 5432}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port, $default: 5432}
 `,
-        { params: { db_host: 'example.com' } },
+        { input: { db_host: 'example.com' } },
       ),
     ).resolves.toEqual({ server: { host: 'example.com', port: 5432 } });
   });
@@ -98,7 +98,7 @@ describe('EvaluateOptions.functions', () => {
 
   it('関数は作用ではないので $handler の節で横取りできない', async () => {
     await expect(
-      evaluateYaml('{$handler: {svc.f: {$fn: x, $body: {$resume: intercepted}}}, $in: {$svc.f: 1}}', {
+      evaluateYaml('{$handler: {svc.f: {$param: x, $fn: {$resume: intercepted}}}, $in: {$svc.f: 1}}', {
         functions: { 'svc.f': () => 'from host' },
       }),
     ).rejects.toThrow("$handler clause 'svc.f' must name an operation, got: <function>");

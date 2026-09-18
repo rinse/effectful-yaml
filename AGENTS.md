@@ -14,7 +14,7 @@ effectful-yaml は、既存の YAML (JSON) パーサーの上で動くインタ�
 ## ドキュメント
 
 - [ドキュメント索引](docs/index.md)：`docs/` 配下の全ドキュメントへの入口。
-- [言語仕様（草案 0.13）](docs/grammar/index.md)：DSL の文法と評価モデルの規範。
+- [言語仕様（草案 0.14）](docs/grammar/index.md)：DSL の文法と評価モデルの規範。
 - [処理系の利用](docs/usage.md)：TypeScript から評価器を呼び出す API と評価オプション。
 - [CLI（eff-yaml）](docs/cli.md)：文書を評価するコマンド。`--ops` でホストの演算と関数を渡せる。
 - `docs/reference/`：予約キーと、`std` の演算・関数ごとのリファレンス。

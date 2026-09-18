@@ -35,7 +35,7 @@ describe('未定義参照の拒否', () => {
     await expect(run('{$if: true, $then: 1, $else: "\${nope}"}')).rejects.toThrow(
       'undefined reference: nope',
     );
-    await expect(run('{$std.param: p, $default: "\${nope}"}', { params: { p: 1 } })).rejects.toThrow(
+    await expect(run('{$std.input: p, $default: "\${nope}"}', { input: { p: 1 } })).rejects.toThrow(
       'undefined reference: nope',
     );
   });
@@ -83,8 +83,8 @@ $do:
 - {$std.log: before}
 - $let:
     x:
-      $fn: f
-      $body:
+      $param: f
+      $fn:
         $.f: \${f}
 - $.x: \${x}
 `,
@@ -100,8 +100,8 @@ $do:
 unfinite:
   $let:
     x:
-      $fn: f
-      $body:
+      $param: f
+      $fn:
         $.f: \${f}
   $in:
     $.x: \${x}
@@ -113,7 +113,7 @@ unfinite:
     await expect(
       run(`
 $do:
-- $let: {w: {$fn: g, $body: {$.g: '\${g}'}}}
+- $let: {w: {$param: g, $fn: {$.g: '\${g}'}}}
 - $let: {v: '\${w}'}
 - $.v: \${v}
 `),
@@ -126,8 +126,8 @@ $do:
 $do:
 - $let:
     a:
-      $fn: p
-      $body: {$.p.go: '\${p}'}
+      $param: p
+      $fn: {$.p.go: '\${p}'}
 - $.a: {go: '\${a}'}
 `),
     ).rejects.toThrow(SELF_APP);
@@ -138,9 +138,9 @@ $do:
       run(`
 $do:
 - $let:
-    a: {$fn: p, $body: {$.p.other: '\${p}'}}
+    a: {$param: p, $fn: {$.p.other: '\${p}'}}
 - $let:
-    b: {$fn: q, $body: {$.q.other: '\${q}'}}
+    b: {$param: q, $fn: {$.q.other: '\${q}'}}
 - $.a: {other: '\${b}'}
 `),
     ).rejects.toThrow(SELF_APP);
@@ -150,7 +150,7 @@ $do:
     await expect(
       run(`
 $do:
-- $let: {w: {$fn: g, $body: {$.g: '\${g}'}}}
+- $let: {w: {$param: g, $fn: {$.g: '\${g}'}}}
 - $let:
     x:
       $if: true
@@ -169,8 +169,8 @@ $do:
 $do:
 - $let:
     f:
-      $fn: g
-      $body:
+      $param: g
+      $fn:
         $if: true
         $then: 0
         $else: {$.g: '\${g}'}
@@ -185,11 +185,11 @@ $do:
       run(`
 $std.collect:
   in:
-  - $fn: c
-    $body: {$.c: '\${c}'}
+  - $param: c
+    $fn: {$.c: '\${c}'}
   with:
-    $fn: e
-    $body:
+    $param: e
+    $fn:
     - {$.e: '\${e}'}
 `),
     ).rejects.toThrow(SELF_APP);
@@ -201,12 +201,12 @@ $std.collect:
         `
 $handler:
   my.op:
-    $fn: f
-    $body: {$.f: '\${f}'}
+    $param: f
+    $fn: {$.f: '\${f}'}
 $in:
   $my.op:
-    $fn: w
-    $body: {$.w: '\${w}'}
+    $param: w
+    $fn: {$.w: '\${w}'}
 `,
         { ops: { 'my.op': () => null } },
       ),
@@ -219,12 +219,12 @@ $in:
       run(`
 $handler:
   run:
-    $fn: f
-    $body: {$.f: '\${f}'}
+    $param: f
+    $fn: {$.f: '\${f}'}
 $in:
   $.run:
-    $fn: w
-    $body: {$.w: '\${w}'}
+    $param: w
+    $fn: {$.w: '\${w}'}
 `),
     ).rejects.toThrow(SELF_APP);
   });
@@ -236,13 +236,13 @@ $in:
 $do:
 - $let:
     f:
-      $fn: h
-      $body:
+      $param: h
+      $fn:
         $let:
           r: {$.h: null}
         $in: {$.r: '\${h}'}
 - $let:
-    g: {$fn: _, $body: '\${f}'}
+    g: {$fn: '\${f}'}
 - $.f: \${g}
 `),
     ).rejects.toThrow(SELF_APP);
@@ -255,8 +255,8 @@ $do:
 $do:
 - $let:
     f:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
         $let: {h: {$std.get: c}}
         $in: {$.h: 0}
 - $std.set: {c: '\${f}'}
@@ -272,10 +272,10 @@ $do:
       run(`
 $let:
   reuse:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: 0}
+        std.fail: {$fn: 0}
       $in: {$.run: null}
 $in:
   $handler: "\${reuse}"
@@ -295,15 +295,15 @@ describe('公認イディオムの受理', () => {
 $do:
 - $let:
     chosen:
-      $if: {$std.param: fancy}
+      $if: {$std.input: fancy}
       $then:
-        $fn: x
-        $body: {$std.each: [1, 2]}
+        $param: x
+        $fn: {$std.each: [1, 2]}
       $else: 0
 - $handler: "\${std.list}"
   $in: {$.chosen: 0}
 `,
-        { params: { fancy: true } },
+        { input: { fancy: true } },
       ),
     ).resolves.toEqual([1, 2]);
   });
@@ -315,8 +315,8 @@ $handler: "\${std.list}"
 $in:
   $do:
   - $let:
-      f: {$fn: x, $body: '\${x + 1}'}
-      g: {$fn: x, $body: '\${x * 2}'}
+      f: {$param: x, $fn: '\${x + 1}'}
+      g: {$param: x, $fn: '\${x * 2}'}
   - $let:
       h: {$std.each: ['\${f}', '\${g}']}
   - $.h: 10
@@ -331,8 +331,8 @@ $do:
 - $let:
     codes: {ja: 81, us: 1}
     look:
-      $fn: [m, k]
-      $body:
+      $param: [m, k]
+      $fn:
         $std.lookup:
           in: \${m}
           key: \${k}
@@ -353,16 +353,15 @@ $do:
     run:
       $handler:
         get:
-          $fn: _
-          $body:
-            $fn: s
-            $body:
+          $fn:
+            $param: s
+            $fn:
               $let:
                 k: {$resume: '\${s}'}
               $in: {$.k: '\${s}'}
         return:
-          $fn: v
-          $body: {$fn: s, $body: '\${v}'}
+          $param: v
+          $fn: {$param: s, $fn: '\${v}'}
       $in:
         $do:
         - $let: {a: {$.get: null}}
@@ -373,7 +372,7 @@ $do:
   });
 
   it('処理系の関数（std.list・std.state・std.collect）の入れ子は循環に数えない', async () => {
-    // ハンドラを立てる std の関数は $fn ではないので、重ねても自己適用の制限を受けない。
+    // ハンドラを立てる std の関数は $param ではないので、重ねても自己適用の制限を受けない。
     await expect(
       run(`
 $handler: "\${std.list}"
@@ -389,7 +388,7 @@ $in:
         $in:
           $std.collect:
             in: '\${pairs}'
-            with: {$fn: x, $body: ['\${x}']}
+            with: {$param: x, $fn: ['\${x}']}
   - {pairs: '\${pairs}', total: '\${total}'}
 `),
     ).resolves.toEqual([{ pairs: [1, 2], total: [1, 2] }]);
@@ -414,7 +413,7 @@ describe('ホストの実装への閉包', () => {
       run(
         `
 $do:
-- $let: {f: {$fn: x, $body: '\${x}'}}
+- $let: {f: {$param: x, $fn: '\${x}'}}
 - $my.op: \${f}
 `,
         {
@@ -436,7 +435,7 @@ $do:
       run(
         `
 $do:
-- $let: {f: {$fn: x, $body: '\${x}'}}
+- $let: {f: {$param: x, $fn: '\${x}'}}
 - $svc.f: \${f}
 `,
         {
@@ -463,11 +462,11 @@ $do:
       run(
         `
 $do:
-- $let: {f: {$fn: x, $body: '\${x + 1}'}}
+- $let: {f: {$param: x, $fn: '\${x + 1}'}}
 - $handler:
     my.op:
-      $fn: g
-      $body: {$.g: 41}
+      $param: g
+      $fn: {$.g: 41}
   $in:
     $my.op: \${f}
 `,
@@ -485,7 +484,7 @@ describe('検査の計算量', () => {
       for (let i = 0; i < 20; i++) {
         body = {
           $do: [
-            { $let: { f: { $fn: 'x', $body: body } } },
+            { $let: { f: { $param: 'x', $fn: body } } },
             { $if: false, $then: { '$.f': 1 }, $else: { '$.f': 2 } },
           ],
         };
@@ -502,7 +501,7 @@ describe('検査の計算量', () => {
       const wide: Record<string, unknown> = {};
       for (let i = 0; i < 1000; i++) wide[`k${i}`] = i;
       const stmts: unknown[] = [
-        { $let: { m: wide, pick: { $fn: 'x', $body: '${x.k0}' } } },
+        { $let: { m: wide, pick: { $param: 'x', $fn: '${x.k0}' } } },
       ];
       for (let i = 0; i < 1000; i++) stmts.push({ '$.pick': '${m}' });
       await expect(evaluate({ $do: stmts })).resolves.toBe(0);

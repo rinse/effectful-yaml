@@ -5,7 +5,7 @@
 ```yaml
 $let:
   registry: ghcr.io/acme
-  env: {$std.param: env, $default: dev}
+  env: {$std.input: env, $default: dev}
 name: api
 image: ${registry}/api:${env}
 replicas:
@@ -14,7 +14,7 @@ replicas:
   $else: 1
 ```
 
-パラメータを渡さずに評価すると次になる。
+入力を渡さずに評価すると次になる。
 
 ```yaml
 name: api
@@ -25,14 +25,14 @@ replicas: 1
 素の YAML の設定に、文脈を導入する `$let` を足した形であり、データのキーは動かない。
 導入された束縛は、残りから参照できる。
 
-## パラメータと条件分岐
+## 入力と条件分岐
 
 ```yaml
 server:
-  host: {$std.param: db_host}
-  port: {$std.param: db_port, $default: 5432}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port, $default: 5432}
   tls:
-    $if: {$std.param: use_tls}
+    $if: {$std.input: use_tls}
     $then:
       cert: /etc/ssl/cert.pem
     $else: null
@@ -47,7 +47,7 @@ server:
   tls: null
 ```
 
-三つの境界は互いに独立であり、パラメータは読み出し専用なので、評価順序は結果に影響しない。
+三つの境界は互いに独立であり、入力は読み出し専用なので、評価順序は結果に影響しない。
 
 ## 選択の基本形
 
@@ -197,14 +197,14 @@ code:
 log_level:
   $handler: ${std.first}
   $for:
-    v: [{$std.param: log_level, $default: null}, {$std.param: fallback_log_level, $default: null}, info]
+    v: [{$std.input: log_level, $default: null}, {$std.input: fallback_log_level, $default: null}, info]
   $do:
   - $std.where: ${v != null}
   - ${v}
 ```
 
 `std.first` が選択を処理するので、値はリストではなく、条件を満たした最初の分岐のものになる。
-パラメータが一つも渡されていなければ `info` になる。
+入力が一つも渡されていなければ `info` になる。
 
 ## 回数つきの unfold
 
@@ -214,8 +214,7 @@ $in:
   $std.collect:
     in: {$std.range: 5}
     with:
-      $fn: _
-      $body:
+      $fn:
         $do:
         - $let:
             v: {$std.get: acc}
@@ -241,8 +240,8 @@ $handler: ${std.list}
 $let:
   codes: {ja: 81, us: 1}
   look:
-    $fn: [m, k]
-    $body:
+    $param: [m, k]
+    $fn:
       $std.lookup:
         in: ${m}
         key: ${k}
@@ -269,13 +268,13 @@ $in:
 port:
   $handler:
     std.fail:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         $do:
         - $std.log: ${msg}
         - 5432
   $let:
-    p: {$std.param: port, $default: 0}
+    p: {$std.input: port, $default: 0}
   $if: ${p <= 0 || p > 65535}
   $then:
     $std.fail: invalid port ${p}
@@ -289,9 +288,9 @@ port:
 ```yaml
 database:
   $handler:
-    std.fail: {$fn: _, $body: {$resume: null}}
-  host: {$std.param: db_host}
-  port: {$std.param: db_port}
+    std.fail: {$fn: {$resume: null}}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port}
 ```
 
 `db_host: db` を渡して評価すると次になる。
@@ -302,17 +301,17 @@ database:
   port: null
 ```
 
-マッピングの中の未渡しのパラメータがそれぞれ null になる。
+マッピングの中の未渡しの入力がそれぞれ null になる。
 
 ## 引数で調整するハンドラ
 
 ```yaml
 $let:
   orElse:
-    $fn: [d, run]
-    $body:
+    $param: [d, run]
+    $fn:
       $handler:
-        std.fail: {$fn: _, $body: "${d}"}
+        std.fail: {$fn: "${d}"}
       $in: {$.run: null}
 $in:
   a:
@@ -362,18 +361,16 @@ $else:
 ```yaml
 $let:
   run:
-    $fn: sig
-    $body:
+    $param: sig
+    $fn:
       $handler:
         .sig:
-          $fn: _
-          $body: handled
+          $fn: handled
       $in: {$.sig: null}
   outer:
     $handler:
       signal:
-        $fn: _
-        $body: unreachable
+        $fn: unreachable
     $in: ${signal}
 $in:
   $.run: ${outer}

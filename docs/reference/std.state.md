@@ -36,23 +36,23 @@ $in: 本体の式
 ```yaml
 $let:
   state:
-    $fn: [init, run]
-    $body:
+    $param: [init, run]
+    $fn:
       $let:
         step:
           $handler:
             std.get:
-              $fn: name
-              $body:
-                $fn: s
-                $body:
+              $param: name
+              $fn:
+                $param: s
+                $fn:
                   $let:
                     hits:
                       $std.collect:
                         in: ${s}
                         with:
-                          $fn: e
-                          $body:
+                          $param: e
+                          $fn:
                             $if: ${e.key == name}
                             $then:
                             - ${e.value}
@@ -62,10 +62,10 @@ $let:
                   $in:
                     $.k: ${s}
             std.set:
-              $fn: m
-              $body:
-                $fn: s
-                $body:
+              $param: m
+              $fn:
+                $param: s
+                $fn:
                   $let:
                     s2:
                       $std.collect:
@@ -73,23 +73,23 @@ $let:
                         - ${m}
                         - ${s}
                         with:
-                          $fn: part
-                          $body:
+                          $param: part
+                          $fn:
                             $std.collect:
                               in: ${part}
                               with:
-                                $fn: e
-                                $body:
+                                $param: e
+                                $fn:
                                 - ${e}
                     k:
                       $resume: null
                   $in:
                     $.k: ${s2}
             return:
-              $fn: x
-              $body:
-                $fn: s
-                $body: ${x}
+              $param: x
+              $fn:
+                $param: s
+                $fn: ${x}
           $in: {$.run: null}
       $in:
         $.step: ${init}

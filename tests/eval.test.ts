@@ -54,11 +54,11 @@ $do:
       run(
         `
 tls:
-  $if: {$std.param: use_tls}
+  $if: {$std.input: use_tls}
   $then: {cert: /etc/ssl/cert.pem}
   $else: null
 `,
-        { params: { use_tls: false } },
+        { input: { use_tls: false } },
       ),
     ).resolves.toEqual({ tls: null });
   });
@@ -188,8 +188,8 @@ $in:
       run(`
 $handler:
   std.each:
-    $fn: xs
-    $body: caught
+    $param: xs
+    $fn: caught
 $in:
   $do:
   - $std.where: false
@@ -204,8 +204,7 @@ $in:
       run(`
 $handler:
   std.where:
-    $fn: _
-    $body: caught
+    $fn: caught
 $in:
   $do:
   - $std.where: false
@@ -215,21 +214,21 @@ $in:
   });
 });
 
-describe('$std.param / $default', () => {
+describe('$std.input / $default', () => {
   it('渡されたパラメータを読み、無ければ $default を使う', async () => {
     await expect(
       run(
         `
-host: {$std.param: db_host}
-port: {$std.param: db_port, $default: 5432}
+host: {$std.input: db_host}
+port: {$std.input: db_port, $default: 5432}
 `,
-        { params: { db_host: 'example.com' } },
+        { input: { db_host: 'example.com' } },
       ),
     ).resolves.toEqual({ host: 'example.com', port: 5432 });
   });
 
   it('$default が無く渡されてもいなければ std.fail が境界まで伝播する', async () => {
-    await expect(run('{$std.param: nope}')).rejects.toThrow('failure: parameter not provided: nope');
+    await expect(run('{$std.input: nope}')).rejects.toThrow('failure: input not provided: nope');
   });
 
   it('未渡しの std.fail は呼び出し位置で起きるので、その場で捕捉できる', async () => {
@@ -239,29 +238,28 @@ port: {$std.param: db_port, $default: 5432}
       run(`
 $handler:
   std.fail:
-    $fn: msg
-    $body: caught \${msg}
-$in: {$std.param: nope}
+    $param: msg
+    $fn: caught \${msg}
+$in: {$std.input: nope}
 `),
-    ).resolves.toBe('caught parameter not provided: nope');
-    await expect(run('{$std.param: nope, $default: null}')).resolves.toBe(null);
+    ).resolves.toBe('caught input not provided: nope');
+    await expect(run('{$std.input: nope, $default: null}')).resolves.toBe(null);
   });
 
-  it('{$std.param: 名前, $default: 式} は std.fail 節への展開と等価である', async () => {
-    // 展開: {$std.param: 名前} を $handler で包み、std.fail の節で $default の式を返す。
+  it('{$std.input: 名前, $default: 式} は std.fail 節への展開と等価である', async () => {
+    // 展開: {$std.input: 名前} を $handler で包み、std.fail の節で $default の式を返す。
     const expanded = `
 $handler:
   std.fail:
-    $fn: _
-    $body: 5432
-$in: {$std.param: port}
+    $fn: 5432
+$in: {$std.input: port}
 `;
-    const paramSets: Record<string, Value>[] = [{}, { port: 8080 }];
-    for (const params of paramSets) {
-      const sugar = await run('{$std.param: port, $default: 5432}', { params });
-      await expect(run(expanded, { params })).resolves.toEqual(sugar);
+    const inputSets: Record<string, Value>[] = [{}, { port: 8080 }];
+    for (const input of inputSets) {
+      const sugar = await run('{$std.input: port, $default: 5432}', { input });
+      await expect(run(expanded, { input })).resolves.toEqual(sugar);
     }
-    await expect(run('{$std.param: port, $default: 5432}')).resolves.toBe(5432);
+    await expect(run('{$std.input: port, $default: 5432}')).resolves.toBe(5432);
   });
 
   it('$default は遅延位置：パラメータが渡されていれば中の作用は起きない', async () => {
@@ -270,13 +268,13 @@ $in: {$std.param: port}
       run(
         `
 port:
-  $std.param: port
+  $std.input: port
   $default:
     $do:
     - $std.log: defaulted
     - $std.fail: port is required
 `,
-        { params: { port: 8080 }, onLog: (v) => logs.push(v) },
+        { input: { port: 8080 }, onLog: (v) => logs.push(v) },
       ),
     ).resolves.toEqual({ port: 8080 });
     expect(logs).toEqual([]);
@@ -285,13 +283,13 @@ port:
   it('$default は評価されないので、その中の選択も起きない', async () => {
     // 渡されていれば $default は評価されず、選択が境界に達することもない。
     await expect(
-      run('{$std.param: x, $default: {$std.each: [1, 2]}}', { params: { x: 5 } }),
+      run('{$std.input: x, $default: {$std.each: [1, 2]}}', { input: { x: 5 } }),
     ).resolves.toBe(5);
-    await expect(run('{$std.param: x, $default: {$std.each: [1, 2]}}')).rejects.toThrow(
+    await expect(run('{$std.input: x, $default: {$std.each: [1, 2]}}')).rejects.toThrow(
       /unhandled choice/,
     );
     await expect(
-      run('{$handler: "${std.list}", $in: {$std.param: x, $default: {$std.each: [1, 2]}}}'),
+      run('{$handler: "${std.list}", $in: {$std.input: x, $default: {$std.each: [1, 2]}}}'),
     ).resolves.toEqual([1, 2]);
   });
 
@@ -300,15 +298,15 @@ port:
       run(
         `
 server:
-  host: {$std.param: db_host}
-  port: {$std.param: db_port, $default: 5432}
+  host: {$std.input: db_host}
+  port: {$std.input: db_port, $default: 5432}
   tls:
-    $if: {$std.param: use_tls}
+    $if: {$std.input: use_tls}
     $then:
       cert: /etc/ssl/cert.pem
     $else: null
 `,
-        { params: { db_host: 'example.com', use_tls: false } },
+        { input: { db_host: 'example.com', use_tls: false } },
       ),
     ).resolves.toEqual({
       server: { host: 'example.com', port: 5432, tls: null },
@@ -528,7 +526,7 @@ sizes:
     await expect(run('{$handler: "${std.list}", $in: 42}')).resolves.toEqual([42]);
   });
 
-  it('直接の呼び出し {$std.list: {$fn: _, $body: 本体}} は $handler: ${std.list} と同じ値になる', async () => {
+  it('直接の呼び出し {$std.list: {$fn: 本体}} は $handler: ${std.list} と同じ値になる', async () => {
     // std.list は本体の閉包を受け取る関数であり、$handler はその引数に本体の閉包を渡す。
     // 二つの書き方は同じ適用に帰着する。
     const inner = `
@@ -542,8 +540,7 @@ $handler: \${std.list}
 $in:${inner}`);
     const viaCall = await run(`
 $std.list:
-  $fn: _
-  $body:${inner}`);
+  $fn:${inner}`);
     expect(viaCall).toEqual(viaHandler);
     expect(viaCall).toEqual([10, 20, 30]);
   });
@@ -570,7 +567,7 @@ log_level:
   $in:
     $do:
     - $let:
-        v: {$std.each: [{$std.param: log_level, $default: null}, info]}
+        v: {$std.each: [{$std.input: log_level, $default: null}, info]}
     - $std.where: \${v != null}
     - \${v}
 `),
@@ -586,11 +583,11 @@ log_level:
   $in:
     $do:
     - $let:
-        v: {$std.each: [{$std.param: log_level, $default: null}, info]}
+        v: {$std.each: [{$std.input: log_level, $default: null}, info]}
     - $std.where: \${v != null}
     - \${v}
 `,
-        { params: { log_level: 'debug' } },
+        { input: { log_level: 'debug' } },
       ),
     ).resolves.toEqual({ log_level: 'debug' });
   });
@@ -633,29 +630,29 @@ $in:
   });
 });
 
-describe('$fn', () => {
-  it('$fn を $. で呼ぶ', async () => {
+describe('$param', () => {
+  it('$param を $. で呼ぶ', async () => {
     await expect(
       run(`
 $do:
 - $let:
     double:
-      $fn: x
-      $body: \${x * 2}
+      $param: x
+      $fn: \${x * 2}
 - {$.double: 21}
 `),
     ).resolves.toBe(42);
   });
 
-  it('引数を素通しする $fn で登録演算に短い名前を付ける', async () => {
+  it('引数を素通しする $param で登録演算に短い名前を付ける', async () => {
     await expect(
       run(
         `
 $do:
 - $let:
     read:
-      $fn: key
-      $body: {$vault.secrets.read: '\${key}'}
+      $param: key
+      $fn: {$vault.secrets.read: '\${key}'}
 - {$.read: db/password}
 `,
         { ops: { 'vault.secrets.read': (k) => `secret(${String(k)})` } },
@@ -669,11 +666,11 @@ $do:
 $do:
 - $let:
     double:
-      $fn: x
-      $body: \${x * 2}
+      $param: x
+      $fn: \${x * 2}
     succ:
-      $fn: x
-      $body: \${x + 1}
+      $param: x
+      $fn: \${x + 1}
 - $.succ:
     $.double: 20
 `),
@@ -688,8 +685,8 @@ $in:
   $do:
   - $let:
       double:
-        $fn: x
-        $body: \${x * 2}
+        $param: x
+        $fn: \${x * 2}
   - $.double: {$std.each: [1, 2]}
 `),
     ).resolves.toEqual([2, 4]);
@@ -698,22 +695,22 @@ $in:
   it('閉包は文書の値に残れない', async () => {
     await expect(
       run(`
-$fn: x
-$body: \${x}
+$param: x
+$fn: \${x}
 `),
     ).rejects.toThrow(EffectfulYamlError);
   });
 });
 
-describe('$fn の列と部分適用', () => {
+describe('$param の列と部分適用', () => {
   it('全引数を順に与えれば本体が走る', async () => {
     await expect(
       run(`
 $do:
 - $let:
     conc:
-      $fn: [a, b, c]
-      $body: \${a}\${b}\${c}
+      $param: [a, b, c]
+      $fn: \${a}\${b}\${c}
     ab: {$.conc: a}
     abc: {$.ab: b}
 - {$.abc: c}
@@ -727,8 +724,8 @@ $do:
 $do:
 - $let:
     scaled:
-      $fn: [k, x]
-      $body:
+      $param: [k, x]
+      $fn:
       - \${k * x}
     tripled: {$.scaled: 3}
 - $std.collect:
@@ -744,23 +741,34 @@ $do:
 $do:
 - $let:
     double:
-      $fn: [x]
-      $body: \${x * 2}
+      $param: [x]
+      $fn: \${x * 2}
 - {$.double: 21}
 `),
     ).resolves.toBe(42);
   });
 
+  it('$param は主キーになれない（$fn のない $param 単独は補助キーの孤立）', async () => {
+    await expect(run('{$param: x}')).rejects.toThrow(
+      'auxiliary $ key without a main key: $param',
+    );
+  });
+
+  it('$param を省いた $fn は 0 引数の関数になり、引数を捨てる', async () => {
+    await expect(run('{$let: {run: {$fn: 7}}, $in: {$.run: null}}')).resolves.toBe(7);
+    await expect(run('{$let: {run: {$fn: 7}}, $in: {$.run: ignored}}')).resolves.toBe(7);
+  });
+
   it('空の列は構文の誤り', async () => {
-    await expect(run('{$fn: [], $body: 1}')).rejects.toThrow(/\$fn parameter/);
+    await expect(run('{$param: [], $fn: 1}')).rejects.toThrow(/\$param must be a name/);
   });
 
   it('名前の重複は構文の誤り', async () => {
-    await expect(run('{$fn: [a, a], $body: 1}')).rejects.toThrow(/duplicate \$fn parameter/);
+    await expect(run('{$param: [a, a], $fn: 1}')).rejects.toThrow(/duplicate \$param name/);
   });
 
   it('文字列でない要素は構文の誤り', async () => {
-    await expect(run('{$fn: [a, 1], $body: 2}')).rejects.toThrow(/\$fn parameter/);
+    await expect(run('{$param: [a, 1], $fn: 2}')).rejects.toThrow(/\$param must be a name/);
   });
 
   it('実行されない分岐の構文の誤りも検査される（出現主義）', async () => {
@@ -768,9 +776,9 @@ $do:
       run(`
 $if: true
 $then: safe
-$else: {$fn: [], $body: 1}
+$else: {$param: [], $fn: 1}
 `),
-    ).rejects.toThrow(/\$fn parameter/);
+    ).rejects.toThrow(/\$param must be a name/);
   });
 
   it('引数が足りないまま文書の値に残れば脱出のエラー', async () => {
@@ -779,8 +787,8 @@ $else: {$fn: [], $body: 1}
 $do:
 - $let:
     add:
-      $fn: [a, b]
-      $body: \${a + b}
+      $param: [a, b]
+      $fn: \${a + b}
 - {$.add: 1}
 `),
     ).rejects.toThrow(/cannot escape/);
@@ -791,8 +799,8 @@ $do:
       run(`
 $handler:
   std.fail:
-    $fn: [msg, extra]
-    $body: \${msg}
+    $param: [msg, extra]
+    $fn: \${msg}
 $in: {$std.fail: boom}
 `),
     ).rejects.toThrow(/cannot escape/);
@@ -807,8 +815,8 @@ $do:
 - $let:
     helpers:
       double:
-        $fn: x
-        $body: \${x * 2}
+        $param: x
+        $fn: \${x * 2}
 - {$.helpers.double: 21}
 `),
     ).resolves.toBe(42);
@@ -822,8 +830,8 @@ $do:
     a:
       b:
         c:
-          $fn: x
-          $body: \${x + 1}
+          $param: x
+          $fn: \${x + 1}
 - {$.a.b.c: 41}
 `),
     ).resolves.toBe(42);
@@ -883,15 +891,15 @@ describe('$handler / $in / $resume', () => {
 port:
   $handler:
     std.fail:
-      $fn: msg
-      $body:
+      $param: msg
+      $fn:
         $do:
         - $std.log: \${msg}
         - 5432
   $in:
     $do:
     - $let:
-        p: {$std.param: port, $default: 0}
+        p: {$std.input: port, $default: 0}
     - $if: \${p <= 0}
       $then:
         $std.fail: invalid port \${p}
@@ -910,8 +918,8 @@ port:
         `
 $handler:
   std.log:
-    $fn: msg
-    $body:
+    $param: msg
+    $fn:
       $do:
       - $std.log: 'app: \${msg}'
       - {$resume: null}
@@ -931,8 +939,8 @@ $in:
       run(`
 $handler:
   std.each:
-    $fn: xs
-    $body:
+    $param: xs
+    $fn:
       $handler: \${std.list}
       $in:
         $do:
@@ -945,8 +953,8 @@ $handler:
               $std.each: \${part}
         - \${r}
   return:
-    $fn: v
-    $body:
+    $param: v
+    $fn:
     - \${v}
 $in:
   $do:
@@ -981,8 +989,8 @@ $in:
       run(`
 $handler:
   return:
-    $fn: v
-    $body: {$resume: "\${v}"}
+    $param: v
+    $fn: {$resume: "\${v}"}
 $in: 1
 `),
     ).rejects.toThrow(msg);
@@ -990,20 +998,20 @@ $in: 1
     await expect(
       run(`
 $handler:
-  std.fail: {$fn: _, $body: caught}
+  std.fail: {$fn: caught}
 $in: {$resume: 1}
 `),
     ).rejects.toThrow(msg);
-    // ハンドラの外にある $fn の本体（節から呼ばれても、書いた位置が節の外なら拒まれる）
+    // ハンドラの外にある $param の本体（節から呼ばれても、書いた位置が節の外なら拒まれる）
     await expect(
       run(`
 $do:
 - $let:
     k:
-      $fn: v
-      $body: {$resume: "\${v}"}
+      $param: v
+      $fn: {$resume: "\${v}"}
 - $handler:
-    std.fail: {$fn: _, $body: {$.k: 1}}
+    std.fail: {$fn: {$.k: 1}}
 - {$std.fail: boom}
 `),
     ).rejects.toThrow(msg);
@@ -1016,11 +1024,11 @@ describe('境界に達した選択', () => {
       run(
         `
 result:
-  $if: {$std.param: cond}
+  $if: {$std.input: cond}
   $then: {$std.each: [a, b]}
   $else: 42
 `,
-        { params: { cond: false } },
+        { input: { cond: false } },
       ),
     ).resolves.toEqual({ result: 42 });
   });
@@ -1032,11 +1040,11 @@ result:
         `
 $do:
 - result:
-    $if: {$std.param: cond}
+    $if: {$std.input: cond}
     $then: {$std.each: [a, b]}
     $else: 42
 `,
-        { params: { cond: false } },
+        { input: { cond: false } },
       ),
     ).resolves.toEqual({ result: 42 });
   });
@@ -1044,22 +1052,22 @@ $do:
   it('選ばれた側が選択なら、ハンドラが無い限り境界でエラーになる', async () => {
     const doc = `
 result:
-  $if: {$std.param: cond}
+  $if: {$std.input: cond}
   $then: {$std.each: [a, b]}
   $else: 42
 `;
-    await expect(run(doc, { params: { cond: true } })).rejects.toThrow(/unhandled choice/);
+    await expect(run(doc, { input: { cond: true } })).rejects.toThrow(/unhandled choice/);
     await expect(
       run(
         `
 result:
   $handler: \${std.list}
   $in:
-    $if: {$std.param: cond}
+    $if: {$std.input: cond}
     $then: {$std.each: [a, b]}
     $else: 42
 `,
-        { params: { cond: true } },
+        { input: { cond: true } },
       ),
     ).resolves.toEqual({ result: ['a', 'b'] });
   });
@@ -1072,8 +1080,8 @@ $in:
   $do:
   - $let:
       pick:
-        $fn: xs
-        $body:
+        $param: xs
+        $fn:
           $std.each: \${xs}
   - {$.pick: [1, 2, 3]}
 `),
@@ -1103,8 +1111,8 @@ $in:
         `
 $handler:
   vault.read:
-    $fn: key
-    $body: handled-\${key}
+    $param: key
+    $fn: handled-\${key}
 $in: {$vault.read: db/password}
 `,
         {
@@ -1128,8 +1136,8 @@ describe('fold（std.state + std.list による畳み込み）', () => {
 $do:
 - $let:
     fold:
-      $fn: arg
-      $body:
+      $param: arg
+      $fn:
         $handler:
           $std.state:
             acc: \${arg.init}
@@ -1153,19 +1161,19 @@ $do:
     init: 0
     list: [1, 2, 3]
     step:
-      $fn: s
-      $body: \${s.acc + s.x}
+      $param: s
+      $fn: \${s.acc + s.x}
 `),
     ).resolves.toBe(6);
   });
 });
 
 describe('作用の推論の計算量', () => {
-  it('$let + $fn の深い入れ子でも走査は線形で終わる', async () => {
-    // $fn の本体は呼び出し側だけが走査する。定義ごとに走査すると 2^深さ に爆発する。
+  it('$let + $param の深い入れ子でも走査は線形で終わる', async () => {
+    // $param の本体は呼び出し側だけが走査する。定義ごとに走査すると 2^深さ に爆発する。
     let body: unknown = '${x}';
     for (let i = 0; i < 32; i++) {
-      body = { $do: [{ $let: { f: { $fn: 'x', $body: body } } }, { '$.f': i }] };
+      body = { $do: [{ $let: { f: { $param: 'x', $fn: body } } }, { '$.f': i }] };
     }
     await expect(evaluate(body)).resolves.toBe(0);
   });
@@ -1178,8 +1186,8 @@ describe('std の関数 std.collect', () => {
 $std.collect:
   in: [1, 2, 3]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - \${x}
     - \${x}
 `),
@@ -1192,8 +1200,8 @@ $std.collect:
 $std.collect:
   in: [1, 2, 3, 4]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
       $if: \${x % 2 == 0}
       $then:
       - \${x * 10}
@@ -1208,8 +1216,8 @@ $std.collect:
 $std.collect:
   in: {web: 80, db: 5432}
   with:
-    $fn: e
-    $body:
+    $param: e
+    $fn:
     - \${e.key}=\${e.value}
 `),
     ).resolves.toEqual(['web=80', 'db=5432']);
@@ -1220,8 +1228,8 @@ $std.collect:
 $std.collect:
   in: {web: 80, db: 5432}
   with:
-    $fn: e
-    $body:
+    $param: e
+    $fn:
     - key: svc-\${e.key}
       value: \${e.value}
   into: mapping
@@ -1231,14 +1239,14 @@ $std.collect:
   });
 
   it('空の対象の値は、list なら空リスト、mapping なら空マッピング', async () => {
-    await expect(run('{$std.collect: {in: [], with: {$fn: x, $body: []}}}')).resolves.toEqual([]);
+    await expect(run('{$std.collect: {in: [], with: {$param: x, $fn: []}}}')).resolves.toEqual([]);
     await expect(
-      run('{$std.collect: {in: {}, with: {$fn: x, $body: []}, into: mapping}}'),
+      run('{$std.collect: {in: {}, with: {$param: x, $fn: []}, into: mapping}}'),
     ).resolves.toEqual({});
   });
 
   it("契約違反はエラー：'with' の結果がリストでない", async () => {
-    await expect(run('{$std.collect: {in: [1], with: {$fn: x, $body: 5}}}')).rejects.toThrow(
+    await expect(run('{$std.collect: {in: [1], with: {$param: x, $fn: 5}}}')).rejects.toThrow(
       /\$std\.collect requires the 'with' function to return a list/,
     );
   });
@@ -1249,8 +1257,8 @@ $std.collect:
 $std.collect:
   in: [1]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - {k: 1}
   into: mapping
 `),
@@ -1260,8 +1268,8 @@ $std.collect:
 $std.collect:
   in: [1]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - {key: 1, value: 2}
   into: mapping
 `),
@@ -1274,8 +1282,8 @@ $std.collect:
 $std.collect:
   in: [1, 2]
   with:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - key: same
       value: \${x}
   into: mapping
@@ -1284,14 +1292,14 @@ $std.collect:
   });
 
   it('対象がリストでもマッピングでもなければエラー', async () => {
-    await expect(run('{$std.collect: {in: 3, with: {$fn: x, $body: []}}}')).rejects.toThrow(
+    await expect(run('{$std.collect: {in: 3, with: {$param: x, $fn: []}}}')).rejects.toThrow(
       /\$std\.collect 'in' requires a list or mapping/,
     );
   });
 
   it("'into' は list か mapping のどちらかでなければならない", async () => {
     await expect(
-      run('{$std.collect: {in: [], with: {$fn: x, $body: []}, into: set}}'),
+      run('{$std.collect: {in: [], with: {$param: x, $fn: []}, into: set}}'),
     ).rejects.toThrow(/\$std\.collect 'into' must be 'list' or 'mapping'/);
   });
 
@@ -1314,14 +1322,14 @@ $std.collect:
       run(`
 $handler:
   std.collect:
-    $fn: xs
-    $body: intercepted
+    $param: xs
+    $fn: intercepted
 $in:
   $std.collect:
     in: [1, 2]
     with:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
       - \${x}
 `),
     ).rejects.toThrow("$handler clause 'std.collect' must name an operation, got: <function>");
@@ -1336,8 +1344,8 @@ $in:
   $std.collect:
     in: [1, 2]
     with:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
       - {$std.each: [a, b]}
 `),
     ).resolves.toEqual([
@@ -1356,8 +1364,8 @@ $do:
 - $std.collect:
     in: [a, b, c]
     with:
-      $fn: x
-      $body:
+      $param: x
+      $fn:
         $do:
         - $let:
             i: {$std.get: n}
@@ -1394,8 +1402,8 @@ describe('std.range', () => {
       run(`
 $handler:
   std.range:
-    $fn: n
-    $body:
+    $param: n
+    $fn:
       $resume: [x, y]
 $in: {$std.range: 3}
 `),
@@ -1409,8 +1417,8 @@ $in: {$std.range: 3}
         `
 $handler:
   str.upper:
-    $fn: s
-    $body: shouted-\${s}
+    $param: s
+    $fn: shouted-\${s}
 $in: {$str.upper: abc}
 `,
         { ops: { 'str.upper': (s) => String(s).toUpperCase() } },
@@ -1470,8 +1478,8 @@ $in:
       run(`
 $handler:
   std.fail:
-    $fn: msg
-    $body: 'recovered: \${msg}'
+    $param: msg
+    $fn: 'recovered: \${msg}'
 $in:
   $do:
   - $let: {r: {}}
@@ -1520,8 +1528,7 @@ $default: null
     const expanded = await run(`
 $handler:
   std.fail:
-    $fn: _
-    $body: null
+    $fn: null
 $in:
   $do:
   - $let: {r: {}}
@@ -1549,8 +1556,7 @@ $handler: \${std.list}
 $in:
   $handler:
     std.fail:
-      $fn: _
-      $body: {$std.where: false}
+      $fn: {$std.where: false}
   $in:
     $do:
     - $let:
@@ -1679,7 +1685,7 @@ $do:
   });
 
   it('未渡しパラメータの失敗も捕捉できる', async () => {
-    await expect(run('{$std.param: nope, $default: 5}')).resolves.toBe(5);
+    await expect(run('{$std.input: nope, $default: 5}')).resolves.toBe(5);
   });
 
   it('どの主キーにも添えられる（0.12 で $default を取らなかった主キーにも）', async () => {
@@ -1695,7 +1701,7 @@ $do:
     await expect(run('{a: 1, $default: 2}')).rejects.toThrow(/\$ key mixed with plain keys: a/);
   });
 
-  it('本体が成功すれば $default は評価されず、その中の選択も起きない（$std.param の $default と同じ）', async () => {
+  it('本体が成功すれば $default は評価されず、その中の選択も起きない（$std.input の $default と同じ）', async () => {
     await expect(run('{$do: [ok], $default: {$std.each: [1, 2]}}')).resolves.toBe('ok');
   });
 
@@ -1901,8 +1907,7 @@ $in:
       run(`
 $handler:
   std.merge:
-    $fn: _
-    $body: caught
+    $fn: caught
 $in:
   $std.merge:
   - {a: 1}
@@ -1929,13 +1934,13 @@ describe('$resume（節の本体で作られた閉包から）', () => {
       run(`
 $handler:
   std.get:
-    $fn: name
-    $body:
+    $param: name
+    $fn:
       $do:
       - $let:
           k:
-            $fn: v
-            $body:
+            $param: v
+            $fn:
               $resume: \${v}
       - {$.k: 42}
 $in:
@@ -1955,20 +1960,20 @@ $do:
     f:
       $handler:
         std.get:
-          $fn: name
-          $body:
-            $fn: s
-            $body:
+          $param: name
+          $fn:
+            $param: s
+            $fn:
               $do:
               - $let:
                   k:
                     $resume: \${s}
               - $.k: \${s}
         return:
-          $fn: x
-          $body:
-            $fn: s
-            $body: \${x}
+          $param: x
+          $fn:
+            $param: s
+            $fn: \${x}
       $in:
         $do:
         - $let:
@@ -1995,17 +2000,17 @@ $do:
     const expanded = await run(`
 $handler:
   std.each:
-    $fn: xs
-    $body:
+    $param: xs
+    $fn:
       $std.collect:
         in: \${xs}
         with:
-          $fn: x
-          $body:
+          $param: x
+          $fn:
             $resume: \${x}
   return:
-    $fn: x
-    $body:
+    $param: x
+    $fn:
     - \${x}
 $in:${body}`);
     const builtin = await run(`
@@ -2024,23 +2029,23 @@ $in:${body}`);
       run(`
 $handler:
   std.each:
-    $fn: xs
-    $body:
+    $param: xs
+    $fn:
       $do:
       - $let:
           k:
-            $fn: v
-            $body:
+            $param: v
+            $fn:
               $resume: \${v}
       - $std.collect:
           in: \${xs}
           with:
-            $fn: e
-            $body:
+            $param: e
+            $fn:
               $.k: \${e}
   return:
-    $fn: v
-    $body:
+    $param: v
+    $fn:
     - \${v}
 $in:
   $do:
@@ -2054,11 +2059,11 @@ $in:
 
 describe('予約キーと名前空間', () => {
   it('予約されていないドットなしキーは「予約されていない $ キー」のエラーになる', async () => {
-    // 0.13 の予約キーは 12 個（$do $let $in $if $then $else $fn $body $for $handler $resume $default）。
-    // 0.12 の $with・$collect・$into・$std.opt の綴りも、std の名前も、どれも予約されていない。
+    // 0.13 の予約キーは 12 個（$do $let $in $if $then $else $param $fn $for $handler $resume $default）。
+    // 0.12 の $with・$collect・$into・$std.opt の綴りも、0.13 までの $body も、std の名前も、どれも予約されていない。
     const names = [
-      'with', 'collect', 'into', 'opt', 'handle', 'each', 'where', 'param', 'get', 'set', 'log',
-      'fail', 'list', 'first', 'mapping', 'state', 'op', 'pipe', 'through', 'foo',
+      'with', 'collect', 'into', 'opt', 'handle', 'each', 'where', 'input', 'get', 'set', 'log',
+      'fail', 'list', 'first', 'mapping', 'state', 'op', 'pipe', 'through', 'foo', 'body',
     ];
     for (const name of names) {
       await expect(run(`{$${name}: x}`)).rejects.toThrow(`unreserved $ key: $${name}`);
@@ -2091,7 +2096,7 @@ describe('予約キーと名前空間', () => {
     await expect(run('{$handler: {$std.state: {}}}')).rejects.toThrow(
       /\$handler without \$in is only allowed as a statement of \$do/,
     );
-    await expect(run('{$handler: {std.fail: {$fn: m, $body: x}}}')).rejects.toThrow(
+    await expect(run('{$handler: {std.fail: {$param: m, $fn: x}}}')).rejects.toThrow(
       /\$handler without \$in is only allowed as a statement of \$do/,
     );
   });
@@ -2124,8 +2129,8 @@ describe('予約キーと名前空間', () => {
         run(`
 $handler:
   ${JSON.stringify(name)}:
-    $fn: m
-    $body: x
+    $param: m
+    $fn: x
 $in: 1
 `),
       ).rejects.toThrow(/\$handler clause name must be a path, a bare local name, or 'return'/);
@@ -2135,8 +2140,8 @@ $in: 1
       run(`
 $handler:
   "$fail":
-    $fn: m
-    $body: x
+    $param: m
+    $fn: x
 $in: 1
 `),
     ).rejects.toThrow('unreserved $ key: $fail');
@@ -2149,8 +2154,8 @@ $in: 1
       run(`
 $handler:
   vault.read:
-    $fn: key
-    $body: handled-\${key}
+    $param: key
+    $fn: handled-\${key}
 $in: {$vault.read: db/password}
 `),
     ).rejects.toThrow(/undefined reference: vault/);
@@ -2161,12 +2166,12 @@ $in: {$vault.read: db/password}
       run(`
 $handler:
   std.get:
-    $fn: name
-    $body:
+    $param: name
+    $fn:
       $resume: shadowed-\${name}
   std.set:
-    $fn: cells
-    $body: {$resume: null}
+    $param: cells
+    $fn: {$resume: null}
 $in:
   $do:
   - $std.set: {n: 1}
@@ -2184,8 +2189,8 @@ $do:
 - $let:
     std:
       each:
-        $fn: xs
-        $body: \${xs[0]}
+        $param: xs
+        $fn: \${xs[0]}
 - $for:
     x: [1, 2, 3]
 - \${x}
@@ -2279,8 +2284,8 @@ $in:
         `
 $handler:
   std.fail:
-    $fn: msg
-    $body: {$resume: fallback}
+    $param: msg
+    $fn: {$resume: fallback}
 $in:
   $do:
   - $let:
@@ -2384,8 +2389,8 @@ describe('ホストの値の失敗通知（関数）', () => {
         `
 $handler:
   std.fail:
-    $fn: m
-    $body: 'caught \${m}'
+    $param: m
+    $fn: 'caught \${m}'
 $in: {$svc.fn: x}
 `,
         { functions: failing },
@@ -2427,7 +2432,7 @@ $in: {$svc.fn: x}
       run(
         `
 $handler:
-  svc.op: {$fn: _, $body: intercepted}
+  svc.op: {$fn: intercepted}
 $in: {$svc.op: x}
 `,
         host,
@@ -2439,7 +2444,7 @@ $in: {$svc.op: x}
       run(
         `
 $handler:
-  svc.fn: {$fn: _, $body: intercepted}
+  svc.fn: {$fn: intercepted}
 $in: {$svc.fn: x}
 `,
         host,
@@ -2452,10 +2457,10 @@ $in: {$svc.fn: x}
 
   it('閉包はホストの関数にも演算にも渡せない（評価前の流れの検査）', async () => {
     await expect(
-      run('{$svc.fn: {$fn: x, $body: "${x}"}}', { functions: { 'svc.fn': () => null } }),
+      run('{$svc.fn: {$param: x, $fn: "${x}"}}', { functions: { 'svc.fn': () => null } }),
     ).rejects.toThrow('a function value cannot be passed to a host function: $svc.fn');
     await expect(
-      run('{$svc.op: {$fn: x, $body: "${x}"}}', { ops: { 'svc.op': () => null } }),
+      run('{$svc.op: {$param: x, $fn: "${x}"}}', { ops: { 'svc.op': () => null } }),
     ).rejects.toThrow('a function value cannot be passed to a host operation: $svc.op');
   });
 });
@@ -2519,8 +2524,8 @@ $handler: \${std.list}
 $in:
   $let:
     pick:
-      $fn: xs
-      $body:
+      $param: xs
+      $fn:
         $std.each: \${xs}
   $in:
     $.pick: [a, b]
@@ -2564,9 +2569,9 @@ describe('$do の文に置いた文脈の導入（$handler と {$std.state: 初�
       run(`
 $do:
 - $handler:
-    std.fail: {$fn: _, $body: outer}
+    std.fail: {$fn: outer}
 - $handler:
-    std.fail: {$fn: _, $body: inner}
+    std.fail: {$fn: inner}
 - {$std.fail: boom}
 `),
     ).resolves.toBe('inner');
@@ -2577,11 +2582,10 @@ $do:
       run(`
 $do:
 - $handler:
-    std.fail: {$fn: _, $body: outer}
+    std.fail: {$fn: outer}
 - $handler:
     std.fail:
-      $fn: _
-      $body:
+      $fn:
         $std.lookup: {in: {}, key: missing}
 - {$std.fail: boom}
 `),
@@ -2596,8 +2600,7 @@ $do:
     d: fallback
 - $handler:
     std.fail:
-      $fn: _
-      $body: \${d}
+      $fn: \${d}
 - {$std.fail: boom}
 `),
     ).resolves.toBe('fallback');
@@ -2611,8 +2614,8 @@ $do:
 $do:
 - $handler:
     std.log:
-      $fn: m
-      $body: {$resume: null}
+      $param: m
+      $fn: {$resume: null}
 - $std.log: hello
 - done
 `,
@@ -2623,13 +2626,13 @@ $do:
   });
 
   it('末尾に置いた文脈の導入の本体は null（$handler は return 節を通る）', async () => {
-    await expect(run('{$do: [{$handler: {std.fail: {$fn: _, $body: x}}}]}')).resolves.toBe(null);
+    await expect(run('{$do: [{$handler: {std.fail: {$fn: x}}}]}')).resolves.toBe(null);
     await expect(run('{$do: [{$handler: {$std.state: {n: 0}}}]}')).resolves.toBe(null);
     await expect(
       run(`
 $do:
 - $handler:
-    return: {$fn: v, $body: wrapped}
+    return: {$param: v, $fn: wrapped}
 `),
     ).resolves.toBe('wrapped');
   });
@@ -2662,7 +2665,7 @@ $do:
 
   it('文の位置の外ではエラー', async () => {
     await expect(
-      run('{$do: [{$let: {x: {$handler: {std.fail: {$fn: _, $body: 0}}}}}, 1]}'),
+      run('{$do: [{$let: {x: {$handler: {std.fail: {$fn: 0}}}}}, 1]}'),
     ).rejects.toThrow(/\$handler without \$in is only allowed as a statement of \$do/);
     await expect(
       run('{$do: [{$let: {x: {$handler: {$std.state: {n: 0}}}}}, 1]}'),
@@ -2717,8 +2720,8 @@ $std.merge:
 $std.collect:
   in: [__proto__]
   with:
-    $fn: k
-    $body:
+    $param: k
+    $fn:
     - key: \${k}
       value: {x: 1}
   into: mapping
@@ -2729,8 +2732,8 @@ $std.collect:
 $std.collect:
   in: [__proto__, __proto__]
   with:
-    $fn: k
-    $body:
+    $param: k
+    $fn:
     - key: \${k}
       value: {x: 1}
   into: mapping
@@ -2782,8 +2785,8 @@ $std.merge:
 $std.collect:
   in: [hasOwnProperty, hasOwnProperty]
   with:
-    $fn: k
-    $body:
+    $param: k
+    $fn:
     - key: \${k}
       value: 1
   into: mapping
@@ -2805,7 +2808,7 @@ $std.collect:
   it('閉包はどの位置からも文書の値へ脱出できない', async () => {
     const msg = /a function value cannot escape into the document value/;
     // トップレベル
-    await expect(run('handler:\n  $fn: x\n  $body: ${x}')).rejects.toThrow(msg);
+    await expect(run('handler:\n  $param: x\n  $fn: ${x}')).rejects.toThrow(msg);
     // __proto__ の下のメソッド名へ
     await expect(
       run(`
@@ -2813,13 +2816,12 @@ $std.merge:
 - x: 1
 - "__proto__":
     toString:
-      $fn: _
-      $body: pwned
+      $fn: pwned
 `),
     ).rejects.toThrow(msg);
     // リストの奥
     await expect(
-      run('data:\n- ok\n- nested:\n    fn:\n      $fn: x\n      $body: ${x}'),
+      run('data:\n- ok\n- nested:\n    fn:\n      $param: x\n      $fn: ${x}'),
     ).rejects.toThrow(msg);
   });
 
@@ -2838,7 +2840,7 @@ $std.merge:
     await expect(
       run(`
 $let:
-  f: {$fn: x, $body: 1}
+  f: {$param: x, $fn: 1}
 $in: \${f == f}
 `),
     ).rejects.toThrow("'==' cannot compare a function or operation value, got: <function>");
@@ -2852,11 +2854,11 @@ $in: \${f == f}
     // Value は関数を含まないので、型を欺いて注入するホストを再現するにはキャストが要る。
     const raw = <T>(v: unknown): T => v as T;
     await expect(
-      run('out: {$std.param: p}', { params: { p: raw<Value>(() => 'x') } }),
+      run('out: {$std.input: p}', { input: { p: raw<Value>(() => 'x') } }),
     ).rejects.toThrow(msg);
     // 一段深く隠しても再帰で捕まえる
     await expect(
-      run('out: {$std.param: p}', { params: { p: raw<Value>({ f: () => 1 }) } }),
+      run('out: {$std.input: p}', { input: { p: raw<Value>({ f: () => 1 }) } }),
     ).rejects.toThrow(msg);
     // op の戻り値が関数でも同じ
     await expect(
@@ -2900,8 +2902,8 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
     await expect(run('a:\n  b: {$std.fail: boom}')).rejects.toThrow(
       expect.objectContaining({ path: 'a.b' }),
     );
-    await expect(run('a:\n  b: {$std.param: nope}')).rejects.toThrow(
-      'failure: parameter not provided: nope (at a.b)',
+    await expect(run('a:\n  b: {$std.input: nope}')).rejects.toThrow(
+      'failure: input not provided: nope (at a.b)',
     );
     await expect(run('a:\n  b: {$std.get: nope}')).rejects.toThrow(
       'failure: uninitialized cell: nope (at a.b)',
@@ -2922,7 +2924,7 @@ describe('失敗位置（メッセージ末尾の (at パス)）', () => {
       run(`
 a:
   b:
-    $handler: {std.fail: {$fn: m, $body: "caught \${m}"}}
+    $handler: {std.fail: {$param: m, $fn: "caught \${m}"}}
     $in: {$std.fail: boom}
 `),
     ).resolves.toEqual({ a: { b: 'caught boom' } });
@@ -2994,7 +2996,7 @@ describe('位置が素通しになる経路', () => {
       run('a:\n  $std.fail: boom\n  $default:\n    b: {$std.range: q}'),
     ).rejects.toThrow('(at a.b)');
     await expect(
-      run('a:\n  $std.param: nope\n  $default:\n    b: {$std.range: q}'),
+      run('a:\n  $std.input: nope\n  $default:\n    b: {$std.range: q}'),
     ).rejects.toThrow('(at a.b)');
   });
 
@@ -3037,19 +3039,19 @@ k:
       run(`
 k:
   $handler:
-    return: {$fn: v, $body: "\${v}"}
+    return: {$param: v, $fn: "\${v}"}
   $in:
     a: {$std.range: x}
 `),
     ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
   });
 
-  it('$fn の本体は凍る', async () => {
+  it('$param の本体は凍る', async () => {
     await expect(
       run(`
 k:
   $let:
-    f: {$fn: y, $body: {a: {$std.range: x}}}
+    f: {$param: y, $fn: {a: {$std.range: x}}}
   $in: {$.f: 1}
 `),
     ).rejects.toThrow(expect.objectContaining({ path: 'k' }));
@@ -3116,12 +3118,11 @@ $default: {$resume: recovered}
       run(`
 $handler:
   ask:
-    $fn: _
-    $body:
+    $fn:
       $handler:
         return:
-          $fn: v
-          $body: {$resume: "\${v}"}
+          $param: v
+          $fn: {$resume: "\${v}"}
       $in: 41
 $in:
   $let:

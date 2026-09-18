@@ -4,7 +4,7 @@ effectful-yaml のドキュメントの索引である。
 
 ## 仕様
 
-- [言語仕様（草案 0.13）](grammar/index.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
+- [言語仕様（草案 0.14）](grammar/index.md)：文法と評価モデルの規範。リファレンスの個々のページと食い違う場合はこちらが優先する。
 - [理論的背景](theory.md)：規範ではない解説。Moggi の λc・Haskell の do 記法・Koka の直接スタイルとの対応。
 - [設計の経緯](history.md)：規範ではない記録。判断の理由と退けた代替案、草案間の変更、今後の課題。
 
@@ -33,7 +33,7 @@ effectful-yaml のドキュメントの索引である。
 
 | キー | ページ | 概要 |
 |---|---|---|
-| `$fn` `$body` | [fn.md](reference/fn.md) | 関数値の生成、呼び出しとパス |
+| `$fn` `$param` | [fn.md](reference/fn.md) | 関数値の生成、呼び出しとパス |
 
 ### 予約キー：ハンドラと既定値
 
@@ -47,7 +47,7 @@ effectful-yaml のドキュメントの索引である。
 | 演算 | 作用 | ページ | 概要 |
 |---|---|---|---|
 | `std.each` | 選択 | [std.each.md](reference/std.each.md) | 要素を一つずつ選ぶ |
-| `std.param` | パラメータ | [std.param.md](reference/std.param.md) | 起動時パラメータの読み出し |
+| `std.input` | 入力 | [std.input.md](reference/std.input.md) | 起動時の入力の読み出し |
 | `std.get` | 状態 | [std.get.md](reference/std.get.md) | セルの読み出し |
 | `std.set` | 状態 | [std.set.md](reference/std.set.md) | セルへの書き込み |
 | `std.log` | ログ | [std.log.md](reference/std.log.md) | ログ出力 |
@@ -75,7 +75,7 @@ effectful-yaml のドキュメントの索引である。
 | `std.state` | `std.get` `std.set` | [std.state.md](reference/std.state.md) | 状態のスコープ（初期値と本体を順に受け取る） |
 
 カーネルは参照 `${...}`・`$let`・`$if`・`$fn`・`$handler` の 5 形である。
-導出形（`$do`、`$for`、`$default`、`$fn` の引数名の列）と `std` の関数の意味論は、すべてカーネルの形への展開か、値から値への規則で定まる。
+導出形（`$do`、`$for`、`$default`、`$param` の引数名の列）と `std` の関数の意味論は、すべてカーネルの形への展開か、値から値への規則で定まる。
 各ページはその展開を掲載し、あわせて展開を文書内の関数として書いた「関数による実装」を載せる。
 `std.range` と `std.collect` は導出できない原始なので、展開を持たない。
 処理系は速度のためにこれらを直接実装しているが、観測できる振る舞いは展開と一致する。

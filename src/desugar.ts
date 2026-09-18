@@ -144,7 +144,7 @@ const RESERVED_KEYS: ReadonlySet<string> = new Set([
   'then',
   'else',
   'fn',
-  'body',
+  'param',
   'for',
   'handler',
   'resume',
@@ -152,7 +152,7 @@ const RESERVED_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** 補助キー名の集合。主キー候補から除外するために使う。 */
-const AUX_KEY_NAMES: ReadonlySet<string> = new Set(['then', 'else', 'body', 'in', 'default']);
+const AUX_KEY_NAMES: ReadonlySet<string> = new Set(['then', 'else', 'param', 'in', 'default']);
 
 /**
  * 主キーごとに許される補助キー。列挙されていない主キーは補助キーを取らない。
@@ -161,13 +161,12 @@ const AUX_KEY_NAMES: ReadonlySet<string> = new Set(['then', 'else', 'body', 'in'
  */
 const AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
-  fn: new Set(['body']),
+  fn: new Set(['param']),
 };
 
 /** 主キーのうち、必須の補助キー（省略するとエラー）。 */
 const REQUIRED_AUX_OF: Readonly<Record<string, ReadonlySet<string>>> = {
   if: new Set(['then', 'else']),
-  fn: new Set(['body']),
 };
 
 /** 呼び出しのパスの綴り。PATH は一区画以上（`$.名前` の形）、DOTTED は二区画以上（`$std.each` の形）。 */
@@ -415,17 +414,20 @@ const synthFn = (path: string, spath: string, param: string, body: KNode): KNode
   body,
 });
 
-/** `$fn` のパラメータ。文字列一つ、または相異なる名前の 1 個以上の列（カリー化の導出形）。 */
+/** 0 引数の `{$fn: 本体}` が受けて捨てる内部名。`@` を含むので文書からは書けない。 */
+const DISCARD_PARAM = '_@fn';
+
+/** `$param` の値。文字列一つ、または相異なる名前の 1 個以上の列（カリー化の導出形）。 */
 function fnParamsOf(raw: unknown): readonly string[] {
   if (typeof raw === 'string') return [raw];
   if (Array.isArray(raw) && raw.length > 0 && raw.every((p) => typeof p === 'string')) {
     if (new Set(raw).size !== raw.length) {
-      throw new EffectfulYamlError(`duplicate $fn parameter name: ${raw.join(', ')}`);
+      throw new EffectfulYamlError(`duplicate $param name: ${raw.join(', ')}`);
     }
     return raw as string[];
   }
   throw new EffectfulYamlError(
-    `$fn parameter must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
+    `$param must be a name or a non-empty list of distinct names, got: ${JSON.stringify(raw)}`,
   );
 }
 
@@ -529,7 +531,7 @@ const body = (node: unknown, path: string, spath: string, open: boolean): KNode 
 /**
  * 補助キー `$default` の展開。
  *
- *   {X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 内部名, $body: 式}}, $in: X}
+ *   {X ∪ {$default: 式}} ≡ {$handler: {std.fail: {$fn: 式}}, $in: X}
  *
  * 残り X をそのまま脱糖し、既定値の式を返す `std.fail` の節で包む。節が `$resume` を
  * 呼ばずに式へ達するので、失敗した時点で X は打ち切られる。既定値の式は X の外側にあり、
@@ -648,14 +650,17 @@ function dollarForm(
         then: auxBody('then')!,
         else: auxBody('else')!,
       };
-    case 'fn':
+    case 'fn': {
+      // `$param` を省いた `{$fn: 本体}` は 0 引数。展開は引数を捨てる一引数の関数である。
+      const praw = shape.aux.get('param');
       return {
         k: 'fn',
         path,
         spath,
-        params: fnParamsOf(node[mainRaw]),
-        body: expr(node[shape.aux.get('body')!], path, childPath(spath, shape.aux.get('body')!)),
+        params: praw === undefined ? [DISCARD_PARAM] : fnParamsOf(node[praw]),
+        body: expr(node[mainRaw], path, childPath(spath, mainRaw)),
       };
+    }
     case 'resume':
       // `$resume` を書けるのは節の本体（その中の `$fn` の本体を含む）だけである。
       if (!inClause) {
@@ -745,7 +750,7 @@ function clausesOf(
  * 関数に評価される式のどちらかである。後者は本体の閉包を渡す呼び出しへ展開する。
  *
  *   {$handler: 関数の式, $in: 本体}
- *     ≡ {$let: {内部名: 関数の式}, $in: {$.内部名: {$fn: 捨て名, $body: 本体}}}
+ *     ≡ {$let: {内部名: 関数の式}, $in: {$.内部名: {$fn: 本体}}}
  *
  * mkBody は本体の脱糖（引数は素通しの open）。節のマッピングなら `return` 節の有無で決まり、
  * 関数の式なら値が呼び出しを経て返るので素通しにならない。

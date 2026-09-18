@@ -12,7 +12,7 @@ $handler: ${std.list}
 $in: 本体の式
 ```
 
-`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.list: {$fn: 捨て名, $body: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
+`$handler` の式が関数なら本体の閉包を渡す呼び出しに展開されるので、この形は `{$std.list: {$fn: 本体}}` と同じ意味である（[$handler](handler.md) のハンドラの再利用）。
 本体を閉包にせず `{$std.list: 本体}` と書くと、呼び出しは値渡しなので本体の作用がハンドラの立つ前に周囲へ合流してしまう。
 
 ## 規則
@@ -32,21 +32,21 @@ $in: 本体の式
 ```yaml
 $let:
   list:
-    $fn: run
-    $body:
+    $param: run
+    $fn:
       $handler:
         std.each:
-          $fn: xs
-          $body:
+          $param: xs
+          $fn:
             $std.collect:
               in: ${xs}
               with:
-                $fn: x
-                $body:
+                $param: x
+                $fn:
                   $resume: ${x}
         return:
-          $fn: x
-          $body:
+          $param: x
+          $fn:
           - ${x}
       $in: {$.run: null}
 $in:
